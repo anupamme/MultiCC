@@ -191,7 +191,7 @@ ${data}
 ${client}
 final class RfbScreen {
   static let shared = RfbScreen()
-  func takeRects(_ client: RfbClient) -> [(rect: CGRect, data: Data)]? { return [] }
+  func takeUpdate(_ client: RfbClient) -> [Data]? { return [] }
 }
 var sent = 0
 var active: RfbClient!
