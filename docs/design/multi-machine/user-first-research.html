@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiCC 多电脑体验：从用户工作出发重新推导</title>
+<style>
+:root{color-scheme:light;--ink:#182b3a;--muted:#526674;--line:#d9e1e6;--bg:#f4f7f8;--blue:#195c99;--green:#17634b;--amber:#875108}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1080px;margin:auto;padding:38px 22px 90px}h1{font-size:clamp(26px,4vw,40px);line-height:1.3;letter-spacing:-.02em}h2{font-size:24px;margin-top:0}h3{font-size:18px;margin-bottom:6px}p{margin:10px 0}a{color:var(--blue)}section{background:white;border:1px solid var(--line);border-radius:16px;padding:26px;margin:24px 0}small,.muted{color:var(--muted)}.lead{font-size:20px}.eyebrow{color:var(--blue);font-weight:650}.note{border-left:4px solid var(--blue);padding:10px 17px;background:#edf5fc}.warning{border-color:#b77924;background:#fff7e8}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{border:1px solid var(--line);padding:18px;border-radius:12px}.tag{display:inline-block;border-radius:5px;padding:1px 7px;font-size:12px;background:#edf2f5;margin-right:5px}.fact{color:var(--green)}.infer{color:var(--blue)}.hyp{color:var(--amber)}.table-scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);min-width:110px}th{background:var(--bg)}ul,ol{padding-left:24px}li{margin:7px 0}code{background:#edf2f5;border-radius:4px;padding:2px 5px;overflow-wrap:anywhere}button,select{font:inherit;border:1px solid #b9c9d3;border-radius:8px;background:white;padding:7px 12px;color:var(--ink)}button{cursor:pointer}button:hover{background:#eaf3fb}button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #4389c4;outline-offset:3px}button[aria-pressed="true"],.primary{background:var(--blue);color:white;border-color:var(--blue)}button:disabled{cursor:not-allowed;opacity:.5}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.demo{border:1px solid #bbcbd6;border-radius:14px;overflow:hidden;margin-top:16px}.demo-head{padding:18px;background:#eef4f8;border-bottom:1px solid var(--line)}.demo-body{padding:20px}.task{display:block;text-align:left;width:100%;padding:15px;margin:10px 0}.task strong,.task small{display:block}.status{font-size:13px;color:var(--amber)}.detail{padding:18px;background:#f6f9fa;border:1px solid var(--line);border-radius:10px;margin-top:16px}.flow{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.flow span{padding:12px 16px;background:#eff5f9;border:1px solid var(--line);border-radius:9px}.sources li{font-size:14px}footer{font-size:13px;color:var(--muted)}[hidden]{display:none!important}@media(max-width:650px){main{padding:24px 12px 60px}section{padding:19px}.grid{grid-template-columns:1fr}.toolbar>*{max-width:100%}h2{font-size:21px}}
+</style>
+</head>
+<body><main>
+<header><div class="eyebrow">独立重评 · 2026-10-11 · 产品研究与可点击示意</div>
+<h1>打开 MultiCC，先看到要做的事</h1>
+<p class="lead">推荐把多台电脑上的待办、最近任务汇到一个入口；电脑保留为明确的执行位置。连接方式服务于这个体验，不能反过来决定整个产品。</p>
+<p class="muted">本次不沿用 A / B / C 的既定选择。假设主要用户是拥有数台电脑、会在手机与电脑之间继续工作的个人用户；此假设尚未通过用户访谈验证。研究没有部署竞品，也没有实现 MultiCC 多机连接。</p>
+<p><span class="tag fact">事实：官方资料或代码可核对</span><span class="tag infer">推导：本报告建议</span><span class="tag hyp">待验证：需要实测或用户反馈</span></p>
+<nav><a href="#needs">用户目标</a> · <a href="#evidence">竞品证据</a> · <a href="#demo">体验示意</a> · <a href="#network">连接方案</a> · <a href="#delivery">实施顺序</a> · <a href="#sources">资料来源</a></nav></header>
+
+<section id="needs"><h2>1. 从第一性原理拆开问题</h2>
+<p>一项工作至少包含：人的意图、任务记录、执行环境、人与执行环境的连接。任务记录应该容易找到；执行环境拥有实际文件、登录态、工具和硬件，不能因为界面统一就假装它们也统一了。</p>
+<div class="grid"><div class="card"><h3>应该消除的负担</h3><p>记住任务在哪台电脑、反复填地址和登录、逐台寻找待办、网络切换后手工重连、从通知进入后再次寻找对应对话。</p></div><div class="card"><h3>应该保留的信息</h3><p>动作在哪台电脑、哪个目录执行；信息是否最新；命令是否被目标机接收。执行位置和执行结果影响正确性，不能为了“无感”而隐藏。</p></div></div>
+<div class="table-scroll"><table><thead><tr><th>用户此刻想做的事</th><th>合适的默认体验</th><th>可验证的成功标准</th></tr></thead><tbody>
+<tr><td>手机上看看有没有事情等我</td><td>跨电脑的“需要我”，按紧急程度与时间排列</td><td>不用进入任何电脑页，就能发现全部已连接电脑的待办；未连接的范围明确标注</td></tr>
+<tr><td>继续刚才那个任务</td><td>最近任务、搜索、通知都直达原任务</td><td>不先选择电脑；回来后保留草稿、位置和上下文</td></tr>
+<tr><td>给一个项目开新任务</td><td>选择项目的具体工作目录，自动带出执行电脑</td><td>已有默认位置时不用再选机器；多个位置时明确选择一次</td></tr>
+<tr><td>从家里 Wi-Fi 切到外网</td><td>同一电脑身份下自动恢复可用连接</td><td>任务归属不变、无重复发送；无法连接时给出可行动的原因</td></tr>
+<tr><td>电脑休眠或失联</td><td>保留最后已知任务，显示更新时间和连接状态</td><td>不把失联误报为任务失败、成功或电脑关机</td></tr>
+<tr><td>处理某台机器的环境问题</td><td>电脑页提供版本、连接、资源和本机设置</td><td>高级管理可达，但不挤占日常任务首页</td></tr>
+</tbody></table></div>
+<p class="note"><b>推导：</b>首页应围绕注意力和工作连续性组织；电脑筛选器仍有价值，但不应成为所有操作必经的第一步。若真实用户几乎只在一台电脑工作、很少跨机处理待办，简洁切换器可能更合适，需要用场景测试验证。</p>
+</section>
+
+<section id="evidence"><h2>2. 同类产品真正能证明什么</h2>
+<p>以下来自此次重新读取的官方文档与仓库。它们证明产品提供的能力或公开架构，不代表本次已验证实际稳定性或用户满意度。</p>
+<div class="table-scroll"><table><thead><tr><th>产品</th><th>已核对的做法</th><th>对 MultiCC 的启发与边界</th></tr></thead><tbody>
+<tr><td>Happier <a href="#s1">[1]</a></td><td>跨机器会话；新建会话选电脑、目录和 agent；统一 Inbox；机器运行 daemon；relay 同步加密内容，仍可见部分路由元数据。</td><td>最接近本题：用会话和注意力组织多机体验。它证明这种体验可与 relay 共存，不能用来证明“直连更好”或其全部功能值得照搬。</td></tr>
+<tr><td>Happy <a href="#s2">[2]</a></td><td>仓库包含移动/Web 客户端与加密同步 relay，提供跨设备继续会话的能力。</td><td>手机离开桌面后继续原有工作，是产品价值本身。其 README 中部分新能力属于其他关联仓库，本报告不把它们算作此仓库已实现能力。</td></tr>
+<tr><td>VS Code Remote Tunnels <a href="#s3">[3]</a></td><td>客户端选择远程机器；远端执行；登录同一账号；两端向 Azure 服务发起出站连接；编辑器保留远端标识。</td><td>能隐藏连接配置，同时明确执行环境。它偏重一次深入一处环境，不能替代多任务注意力聚合。</td></tr>
+<tr><td>Portainer <a href="#s4">[4]</a></td><td>一个 Server 管理多个 environment。Agent 需要从 Server 可达；Edge Agent 通过轮询、按需隧道适应远端不可直达的网络。</td><td>同一管理体验可以支持不同连接路径。集中运维适合它，但 MultiCC 不必随之采用一个主控电脑管理所有本地工作。</td></tr>
+<tr><td>Home Assistant Companion <a href="#s5">[5]</a></td><td>App 可添加多个 server；局域网发现；内外网地址与 Cloud 连接有独立配置。</td><td>直接管理多服务器是可行的；地址、证书、网络和远程访问的配置成本不会因为“客户端直连”自动消失。</td></tr>
+<tr><td>Omnara <a href="#s6">[6]</a></td><td>machine daemon 出站连接 control plane；agent 的事件记录在 control plane，机器只是可绑定的执行环境。</td><td>更彻底地分开任务与机器，但这是另一种任务运行模型。不能据此承诺现有 CLI、浏览器登录态和本地文件能无缝迁移。</td></tr>
+</tbody></table></div>
+<p><b>共同启发：</b>统一入口、稳定身份、远端常驻连接组件、明确的执行环境，是反复出现的组成部分。是否中心化、是否迁移，是另外的产品决策。</p>
+<p class="muted">未采用：本轮 Cockpit 页面未取得可用正文、另一个官方文章地址返回 404；Tailscale 页面请求未能完成重定向。没有把这些抓取失败当作架构证据。</p>
+</section>
+
+<section id="demo"><h2>3. 推荐体验：统一工作入口，局部环境清楚</h2>
+<p>手机优先展示“需要我 / 最近任务”，电脑宽屏可以同时展示目录。电脑页负责连接与环境管理。选择一台电脑是筛选视图；进入任务是访问该任务固定的执行位置，两者不互相改变。</p>
+<p class="muted">下面全是虚构示例，不连接实际电脑。可切换视图、筛选电脑、打开任务、新建任务预览，并模拟工作电脑失联。</p>
+<div class="demo">
+<div class="demo-head"><div class="toolbar"><strong>我的工作</strong><select id="machine" aria-label="筛选电脑"><option value="all">全部电脑</option><option value="work">工作电脑</option><option value="home">家用电脑</option></select><button id="new-task" class="primary">新建任务</button><button id="offline" aria-pressed="false">模拟工作电脑失联</button></div><p id="coverage" class="muted" aria-live="polite"></p><div class="toolbar" role="group" aria-label="工作视图"><button data-view="attention" aria-pressed="true">需要我</button><button data-view="recent" aria-pressed="false">最近任务</button><button data-view="machines" aria-pressed="false">电脑</button></div></div>
+<div class="demo-body"><div id="rows"></div><div id="detail" class="detail" hidden aria-live="polite"></div>
+<div id="create" class="detail" hidden><h3>新建任务 · 执行位置</h3><label for="location">选择项目工作位置</label><p><select id="location"><option value="work">网站项目 · 工作电脑 · ~/work/site</option><option value="home">网站项目 · 家用电脑 · ~/code/site</option></select></p><p id="location-hint"></p><button id="create-preview" class="primary">确认位置（演示）</button><button id="create-close">关闭</button><p id="create-result" role="status"></p></div>
+</div></div>
+<h3>五个关键交互</h3><ol>
+<li><b>添加电脑：</b>在目标电脑打开“连接设备”，用一次性二维码或短码授权客户端。已使用统一连接服务时可关联到同一身份；纯直连模式仍需可达地址。扫码负责建立信任，不负责穿透网络。</li>
+<li><b>从通知继续：</b>通知携带电脑和任务身份，点击直接进入相应任务；任意客户端处理后，其他端同步消除待办。</li>
+<li><b>新建任务：</b>从目录发起时沿用该目录；从全局入口发起时选择具体工作位置。可以记住用户选过的位置，不按“哪台机器空闲”擅自换环境。</li>
+<li><b>同名项目：</b>允许用户把多个工作位置归入同一项目，但保留不同目录、分支、未提交改动与登录态。名字相同、仓库地址相同都不足以证明环境等价。</li>
+<li><b>失联：</b>展示“连接中断，最后更新于……”，允许查看已有缓存和保存草稿。未得到接收回执的写操作显示“发送结果待确认”；恢复后先查 operationId，不能盲目重发。离线不自动迁移、不自动执行过期操作。</li>
+</ol>
+<p class="note">无感的目标是：无需手工处理连接，也无需记住任务在哪台电脑。需要用户判断执行位置时，应清楚展示“工作电脑 · ~/work/site”，尤其是终端、文件修改、任务启动和设备重启。</p>
+</section>
+
+<section id="network"><h2>4. 先判断网络事实，再选连接实现</h2>
+<p>客户端 C 想操作电脑 B，必须存在一条可用路径：C 能直接访问 B；或借助双方可达的连接服务；或依赖 VPN / 覆盖网络建立可达性。如果 B 既无可达入口、也不建立出站连接，单靠一个前端界面不能让外网手机找到它。</p>
+<p>浏览器直连并非技术上不可行：当每台机器都有可达且可信的 HTTPS 入口，并正确实现受信来源 CORS 与独立客户端授权时，同页聚合可以成立。问题在于把这些前提交给多少用户配置，以及本地网络访问的浏览器差异。<a href="#s7">[7–9]</a></p>
+<div class="table-scroll"><table><thead><tr><th>路径</th><th>用户得到什么</th><th>必须付出的代价</th><th>建议定位</th></tr></thead><tbody>
+<tr><td>客户端分别直连每台电脑</td><td>不依赖某台中转电脑；局域网通常路径较短</td><td>每台需可达；原生 App 仍受系统网络权限与 TLS 配置约束；浏览器要解决 HTTPS、CORS、授权、局域网访问权限</td><td>App / 原生网络适配器的优先可用路径；自托管直连模式</td></tr>
+<tr><td>切换时跳到目标电脑自己的网页</td><td>沿用目标电脑现有页面，避开同页跨域请求</td><td>页面与本地存储按 origin 分开；聚合状态、返回位置、登录接力还要另外做；原入口不可达时有入口恢复问题</td><td>快捷打开、诊断与渐进兼容；不作为“完全无感”的最终体验</td></tr>
+<tr><td>当前电脑 A 代理 B、C</td><td>浏览器只面对一个 origin；容易接入现有 HTTP 接口</td><td>A 休眠或断网可能同时遮住 B、C；A 持有跨机访问权；大流量绕路</td><td>只有用户明确把 A 当常开网关时才合理，不默认强加给日常工作电脑</td></tr>
+<tr><td>独立连接服务；各电脑出站连接</td><td>固定 Web 入口；无需逐台开放入站端口；客户端不必理解内网地址</td><td>常在线服务、维护和流量成本；服务失效会影响经它访问的机器；身份、授权、数据可见范围必须设计</td><td>若目标是普通用户跨网络打开就能用，这是推荐的完整体验基础；允许自托管</td></tr>
+<tr><td>VPN / 覆盖网络</td><td>可以复用现有可达性，减少端口暴露</td><td>客户端安装与组网成本；不会自动解决网页的同源、HTTPS 与任务身份问题</td><td>已有组网用户的可选接入方式，不要求所有用户安装</td></tr>
+</tbody></table></div>
+<h3>明确推荐：统一的客户端工作模型，可替换的连接层</h3>
+<div class="flow" aria-label="推荐架构"><span>Web / App：任务、待办、电脑身份</span><b>→</b><span>授权后的直连<br>或独立连接服务</span><b>→</b><span>每台电脑上的 MultiCC<br>本地任务 / 文件 / 工具</span></div>
+<p><b>面向完整的跨网络体验：</b>Web 默认经稳定的独立连接服务访问电脑，电脑主动建立出站通道；原生 App 可在确认目标身份与路径可用后直连，并在已配置的连接服务上兜底。各电脑平等执行任务，连接服务不成为任务调度者，不要求另一台日常电脑一直开机。</p>
+<p><b>面向拒绝常驻连接服务的用户：</b>保留纯直连模式。已拥有可信 HTTPS 入口的用户可以获得同页 Web 体验；否则 App 直连更自然，Web 可以先提供快捷打开各机器。必须明确外网可达性由用户环境提供，不能把“免服务、免配置、任意网络可达”同时许诺。</p>
+<p>这不是要求第一版同时实现所有路径。先验证统一体验；若“浏览器跨网络无配置”是发布目标，就优先验证出站连接服务；若首批用户已有外网地址且主要用 App，则先交付直连。路径选择不放到日常任务页面。</p>
+<h3>边界条件不能隐藏</h3><ul>
+<li>电脑失联与连接服务失联分别呈现；服务不可用时，已授权且可直达的客户端仍可工作，远程路径不可达的就明确不可用。不能承诺所有故障自动绕过。</li>
+<li>直连优先不等于先等很久才尝试其他路径。需要有限超时、路径健康缓存、防抖；路径切换始终校验同一 machineId 与授权身份。</li>
+<li>Web 后台与手机后台都不能靠永久保持前台 socket 保证通知。多机通知注册、去重、点击定位与撤销必须单独设计。</li>
+<li>连接凭证和模型 API key 是不同东西。每个客户端用可撤销的连接授权；模型密钥、浏览器登录态和本地文件默认留在执行电脑。</li>
+<li>经第三方 relay 时应优先设计端到端的应用消息加密，并明确元数据可见范围；普通 TLS 反向代理会在网关解密，不得称作端到端加密。本建议尚未完成该协议实现与安全验证。</li>
+<li>终端、文件下载、上传、语音、远程屏幕都必须纳入路径验证。只跑通聊天 JSON 不能宣布整个 MultiCC 已多机无感。</li>
+</ul>
+</section>
+
+<section><h2>5. 对照当前 MultiCC：真正需要改的边界</h2>
+<p>代码核对基线：<code>254128fb</code>。本轮开始时 worktree 干净，<code>HEAD...main = 0 / 0</code>。下面是抽样核对的关键边界，不是穷尽全仓的改造估算。</p>
+<div class="table-scroll"><table><thead><tr><th>代码证据</th><th>含义</th><th>推荐改法</th></tr></thead><tbody>
+<tr><td><code>app/lib/services/settings_service.dart:99, 234, 361, 488</code>：单一 host、session；部分缓存按 sessionId 保存；URL 从当前 host 构造。</td><td>换一个全局地址容易；同时维护多机任务、旧请求响应和缓存归属是另一件事。</td><td>引入按 machineId 管理的连接对象；任务、缓存、草稿用 machineId + task/sessionId 命名空间。请求和回调绑定发起时的目标，不读取可变全局 host。</td></tr>
+<tr><td><code>app/lib/services/fcm_service.dart:168–180</code>：binding 变化会删除旧 host 的推送注册。</td><td>切到另一台电脑可能影响旧电脑通知。</td><td>按电脑独立保留注册、续期与撤销；通知携带完整任务地址，多端处理后去重。</td></tr>
+<tr><td><code>public/api-client.js:182–236</code>：跨域要 opt-in；跨域敏感 header 被移除，credentials 为 omit。<code>src/routes/auth.js:71</code> 使用 HttpOnly、SameSite=Lax cookie。</td><td>当前浏览器客户端不支持直接把已登录凭证拿去请求另一台电脑。</td><td>添加明确受信的多机传输接口与授权协议，不能简单全局放开跨域或复用万能 token。</td></tr>
+<tr><td><code>app/lib/services/ws_ticket_service.dart:62–99</code> 要求 host 是 origin；<code>src/routes/fleet-sharing.js:219–265</code> 已有 scoped HTTP 转发与远端 WS 换票。</td><td>可以借鉴票据和授权边界；不能认定给 URL 加路径前缀就能转发全部能力。</td><td>能力清单、独立传输契约、流式通信和文件访问逐项验证。跨机摘要不拉取全量聊天历史。</td></tr>
+<tr><td><code>src/lan-discovery.js:9, 24–32, 45–55</code> 已有带条件的 mDNS 服务广播。</td><td>局域网发现可以复用，但发现地址不代表完成授权，也不提供互联网发现。</td><td>将发现、稳定机器身份、信任配对和连接健康分开。</td></tr>
+<tr><td><code>desktop/main.js:84–104, 165</code> 创建隔离 renderer 并加载服务 origin。</td><td>现有桌面壳不是自动获得原生网络权限的完整多机客户端。</td><td>若用 Electron 主进程承载网络，需受限 IPC 和授权边界；不通过关闭 webSecurity 绕过浏览器限制。</td></tr>
+</tbody></table></div>
+<p class="note warning"><b>纠正估算方式：</b>“很多请求共用一个 URL 构造函数”只能证明入口集中，不能证明多机改造很小。连接生命周期、后台通知、缓存隔离、版本协商和误发防护才决定能否可靠交付；本报告不复用之前的周数估计。</p>
+</section>
+
+<section id="delivery"><h2>6. 实施顺序与验收门槛</h2>
+<p>第一版目标建议定为：<b>两台电脑上的待办集中可见，点击直达对应任务；打开、回复与断线恢复不会混淆电脑。</b>这比先完成一整页运维面板更直接地验证用户价值。</p>
+<ol>
+<li><b>验证体验：</b>用本页示意让 3–5 位多电脑用户完成“找待办、继续任务、选工作位置、解释失联”四件事。记录是否先找机器、是否误解执行位置。此项尚未执行，不能把推导当作用户验证。</li>
+<li><b>验证连接契约：</b>先实现稳定 machineId、客户端授权、最小摘要与能力/版本协商。用两台真机、两个同名目录测试隔离；验证 HTTPS 入口与仅私网入口、局域网转蜂窝网络、休眠和授权撤销。Web 至少覆盖 Chrome 与 Safari，App 覆盖 iOS / Android。</li>
+<li><b>交付最小闭环：</b>跨机“需要我 / 最近任务” → 正确任务 → 回复 → 原机确认 → 其他端待办消除。离线仍保留最后更新时间。读取摘要可增量、分页、有限并发；只给当前任务建立重流量连接，坏机器不拖住首页。</li>
+<li><b>补齐使用连续性：</b>多机推送、深链接、草稿、重连回执、文件与终端路径。再按实测决定直连优化和远程屏幕等重流量能力。</li>
+<li><b>最后扩展：</b>明确项目与多个工作位置的关系，按需求补电脑管理。跨机自动调度、任务迁移、批量升级、密钥同步都不是本轮体验成立的前提。</li>
+</ol>
+<div class="table-scroll"><table><thead><tr><th>必须通过的测试场景</th><th>通过条件</th></tr></thead><tbody>
+<tr><td>家用电脑正在显示时，工作电脑任务请求输入</td><td>全局待办可见；点击进入工作电脑的正确任务，回复不落到家用电脑</td></tr>
+<tr><td>快速切任务，旧请求晚返回</td><td>旧结果只能更新原机器对应缓存，不能覆盖当前视图或授权</td></tr>
+<tr><td>发送后立刻断网，目标可能已接收</td><td>有操作 ID 与接收状态；重连查证，不重复启动任务、不虚报成功</td></tr>
+<tr><td>同名目录、克隆数据产生相同本地任务 ID</td><td>电脑命名空间仍能隔离任务；更换 URL 不生成第二个机器身份</td></tr>
+<tr><td>电脑休眠 / 连接服务不可用 / 会话权限被撤销</td><td>区分可证实的状态与未知原因；其他可达电脑继续使用；撤销生效</td></tr>
+<tr><td>从通知打开；在另一端先处理</td><td>定位不依赖“当前电脑”，已处理请求不重复出现</td></tr>
+</tbody></table></div>
+<p class="muted">可以给首次摘要与切换时延设性能预算，但当前没有实测基础，不用虚构毫秒数字作结论。还需要补测不受信证书、各端局域网权限、代理子路径、旧版本节点和大文件传输。</p>
+</section>
+
+<section><h2>7. 什么证据会改变这个推荐</h2>
+<ul><li>如果用户长期只用一台、偶尔开另一台：缩减为切换器加跨机待办提示，不强制全局首页。</li>
+<li>如果主要用户已有 VPN / 可信外网入口、且以 App 为主：先做客户端直连，连接服务后置。</li>
+<li>如果“任何浏览器打开一个网址就能用”优先级最高：独立连接服务与出站连接是前置工作；不能用跳页原型冒充最终体验。</li>
+<li>如果用户主要诉求是把无状态任务投给空闲机器：需要另行研究资源调度、环境声明和失败恢复；当前推荐不能替代调度系统。</li></ul>
+<p><b>本次结论：</b>最值得先做的是工作层面的统一，而不是把电脑管理做得更复杂。界面采用统一待办、最近任务和明确执行位置；连接实现采用独立接口，保留直连能力。完整跨网络体验应有稳定连接服务承担可达性，不能默认依赖任一工作电脑充当中转站。</p>
+</section>
+
+<section id="sources" class="sources"><h2>来源与研究边界</h2><p>读取日期：2026-10-11。动态官方文档可能更新；GitHub README 链接固定到本次读取的提交。下列小段引文用于对应研究依据。</p><ol>
+<li id="s1"><b>Happier：</b><a href="https://github.com/happier-dev/happier/blob/b8d1c449c46ab4dfa8637db36b66f643d149e66d/README.md">README</a>：“pick the machine, the folder and the agent”；<a href="https://docs.happier.dev/sessions/inbox-and-approvals">Inbox</a>：“What needs my attention right now?”；<a href="https://docs.happier.dev/apps/daemon">Daemon</a>。README 说明 relay 可见 session ids、timestamps、turn status 和 usage metadata。</li>
+<li id="s2"><b>Happy：</b><a href="https://github.com/slopus/happy/blob/500010106f5ef3dc9ba919c893977d5ddbb02d31/README.md">README</a>：“the relay server for encrypted sync”。</li>
+<li id="s3"><b>VS Code：</b><a href="https://code.visualstudio.com/docs/remote/tunnels">Remote Tunnels</a>：“both cases, VS Code will make outbound connections to a service hosted in Azure”；也说明远端必须保持服务运行。</li>
+<li id="s4"><b>Portainer：</b><a href="https://docs.portainer.io/admin/environments">Environments</a>、<a href="https://docs.portainer.io/admin/environments/add/docker/agent">Agent</a>、<a href="https://docs.portainer.io/admin/environments/add/docker/edge">Edge Agent</a>：“without having to open any ports on the environment”。这不代表 Server 也不需要可达端口。</li>
+<li id="s5"><b>Home Assistant Companion：</b><a href="https://companion.home-assistant.io/docs/getting_started/">Getting started / Adding additional servers</a>、<a href="https://companion.home-assistant.io/docs/troubleshooting/networking/">Networking</a>。用于确认多服务器与内外网配置能力，不照搬其中所有网络部署建议。</li>
+<li id="s6"><b>Omnara：</b><a href="https://docs.omnara.com/machines/overview">Machines overview</a>：“the machine does not own the agent”；“connects outbound to the control plane”。</li>
+<li id="s7"><b>MDN：</b><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS">CORS</a>。服务端可以授权跨域；跨域不是浏览器直连绝对不可行的证明。</li>
+<li id="s8"><b>MDN：</b><a href="https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content">Mixed content</a>。HTTPS 页面访问 HTTP 资源受到限制；需要按具体平台与资源类型验证。</li>
+<li id="s9"><b>Chrome：</b><a href="https://developer.chrome.com/blog/local-network-access">Local Network Access</a>。官方说明 Chrome 142 引入权限提示；不能推断所有浏览器具有相同行为或例外。</li>
+</ol><p>本轮完成：官方资料核对、当前代码边界核对、产品推导和交互示意。未完成且未声称完成：竞品部署实测、用户访谈、浏览器网络兼容矩阵、多机传输协议、安全验证与真实延迟测试。</p></section>
+<footer>正式源文件：docs/design/multi-machine/user-first-research.html。发布链接是便于手机打开的临时预览副本；长期依据保存在项目中。页面不包含真实机器地址、账号、令牌或任务数据。</footer>
+</main>
+<script>
+'use strict';
+const machines={work:'工作电脑',home:'家用电脑'};
+const tasks=[{id:'w1',machine:'work',title:'网站：确认首页文案',status:'等我回复',attention:true,path:'~/work/site'},{id:'h1',machine:'home',title:'周报：确认统计口径',status:'等我回复',attention:true,path:'~/reports'},{id:'h2',machine:'home',title:'网站：整理测试结果',status:'已完成',attention:false,path:'~/code/site'}];
+const state={view:'attention',machine:'all',offline:false,selected:null};
+const el=id=>document.getElementById(id);
+function showTask(id){state.selected=id;el('create').hidden=true;renderDetail();}
+function renderDetail(){const t=tasks.find(t=>t.id===state.selected);const box=el('detail');box.hidden=!t;if(!t)return;const stale=state.offline&&t.machine==='work';box.replaceChildren();const title=document.createElement('h3');title.textContent=t.title;const place=document.createElement('p');place.textContent=machines[t.machine]+' · '+t.path;const status=document.createElement('p');status.textContent=stale?'连接中断 · 最后更新于 2 分钟前（模拟）。任务当前状态未知；可查看缓存，回复草稿可保留，恢复连接后确认再发送。':'任务归属已明确。回复将在'+machines[t.machine]+'的这个任务中发送；此处只展示交互，不会实际发送。';box.append(title,place,status);}
+function render(){el('coverage').textContent=state.offline?'1 台可连接，1 台连接中断 · 下方保留工作电脑最后已知状态':'2 台可连接 · 所有内容为示例数据';el('offline').textContent=state.offline?'恢复工作电脑连接':'模拟工作电脑失联';el('offline').setAttribute('aria-pressed',String(state.offline));document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.view===state.view)));const rows=el('rows');rows.replaceChildren();if(state.view==='machines'){Object.entries(machines).filter(([id])=>state.machine==='all'||id===state.machine).forEach(([id,name])=>{const p=document.createElement('div');p.className='card';p.textContent=name+' · '+(id==='work'&&state.offline?'连接中断，原因尚未确认 · 最后更新于 2 分钟前':'可连接');rows.append(p);});}else{tasks.filter(t=>(state.machine==='all'||t.machine===state.machine)&&(state.view!=='attention'||t.attention)).forEach(t=>{const b=document.createElement('button');b.className='task';const a=document.createElement('strong');a.textContent=t.title;const c=document.createElement('small');c.textContent=machines[t.machine]+' · '+t.path;const s=document.createElement('span');s.className='status';s.textContent=state.offline&&t.machine==='work'?'最后已知：'+t.status+' · 当前失联':t.status;b.append(a,c,s);b.onclick=()=>showTask(t.id);rows.append(b);});}renderDetail();renderLocation();}
+function renderLocation(){const id=el('location').value;const stale=state.offline&&id==='work';el('location-hint').textContent=stale?'该位置当前无法连接。可以保留草稿，或明确选择另一处工作位置；不会自动搬到家用电脑。':'执行位置：'+machines[id]+'。同名项目的两份工作目录分别保留；不会同步文件或登录态。';el('create-preview').disabled=stale;}
+el('machine').onchange=e=>{state.machine=e.target.value;state.selected=null;el('create').hidden=true;render();};
+el('offline').onclick=()=>{state.offline=!state.offline;el('create-result').textContent='';render();};
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.view=b.dataset.view;state.selected=null;el('create').hidden=true;render();});
+el('new-task').onclick=()=>{state.selected=null;renderDetail();el('create').hidden=false;el('location').value=state.machine==='all'?'work':state.machine;el('create-result').textContent='';renderLocation();};
+el('location').onchange=()=>{el('create-result').textContent='';renderLocation();};
+el('create-close').onclick=()=>{el('create').hidden=true;};
+el('create-preview').onclick=()=>{el('create-result').textContent='已选择'+machines[el('location').value]+'的工作位置（示意）。未创建真实任务。';};
+render();
+</script></body></html>
