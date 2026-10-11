@@ -713,6 +713,25 @@ void main() {
   // ── 界面 ────────────────────────────────────────────────────────────────
 
   group('侧栏底部', () {
+    testWidgets('客户端版本复用提示行且不增加版本区域高度', (tester) async {
+      final settings = await _settings();
+      final client = MockClient((_) async => _json(const {}));
+      final store = AirOpsStore(settings: settings, httpClient: client);
+      store.version = const AirVersionInfo(current: '2.4.3', channel: 'dev', updateAvailable: false);
+      Widget host(String? version) => MaterialApp(home: Scaffold(body: SizedBox(
+        width: 252, child: AirVersionRow(store: store, clientVersion: version,
+          language: 'zh', onLanguage: () {}),
+      )));
+      await tester.pumpWidget(host(null));
+      final height = tester.getSize(find.byKey(const ValueKey('air-ver-row'))).height;
+      await tester.pumpWidget(host('2.32.1 (152)'));
+      expect(textOf(tester, 'air-ver-current'), '服务端 v2.4.3');
+      expect(textOf(tester, 'air-ver-hint'), 'App 2.32.1 (152)');
+      expect(tester.getSize(find.byKey(const ValueKey('air-ver-row'))).height, height);
+      expect(tester.takeException(), isNull);
+      await _teardown(tester, store, client);
+    });
+
     testWidgets('版本行从「检查中…」走到「有新版」并挂上徽标', (tester) async {
       final settings = await _settings();
       final client = MockClient((request) async {

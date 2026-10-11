@@ -31,6 +31,8 @@ class AirSidebar extends StatelessWidget {
     required this.pinnedTaskIds,
     required this.advancedMode,
     required this.serverLabel,
+    this.clientVersion,
+    this.onSwitchServer,
     required this.onSelectDirectory,
     required this.onOpenLibrary,
     required this.onOpenSearch,
@@ -69,6 +71,8 @@ class AirSidebar extends StatelessWidget {
   final Set<String> pinnedTaskIds;
   final bool advancedMode;
   final String serverLabel;
+  final String? clientVersion;
+  final VoidCallback? onSwitchServer;
   final ValueChanged<String> onSelectDirectory;
   final VoidCallback onOpenLibrary;
 
@@ -284,6 +288,7 @@ class AirSidebar extends StatelessWidget {
             // 版本行留在折叠区外：它是「有新版本」唯一的落点，折起来就没人知道。
             AirVersionRow(
               store: ops,
+              clientVersion: clientVersion,
               language: language,
               onLanguage: onLanguage,
             ),
@@ -304,15 +309,24 @@ class AirSidebar extends StatelessWidget {
             const Divider(height: 1, color: AppColors.line),
             // 回执也留在折叠区外：运维动作的结果要看得见。
             AirOpsReceipt(store: ops),
-            Padding(
+            InkWell(
+              key: const ValueKey('air-sidebar-server'),
+              onTap: onSwitchServer,
+              child: Tooltip(
+                message: language == 'en' ? 'Switch server' : '切换服务器',
+                child: Padding(
               padding: const EdgeInsets.fromLTRB(18, 10, 18, 6),
-              child: Text(
+              child: Row(children: [Expanded(child: Text(
                 serverLabel.isEmpty ? '未连接服务器' : serverLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   color: AppColors.faint,
                   fontSize: 11,
+                ),
+              )), if (onSwitchServer != null)
+                const Icon(Icons.swap_horiz, size: 16, color: AppColors.faint),
+              ]),
                 ),
               ),
             ),
