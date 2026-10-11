@@ -2,16 +2,9 @@
 
 // ── Message admission progress ───────────────────────────────────────────────
 //
-// A user message can only start a turn once the work that must precede it has
-// finished. Today that is the pending memory distill (the turn has to see the
-// distilled memory) and, when a pool routes by difficulty, the Jev tier verdict.
-// Both take an unbounded-ish amount of time, and the user has already seen their
-// bubble: the client renders `message_admission_progress` frames so the wait is
-// visible instead of looking like a dropped message.
-//
-// This module owns that protocol end to end — the frames, their failure
-// vocabulary and the delivery call they wrap — so the WebSocket handler only has
-// to pass the pending work in and await one call.
+// 用户消息可靠入队后，后台再等待记忆整理、模型路由等启动前置条件。
+// 等待期间用 message_admission_progress 显示进度；HTTP/WS 接收回执
+// 不依赖这些步骤完成。这里统一维护进度事件和失败后继续投递的规则。
 
 const { sanitizeMessage: sanitizeApiErrorMessage } = require('./api-error-policy');
 
@@ -102,8 +95,31 @@ function createRoutingAdmissionPhase({ prepareTurn, broadcast }) {
   };
 }
 
+// 消息先落盘，再由队列等待模型路由和记忆整理。两种发送入口共用此处，
+// 重启后重放同一条队列记录也会重新准备，不依赖请求期间的内存承诺。
+function createQueuedTurnPreparation({ prepareRouting, getPendingMemory, broadcast }) {
+  return async function prepareQueuedTurn({ sessionId, text, opts = {} }) {
+    if (!opts.directUserInput || opts.taskShellControl) return;
+    let pendingMemory;
+    // 任务壳管理自己的上下文；普通聊天保留原来的记忆等待契约。
+    if (!opts.taskShellReceiptId) {
+      try { pendingMemory = getPendingMemory?.(sessionId); }
+      catch (error) { pendingMemory = Promise.resolve({ error }); }
+    }
+    // 路由等待期间记忆任务也可能失败，先接住拒绝，稍后统一显示结果。
+    if (pendingMemory) pendingMemory = Promise.resolve(pendingMemory).catch(error => ({ error }));
+    try { await prepareRouting(sessionId, text, opts.clientMsgId); }
+    catch (_) { /* 路由服务异常时沿用配置的兜底模型。 */ }
+    if (pendingMemory) await deliverAfterPendingMemory(pendingMemory, progress => broadcast?.(sessionId, {
+      type: 'message_admission_progress', stage: 'memory_distill', message: text,
+      clientMsgId: opts.clientMsgId || null, at: Date.now(), ...progress,
+    }), () => undefined);
+  };
+}
+
 module.exports = {
   admissionRootCause,
   createRoutingAdmissionPhase,
+  createQueuedTurnPreparation,
   deliverAfterPendingMemory,
 };

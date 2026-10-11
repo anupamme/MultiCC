@@ -2067,7 +2067,7 @@ const taskShellHost = require('./src/task-shell/host').createTaskShellHost({
   subscribeChat: listener => { bus.on('chat:stream-progress', listener); return () => bus.off('chat:stream-progress', listener); },
   getWorkHost: () => sessionWorkHost, getScheduler: () => orchestrationRuntime?.sessionScheduler,
   recentEvents: dirId => recentEvents(dirId),
-  deliver: (...args) => taskContextHost.deliverSessionMessage(...args), dispatch: (...args) => dispatchToSession(...args), prepareAutoProviderAdmission: (...args) => chatTurnEngine.prepareAutoProviderAdmission(...args),
+  deliver: (...args) => taskContextHost.deliverSessionMessage(...args), dispatch: (...args) => dispatchToSession(...args),
   persistRecords: (source, fn) => sessionPersistence.mutate(source, fn), closeExecution: id => chatStream.closeAndWait(id), resetChatState: id => chatSessions.delete(id),
   hasBackground: id => backgroundTaskRuntime.hasProcessBackgroundTasks(id), ensureWorkspaceAwake: id => sessionHibernationRuntime.ensureAwake(id),
   getWorkspaceAdmission: () => workspaceAdmission,
@@ -2702,7 +2702,7 @@ orchestrationRuntime = createOrchestrationRuntime({
   // instead of a worker-wide deadlock (see orchestration-runtime processOutbox).
   isDeliveryLocked: sid => !!persistedSessions.get(sid)?.taskBoundTaskId
     && !!sessionHibernationRuntime?.isLocked?.(taskShellHost.workspaceGroup(sid)),
-  beforeDeliver: descriptor => workspaceAdmission.beforeDeliver(descriptor),
+  beforeDeliver: async descriptor => { await chatTurnEngine.prepareQueuedTurn(descriptor); return workspaceAdmission.beforeDeliver(descriptor); },
   getSessionRecoveryState: id => sessionWorkHost.recoveryState(id),
   onSchedulerEvent: event => { sessionWorkHost.onSchedulerEvent(event); },
   workerIntervalMs: Math.max(100, Number(process.env.MULTICC_ORCHESTRATION_WORKER_INTERVAL_MS) || 1000),

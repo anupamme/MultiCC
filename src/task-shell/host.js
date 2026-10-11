@@ -189,8 +189,6 @@ function createTaskShellHost(deps) {
       indexTask: task => deps.getTaskBoard().registerShellTask(task),
       evictTaskForCapacity: (dirId, listShellTasks, atCapacity, excludedIds) => deps.getTaskBoard().evictOldestSafeTask(dirId, listShellTasks, atCapacity, excludedIds),
       taskGraphContext: deps.taskGraphContext,
-      prepareAdmission: (sessionId, text, clientMsgId) =>
-        deps.prepareAutoProviderAdmission?.(sessionId, text, clientMsgId),
       send: (...args) => deps.deliver(...args),
       dispatch: (...args) => deps.dispatch(...args),
       cancel: (id, turnId) => {

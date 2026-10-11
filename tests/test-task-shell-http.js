@@ -7,6 +7,59 @@ const { fixture } = require('./helpers/task-shell');
 const { mountTaskShellRoutes, pageTaskHistory } = require('../src/task-shell/routes');
 const { createTaskOperations } = require('../src/task-shell/task-operations');
 const { createClient } = require('../public/task-shell-client');
+const { createOrchestrationRuntime } = require('../src/orchestration/runtime');
+const { createQueuedTurnPreparation } = require('../src/chat/admission-progress');
+
+test('真实发送接口在模型路由和工作区准备期间已经返回，重复请求只执行一次', async t => {
+  let queue, releaseRouting, releaseWorkspace;
+  const routingGate = new Promise(resolve => { releaseRouting = resolve; });
+  const workspaceGate = new Promise(resolve => { releaseWorkspace = resolve; });
+  const f = fixture(t, { getDirectory: id => ({ id }),
+    send: (sessionId, text, options) => queue.admitSessionWork({ sessionId, text, options,
+      source: 'task-shell', idempotencyKey: options.idempotencyKey }) });
+  const deliveries = [], routing = [];
+  const prepare = createQueuedTurnPreparation({ prepareRouting: async (...args) => {
+    routing.push(args); await routingGate;
+  } });
+  queue = createOrchestrationRuntime({ file: `${f.file}.queue.json`, databaseFile: `${f.file}.queue.sqlite`,
+    beforeDeliver: async descriptor => { await prepare(descriptor); await workspaceGate; },
+    runChatTurn: (sessionId, text, opts) => { deliveries.push({ sessionId, text, opts }); return true; },
+    hasPersistedDelivery: async (sessionId, id) => deliveries.some(d => d.sessionId === sessionId && d.opts.deliveryId === id),
+  });
+  const created = await f.runtime.createStandalone({ dirId: 'd1', title: '异步发送验证', cli: 'codex', clientMsgId: 'create' });
+  const app = express(); app.use(express.json());
+  mountTaskShellRoutes(app, { getRuntime: () => f.runtime });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const send = () => fetch(`http://127.0.0.1:${server.address().port}/api/task-shell-tasks/${created.taskId}/messages`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(2000),
+      body: JSON.stringify({ text: '请执行任务', clientMsgId: 'message-1', intent: 'work' }),
+    });
+    const response = await send(), receipt = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(receipt.ok, true);
+    assert.equal(deliveries.length, 0, '准备尚未放行时，接口已经返回');
+    assert.equal(f.store.get('receipt', receipt.receiptId).status, 'accepted');
+    const rows = await queue.outbox.list({ sessionId: created.sessionId });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].payload.message, '请执行任务');
+    assert.deepEqual(await (await send()).json(), receipt);
+    assert.equal(deliveries.length, 0);
+    releaseRouting(); releaseWorkspace();
+    await queue.tick();
+    assert.equal(deliveries.length, 1);
+    assert.equal(routing.length, 1);
+    assert.equal(routing[0][2], receipt.receiptId);
+    assert.equal((await queue.outbox.get(rows[0].id)).state, 'delivered');
+    await send(); await queue.tick();
+    assert.equal(deliveries.length, 1);
+  } finally {
+    releaseRouting(); releaseWorkspace();
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+    await queue.dispose();
+  }
+});
 
 test('read-only task history pages keep exact task messages and stable cursors', () => {
   const messages = Array.from({ length: 7 }, (_, index) => ({ id: `session:m${index}`, sourceMessageId: `m${index}`, role: 'assistant', content: `${index}` }));
