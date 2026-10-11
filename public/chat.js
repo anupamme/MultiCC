@@ -669,7 +669,7 @@ const chatTransport = window.MultiCCChatTransport.createTransport({
   onMessage({ data }) {
     try {
       const message = JSON.parse(data);
-      if (['task_state', 'system', 'chat_msg_meta', 'task_separation_updated'].includes(message.type)) taskSeparation?.refresh();
+      taskSeparation?.onEvent(message);
       if (message.type === 'task_attribution_updated') window.MultiCCTaskAttributionRuntime?.onBroadcast?.(message);
       if (message.type === 'shell_history_update') {
         chatHistoryView.commitSourcePage(message.sourceSessionId, message.messages || []);
