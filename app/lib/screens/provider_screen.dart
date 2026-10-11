@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../i18n.dart';
@@ -394,6 +395,8 @@ class _ProviderScreenState extends State<ProviderScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('Provider'),
         actions: [
           IconButton(

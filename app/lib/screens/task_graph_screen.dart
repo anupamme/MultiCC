@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:http/http.dart' as http;
 
 import '../services/settings_service.dart';
@@ -319,6 +320,8 @@ class TaskGraphScreenState extends State<TaskGraphScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('任务图谱'),
         actions: [
           IconButton(

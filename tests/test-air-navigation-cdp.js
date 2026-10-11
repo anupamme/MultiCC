@@ -134,3 +134,49 @@ test('the three-step guide can be resumed after dismissing and reflects real set
 
   });
 });
+
+test('手机底部导航保留最近任务、真实来路与项目切换', async t => {
+  if (!findChromeBinary()) return t.skip('需要浏览器');
+  const state = fixture();
+  await withCdpHarness({ routes: state.routes, screenshotDir: shots }, async page => {
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await page.navigate('/air');
+    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-create') && document.querySelector('.mobile-console-recent')`));
+    assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').hidden`), false);
+    assert.equal(await page.evaluate(`document.querySelectorAll('[data-mobile-view]').length`), 3);
+    assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[2].right<=innerWidth;})()`), true);
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#mobile-nav')).display`), 'none');
+    t.diagnostic(await page.screenshot('mobile-implemented-home'));
+    await page.evaluate(`document.querySelector('[data-mobile-view="recent"]').click()`);
+    assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')`));
+    assert.equal(await page.evaluate(`document.querySelector('#task-title').textContent`), '最近任务');
+    assert.equal(await page.evaluate(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length`), 4);
+    await page.evaluate(`const field=document.querySelector('#mobile-task-search'); field.value='登录';field.dispatchEvent(new Event('input'));`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length`), 1);
+    await page.evaluate(`document.querySelector('#air-mobile-settings').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#page-back').textContent`), '‹ 最近任务');
+    assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').hidden`), true);
+    await page.evaluate(`document.querySelector('[data-category="airSettingsMobile"]').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#page-back').textContent`), '‹ 设置');
+    assert.equal(await page.evaluate(`document.querySelector('#task-title').textContent`), '手机与通知');
+    await page.evaluate(`document.querySelector('#page-back').click()`);
+    assert.ok(await page.waitFor(`!new URLSearchParams(location.search).has('category') && document.querySelector('#task-title').textContent === '设置'`));
+    await page.evaluate(`document.querySelector('#page-back').click()`);
+    assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')?.value === '登录'`));
+    await page.evaluate(`document.querySelector('#air-mobile-project').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#directory-flyout').hidden`), false);
+    assert.equal(await page.evaluate(`(() => { const r=document.querySelector('#directory-flyout').getBoundingClientRect();return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`), true);
+    await page.evaluate(`document.querySelector('#directory-flyout [data-dir-id="api"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-project').textContent.includes('后端服务')`));
+    await page.evaluate(`document.querySelector('#air-mobile-create').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog').open`), true);
+    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog-directory').value`), 'api');
+    await page.evaluate(`document.querySelector('#quick-task-dialog').close();document.querySelector('[data-mobile-view="schedules"]').click()`);
+    assert.ok(await page.waitFor(`location.search.includes('view=schedules')`));
+    for (const width of [360, 390, 430]) {
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+      assert.equal(await page.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true, `${width} 像素无横向溢出`);
+      assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').getBoundingClientRect().bottom <= innerHeight`), true);
+    }
+  });
+});

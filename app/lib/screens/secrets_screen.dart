@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:http/http.dart' as http;
 
 import '../i18n.dart';
@@ -196,7 +197,9 @@ class _SecretsScreenState extends State<SecretsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: Text(t('secretsVaultTitle'))),
+      appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,title: Text(t('secretsVaultTitle'))),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
         child: Column(

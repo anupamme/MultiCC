@@ -14,6 +14,7 @@ import '../services/settings_service.dart';
 import '../services/update_service.dart';
 import '../theme.dart';
 import '../widgets/lan_discovery_picker.dart';
+import '../widgets/named_back_button.dart';
 import '../widgets/model_picker.dart';
 import 'agent_resources_screen.dart';
 import 'aux_screen.dart';
@@ -29,6 +30,21 @@ import 'voice_settings_screen.dart';
 
 enum SettingsInitialSection { global, goal }
 
+enum SettingsPanel {
+  connection('连接与服务地址', ['serverConnection']),
+  models('默认模型', ['newSessionSettings']),
+  notifications('通知与后台运行', ['notifications']),
+  goal('任务预检', ['goalPrecheck']),
+  appearance('语言与外观', ['appearance']),
+  security('访问安全', ['serverSettings']),
+  advanced('开发者模式', ['experienceMode']),
+  about('关于与更新', ['about']);
+
+  const SettingsPanel(this.title, this.keys);
+  final String title;
+  final List<String> keys;
+}
+
 /// Unified in-app settings page. Covers app-local config (server connection,
 /// default model, notifications, appearance) and links out to the web
 /// dashboard for server-side settings (voice keys, WeChat, …). Scheduled
@@ -36,11 +52,13 @@ enum SettingsInitialSection { global, goal }
 class SettingsScreen extends StatefulWidget {
   final SettingsService settings;
   final SettingsInitialSection initialSection;
+  final SettingsPanel? panel;
 
   const SettingsScreen({
     super.key,
     required this.settings,
     this.initialSection = SettingsInitialSection.global,
+    this.panel,
   });
 
   @override
@@ -101,7 +119,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _fontScale = s.fontScale.value;
     _goalMinCtrl = TextEditingController(text: '60');
     _accessTokenCtrl = TextEditingController();
-    if (s.advancedMode.value) _loadAdvancedSettings();
+    if (s.advancedMode.value || widget.panel == SettingsPanel.security || widget.panel == SettingsPanel.goal) {
+      _loadAdvancedSettings();
+    }
     _loadVersion();
     if (widget.initialSection == SettingsInitialSection.goal) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -397,9 +417,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final advancedMode = widget.settings.advancedMode.value;
+    final showDetails = advancedMode || widget.panel != null;
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: Text(t('settingsTitle'))),
+      appBar: AppBar(leading: const NamedBackButton(), leadingWidth: 100,
+        title: Text(widget.panel?.title ?? t('settingsTitle'))),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
         child: Column(
@@ -505,7 +527,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }),
               ),
               const SizedBox(height: 14),
-              _Label('Access Token'),
+              _Label(t('accessPassword')),
               _Input(
                 controller: _tokenCtrl,
                 hint: t('optionalIfUnset'),
@@ -540,7 +562,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          _advancedOnly(advancedMode, _Section(
+          _advancedOnly(showDetails, _Section(
             title: t('newSessionSettings'),
             children: [
               _Tile(
@@ -596,7 +618,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
             ],
           ),
-          _advancedOnly(advancedMode, _Section(
+          _advancedOnly(showDetails, _Section(
             key: _goalSectionKey,
             title: t('goalPrecheck'),
             children: [
@@ -705,7 +727,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _Hint(t('fontSizePreview')),
             ],
           ),
-          _advancedOnly(advancedMode, _Section(
+          _advancedOnly(showDetails, _Section(
             title: t('management'),
             children: [
               _NavTile(
@@ -759,7 +781,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           )),
-          _advancedOnly(advancedMode, _Section(
+          _advancedOnly(showDetails, _Section(
             title: t('serverSettings'),
             children: [
               _Hint(t('serverSettingsHint')),
@@ -813,6 +835,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 4),
                 _Hint(t('remoteReadOnlyHint')),
               ],
+              if (widget.panel == null) ...[
               const Divider(height: 24),
               const SizedBox(height: 8),
               _NavTile(
@@ -900,6 +923,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ),
+              ],
             ],
           )),
           _Section(
@@ -957,7 +981,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ),
-          ],
+          ].where((child) => widget.panel == null ||
+            child is _Section && widget.panel!.keys.any((key) => child.title == t(key))).toList(),
         ),
       ),
     );

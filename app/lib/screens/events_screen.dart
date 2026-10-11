@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 
 import '../models/message.dart';
 import '../services/manage_service.dart';
@@ -78,6 +79,8 @@ class _EventsScreenState extends State<EventsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('活动记录'),
         actions: [
           IconButton(

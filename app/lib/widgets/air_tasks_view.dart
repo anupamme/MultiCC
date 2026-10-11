@@ -43,10 +43,15 @@ import 'air/air_task_details.dart';
 import 'air/air_task_status.dart';
 import 'air/air_task_actions.dart';
 import 'air/air_workspace_card.dart';
+import 'air/air_mobile_workspace.dart';
+import 'air/air_mobile_setup.dart';
+import '../screens/air_settings_screen.dart';
 import 'create_session_dialog.dart';
 
 import 'tour_overlay.dart';
 import 'workspace_navigation_drawer.dart';
+
+part 'air/air_mobile_shell.dart';
 
 /// Air 的移动端首页：目录优先，任务是行，对话开在自己的聊天页里。
 ///
@@ -94,7 +99,7 @@ class AirTasksView extends StatefulWidget {
 /// `console` 是控制台 —— Web 那边它也是主区域里的一页（`?view=overview`），不是
 /// 盖在别处的一层。App 从前把它做成一条 push 的路由，于是左上角长出一颗返回
 /// 箭头，跟别的页不是一路；现在它回到主区里来，页头就只剩同一颗 ☰ 了。
-enum _AirMode { console, tasks, library }
+enum _AirMode { console, tasks, library, recent, schedules }
 
 /// 目录首页顶部那道切换（Web `public/air.html` 的 `#directory-mode`）。
 ///
@@ -113,6 +118,9 @@ class _AirTasksViewState extends State<AirTasksView>
     httpClient: widget.httpClient,
   );
   final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _mobileSchedules = GlobalKey<AirSchedulePanelState>();
+  final _mobileSetup = GlobalKey<AirMobileSetupState>();
+  void _updateMobile(VoidCallback change) => setState(change);
   // 新手引导（Web `public/tour.js`）落在首页的那两步：第 1 步圈目录库的
   // 「添加」，第 2 步圈输入区。见 [TourOverlay]。
   final _tourKey = GlobalKey<TourOverlayState>();
@@ -1213,6 +1221,7 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 「固定 Air 任务」要能直接进到那条任务 —— 哪怕它在另一个目录里。
   void _openSchedules() {
     _closeDrawer();
+    if (MediaQuery.sizeOf(context).width < 760) { setState(() => _mode = _AirMode.schedules); return; }
     final navigator = Navigator.of(context);
     unawaited(
       navigator.push(
@@ -1310,7 +1319,10 @@ class _AirTasksViewState extends State<AirTasksView>
 
   Future<void> _push(WidgetBuilder builder) async {
     _closeDrawer();
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: builder));
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      settings: RouteSettings(arguments: {'backLabel': _mobileTitle}),
+      builder: builder,
+    ));
   }
 
   /// 全部功能：老首页抽屉里那张完整的表。侧栏只摆常用的几个，剩下的从这里进
@@ -1332,6 +1344,7 @@ class _AirTasksViewState extends State<AirTasksView>
   }
 
   void _openDestination(WorkspaceDestination destination) {
+    if (destination == WorkspaceDestination.global) { unawaited(_mobileSettings()); return; }
     // 定时任务在 Air 里已经有原生中心了，别再散到老抽屉那个只认 CLI 的页面上。
     if (destination == WorkspaceDestination.cron) {
       _openSchedules();
@@ -1529,6 +1542,7 @@ class _AirTasksViewState extends State<AirTasksView>
     required int runningHere,
     required bool showToolbar,
   }) {
+    if (!showToolbar) return _mobileScaffold(data, directory, tasks, runningDirectories);
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: AppColors.bg,
@@ -1638,6 +1652,8 @@ class _AirTasksViewState extends State<AirTasksView>
             Text(
               switch (_mode) {
                 _AirMode.console => t('airConsole'),
+                _AirMode.recent => t('airRecentTasks'),
+                _AirMode.schedules => t('airScheduledTasks'),
                 _AirMode.library => '工作目录',
                 _AirMode.tasks => directory?.name ?? '工作目录',
               },
@@ -1800,6 +1816,8 @@ class _AirTasksViewState extends State<AirTasksView>
             ),
           Expanded(
             child: switch (_mode) {
+              _AirMode.recent => _mobileWorkspace(data),
+              _AirMode.schedules => _mobileSchedulePanel(data),
               _AirMode.console => AirConsoleBody(
                 settings: widget.settings,
                 httpClient: widget.httpClient,

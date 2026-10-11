@@ -49,6 +49,7 @@
     ['airSettingsAdvanced', ['workspaces', 'resources', 'skillsync']],
   ];
   let settingsCategory = 'airSettingsModels';
+  let settingsRoute = '';
   // Native page modules. Return navigation belongs to the Air shell history.
   const nativePanels = {
     memory: { module: 'MultiCCAirMemory' },
@@ -640,6 +641,7 @@
     for (const task of executing.slice(0, 5)) runningPanel.append(openRow(task));
     if (!executing.length) runningPanel.append(make('p', t('airAdminNoRunningTasks'), 'admin-empty'));
     content.replaceChildren(attention, runningPanel, stats, drawer);
+    root.MultiCCAirMobile?.decorateConsole(context);
 
   }
 
@@ -1178,6 +1180,9 @@
   function renderSettings(context) {
     setActions();
     const content = el('admin-content');
+    settingsRoute = location.search;
+    const narrow = matchMedia('(max-width: 760px)').matches;
+    const categoryPage = new URLSearchParams(location.search).get('category');
     if (settingGroups.some(([key]) => key === history.state?.airSettingsCategory)) settingsCategory = history.state.airSettingsCategory;
     const layout = make('div', null, 'air-settings-layout');
     const categories = make('nav', null, 'air-settings-categories');
@@ -1186,17 +1191,22 @@
     const icons = { provider: '✦', aux: '◎', goal: '◇', voice: '♪', push: '◔', tunnel: '⌁', bridges: '⇄', global: '⚙', secrets: '♧', storage: '⇧', workspaces: '▣', resources: '⬢', skillsync: '⇅' };
     for (const [title, modes] of settingGroups) {
       const tab = action(t(title), () => {
+        if (narrow) {
+          const url = new URL(location.href); url.searchParams.set('category', title);
+          root.MultiCCAirNavigation.write(url.pathname + url.search);
+        }
         settingsCategory = title;
         history.replaceState({ ...history.state, airSettingsCategory: title }, '');
         root.MultiCCAirMore.park();
         renderSettings(context);
-        el('admin-content').querySelector(`[data-category="${title}"]`).focus();
+        if (narrow) root.MultiCCAirMobile.renderSettingsHeader();
+        else el('admin-content').querySelector(`[data-category="${title}"]`).focus();
       });
       tab.dataset.category = title;
       tab.setAttribute('aria-current', title === settingsCategory ? 'page' : 'false');
       categories.append(tab);
       const section = make('section', null, 'admin-panel air-settings-group');
-      section.hidden = title !== settingsCategory;
+      section.hidden = narrow ? title !== categoryPage : title !== settingsCategory;
       section.append(make('h3', t(title)));
       const grid = make('div', null, 'air-settings-grid');
       for (const mode of modes) {
@@ -1212,6 +1222,7 @@
       if (title === 'airSettingsComputer') root.MultiCCAirMore.mount(section);
       groups.append(section);
     }
+    categories.hidden = narrow && !!categoryPage;
     layout.append(categories, groups);
     content.replaceChildren(layout);
   }
@@ -1276,13 +1287,14 @@
 
   function render(mode, context, force = false) {
     currentContext = context;
+    if (mode === 'recent') { root.MultiCCAirMore?.park(); activeMode = mode; setActions(); return root.MultiCCAirMobile?.renderRecent(context); }
     if (mode === 'overview') {
       root.MultiCCAirMore?.park();
       activeMode = mode;
       renderOverview(context);
       return;
     }
-    if (!force && activeMode === mode) return;
+    if (!force && activeMode === mode && !(mode === 'settings' && settingsRoute !== location.search)) return;
     root.MultiCCAirMore?.park();
     activeMode = mode;
     if (mode === 'attention') return renderAttention(context);
@@ -1325,7 +1337,7 @@
   }
 
   root.MultiCCAirAdmin = Object.freeze({
-    modes: new Set(['overview', 'attention', 'docs', 'memory', 'settings', ...Object.keys(legacyPanels)]),
+    modes: new Set(['overview', 'recent', 'attention', 'docs', 'memory', 'settings', ...Object.keys(legacyPanels)]),
     render,
     // The shell's console badge shows the same set the panel's first section does.
     urgentTasks,

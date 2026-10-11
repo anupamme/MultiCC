@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:http/http.dart' as http;
 
@@ -382,6 +383,8 @@ class MemoryGraphScreenState extends State<MemoryGraphScreen>
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('记忆图谱'),
         actions: [
           IconButton(

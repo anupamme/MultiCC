@@ -1445,6 +1445,7 @@
     const selectedTask = headerEntry?.task || listedTask;
     const adminHeadings = {
       // 控制台这一页自己：跨全部工作目录的任务总览。
+      recent: [t('airCrumbConsole'), t('airRecentTasks'), t('airAdminSearchTasksLabel')],
       overview: [t('airCrumbConsole'), t('airConsole'), t('airConsoleHint')],
       // 「谁在等我」完整清单（控制台只放最近几条）。
       attention: [t('airCrumbConsole'), t('airAdminAttention'), t('airAdminAttentionHint')],
@@ -1833,6 +1834,7 @@
 
     renderSidebarTasks();
     renderPins();
+    window.MultiCCAirMobile?.render({ ...adminContext(), mode, taskId, recentTasks: sidebarTasks() });
 
     // #empty 就是「目录详情」这一页，它不再给谁让位：有对话时它是被浮层盖住的那一层，
     // 没对话时它就是页面上唯一的那一层。所以这里只管浮层开不开，不动 #empty —— 它
@@ -2607,7 +2609,7 @@
 
   function adminContext() {
     return {
-      data, scheduleTasks: window.MultiCCAirSchedules?.tasks() || [], api, setMode, navigate, notice, directoryName, directoryId,
+      data, recentTasks: sidebarTasks(), scheduleTasks: window.MultiCCAirSchedules?.tasks() || [], api, setMode, navigate, notice, directoryName, directoryId,
       deleteTask: task => deleteTaskById(task),
       // 中文词表只有一份（stateNames）：面板要说的状态词跟侧栏是同一批，
       // 传下去比在 air-admin.js 里再抄一份可靠。

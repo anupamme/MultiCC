@@ -4,7 +4,7 @@
 // Forward retain the same meaning as the visible return button.
 (function (root) {
   const $ = id => document.getElementById(id);
-  const primary = new Set(['overview', 'settings', 'schedules', 'tasks', 'library']);
+  const primary = new Set(['overview', 'settings', 'schedules', 'tasks', 'library', 'recent']);
   let context;
   function source() {
     return { url: location.pathname + location.search, title: $('task-title').textContent,
@@ -41,7 +41,7 @@
       if (on) $(id).setAttribute('aria-current', 'page'); else $(id).removeAttribute('aria-current');
     }
     $('side-more').onclick = () => setMode('settings');
-    $('recent-all').onclick = () => { root.MultiCCAirAdmin.showAllTasks(); setMode('overview'); };
+    $('recent-all').onclick = () => { if (matchMedia('(max-width: 760px)').matches) setMode('recent'); else { root.MultiCCAirAdmin.showAllTasks(); setMode('overview'); } };
   }
   root.MultiCCAirNavigation = { write, render, back, go: view => context?.setMode(view),
     restore: () => requestAnimationFrame(() => {

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -319,6 +320,8 @@ class _DocsRegistryScreenState extends State<DocsRegistryScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: Text(t('docsServices')),
         actions: [
           IconButton(
