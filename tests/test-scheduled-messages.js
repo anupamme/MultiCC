@@ -76,6 +76,7 @@ test('a due message joins the ordinary FIFO while the session has an active turn
   await runtime.admitSessionWork({
     sessionId: 'session-A', text: '正在执行的任务', idempotencyKey: 'active-turn',
   });
+  await runtime.tick();
   assert.deepEqual(injections.map(item => item.text), ['正在执行的任务']);
 
   const scheduled = await runtime.scheduleMessage({

@@ -198,6 +198,7 @@ function createOrchestrationRuntime({
   let started = false;
   let stopped = false;
   let tickTail = Promise.resolve();
+  let admissionWakeup = null;
 
   function addPending(sessionId, id) {
     const ids = pendingBySession.get(sessionId) || new Set();
@@ -1297,8 +1298,16 @@ function createOrchestrationRuntime({
 
   async function admitSessionWork(spec) {
     const admitted = await sessionScheduler.admit(spec);
-    if (admitted.ok) await tick();
-    const current = admitted.ok ? await sessionScheduler.status(spec.sessionId) : admitted.schedule;
+    // 入队事务已经可靠落盘。接口只确认接收，不等待工作区准备、路由或
+    // 执行器启动；定时唤醒与周期扫描共用同一套可恢复、幂等的投递流程。
+    if (admitted.ok && !stopped && admissionWakeup === null) {
+      admissionWakeup = setTimeoutFn(() => {
+        admissionWakeup = null;
+        if (!stopped) tick().catch(() => {});
+      }, 0);
+      admissionWakeup?.unref?.();
+    }
+    const current = admitted.schedule;
     return {
       ...admitted,
       status: current?.state || null,
@@ -1345,6 +1354,8 @@ function createOrchestrationRuntime({
   }
 
   function tick() {
+    if (admissionWakeup !== null) clearTimeoutFn(admissionWakeup);
+    admissionWakeup = null;
     const operation = tickTail.then(runTick, runTick);
     tickTail = operation.catch(error => {
       log(`[orchestration] worker tick failed: ${error.message}`);
@@ -1373,6 +1384,8 @@ function createOrchestrationRuntime({
   async function stop() {
     if (stopped) return;
     stopped = true;
+    if (admissionWakeup !== null) clearTimeoutFn(admissionWakeup);
+    admissionWakeup = null;
     if (timer) clearIntervalFn(timer);
     timer = null;
     // Graceful shutdown kills CLI-owned Agent/Task subprocesses. Record that

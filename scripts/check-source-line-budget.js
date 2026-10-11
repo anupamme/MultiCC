@@ -34,25 +34,21 @@ const MIGRATION_DEBT = Object.freeze({
   // 3012~3021 之间，这道闸因此在 main 上一直是红的（flow 级，不挡发布，所以没人被
   // 拦住）。本次 SDK 控制通道那一轮把 error_during_execution 的 startup_failure_reason
   // 接进来时顺手压掉 9 行（3021 → 3012），按实测高水位登记到这一格。
-  // 真要退休还是那句：把每轮的 completion/结果收尾那一族拆出去，落回 <= 3000 就删条目。
+  // 2026-10-11 将消息前置准备移到后台队列后降至 2990 行，已移除该例外。
   // server.js 曾在 typed continuation/wait 迁移后回到默认 3k 以内（见上方注释）；
   // 2026-10-09 实测又越线到 3013/154980。v2.4.1 之后的增量来自官方账号/额度与
   // 主机电源那一族（revoked 别名 park、claude usage 队列接线、host-battery 路由）。
   // 按棘轮规则登记实测高水位；下一次动 server.js 该拆的仍是账号/额度路由那一族，
   // 落回 <= 3000 就删条目。2026-10-10 接 /api JSON gzip（src/http/json-compression.js）时
   // 同行挂载、压注释抵偿字节，实测 3012/154975，按棘轮下调。
+  // 2026-10-11 统一消息准备入口后，字节上限继续降至 154948。
   'server.js': Object.freeze({
     ceiling: 3012,
-    byteCeiling: 154975,
+    byteCeiling: 154948,
     target: 3000,
     reason: 'over 3000 again after v2.4.1 (official-account and host-battery route additions); registered at the measured high-water mark',
   }),
-  'src/chat/turn-engine.js': Object.freeze({
-    ceiling: 3012,
-    byteCeiling: 148420,
-    target: 3000,
-    reason: 'over 3000 since 0f276ebc (2026-09-22) without a registration; registered at the measured high-water mark',
-  }),
+  // 消息准备移到入队后的统一入口，turn-engine.js 已降回 3000 行以内。
 // app/lib/screens/main_shell.dart was registered here (ceiling 3167/122298) after
   // it crossed 3000 in 039c6e43 (跨目录控制台). 2026-09-27 删掉整块任务板 UI（老首页、
   // 目录详情浮层、任务板标签页与其级联的渲染类）后降到 699 行，已回到默认 3k 目标

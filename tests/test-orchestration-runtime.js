@@ -25,6 +25,7 @@ function fixture(t, overrides = {}) {
   const history = overrides.history || new Map();
   const injections = overrides.injections || [];
   let scheduled = null;
+  let wakeup = null;
   const runChatTurn = overrides.runChatTurn || (async (sessionId, text, opts) => {
     injections.push({ sessionId, text, opts });
     const ids = history.get(sessionId) || new Set();
@@ -62,6 +63,14 @@ function fixture(t, overrides = {}) {
       return { unref() {} };
     },
     clearIntervalFn() { scheduled = null; },
+    setTimeoutFn(fn, ms) {
+      if (ms !== 0) return setTimeout(fn, ms);
+      wakeup = fn; return { unref() {} };
+    },
+    clearTimeoutFn(handle) {
+      if (typeof handle?.hasRef === 'function') clearTimeout(handle);
+      else wakeup = null;
+    },
     outboxOptions: {
       leaseMs: 100,
       maxAttempts: 4,
@@ -71,8 +80,57 @@ function fixture(t, overrides = {}) {
     waitOptions: overrides.waitOptions || {},
     storeOptions: overrides.storeOptions || {},
   });
-  return { dir, file, clock, history, injections, logs, runtime, scheduled: () => scheduled };
+  return { dir, file, clock, history, injections, logs, runtime, scheduled: () => scheduled, wakeup: () => wakeup };
 }
+
+test('准备阻塞时入队立即返回，其他会话和同键重试也不等待执行器', async t => {
+  let release, entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const h = fixture(t, { beforeDeliver: async () => { entered(); await gate; } });
+  const spec = { sessionId: 'slow', text: '慢启动', idempotencyKey: 'once' };
+  try {
+    const admitted = await withTimeout(h.runtime.admitSessionWork(spec), 1000, '入队等待了准备工作');
+    assert.equal(admitted.ok, true);
+    assert.equal((await h.runtime.outbox.get(admitted.entry.id)).state, 'pending');
+    assert.equal(typeof h.wakeup(), 'function');
+    assert.equal(h.injections.length, 0);
+    h.wakeup()(); await withTimeout(started, 1000, '入队后没有自动唤醒后台投递');
+    const replay = await withTimeout(h.runtime.admitSessionWork(spec), 1000, '重试等待了执行器');
+    assert.equal(replay.duplicate, true);
+    assert.equal(replay.entry.id, admitted.entry.id);
+    const other = await withTimeout(h.runtime.admitSessionWork({ sessionId: 'other', text: '另一条', idempotencyKey: 'other' }), 1000, '另一会话被全局执行队列卡住');
+    assert.equal(other.ok, true);
+    assert.equal(h.injections.length, 0);
+    release(); await h.runtime.tick();
+    assert.deepEqual(h.injections.map(item => item.sessionId), ['slow', 'other']);
+  } finally { release(); await h.runtime.stop(); }
+});
+
+test('回执发出后尚未启动即关闭，重建运行时仍会投递一次', async t => {
+  const h = fixture(t);
+  const spec = { sessionId: 'restart', text: '重启后继续', idempotencyKey: 'durable-key' };
+  const admitted = await h.runtime.admitSessionWork(spec);
+  assert.equal(admitted.ok, true);
+  await h.runtime.stop();
+  assert.equal(h.wakeup(), null);
+  assert.equal(h.injections.length, 0);
+  const delivered = new Set();
+  let count = 0;
+  const rebuilt = createOrchestrationRuntime({ file: h.file,
+    runChatTurn: (_sessionId, _text, opts) => { count++; delivered.add(opts.deliveryId); return true; },
+    hasPersistedDelivery: async (_sessionId, id) => delivered.has(id),
+    setIntervalFn: () => ({ unref() {} }), clearIntervalFn() {},
+  });
+  try {
+    await rebuilt.start();
+    assert.equal(count, 1);
+    assert.equal((await rebuilt.outbox.get(admitted.entry.id)).state, 'delivered');
+    const replay = await rebuilt.admitSessionWork(spec); await rebuilt.tick();
+    assert.equal(replay.duplicate, true);
+    assert.equal(count, 1);
+  } finally { await rebuilt.stop(); }
+});
 
 test('external results resume a native continuation while passive notices stay passive', () => {
   for (const type of ['wait.result', 'wait.callback', 'wait.resolved', 'detached.result']) {
@@ -225,6 +283,7 @@ test('a non-backpressure workspace failure cannot cycle in FIFO forever', async 
   });
   assert.equal((await h.runtime.outbox.get(admitted.entry.id)).state, 'pending');
   await h.runtime.tick();
+  await h.runtime.tick();
   assert.equal((await h.runtime.outbox.get(admitted.entry.id)).state, 'dead-letter');
   assert.equal((await h.runtime.stats()).pendingDeliveries, 0);
   assert.equal((await h.runtime.sessionScheduler.status('broken-workspace')).queued.length, 0);
@@ -255,6 +314,7 @@ test('a message the human typed is announced when it dead-letters; machine work 
   const machine = await h.runtime.admitSessionWork({
     sessionId: 'typed', text: 'machine work', source: 'operation', idempotencyKey: 'machine-1',
   });
+  await h.runtime.tick();
   await h.runtime.tick();
   assert.equal((await h.runtime.outbox.get(typed.entry.id)).state, 'dead-letter');
   assert.equal((await h.runtime.outbox.get(machine.entry.id)).state, 'dead-letter');
@@ -666,6 +726,7 @@ test('legacy continuation lineage recovers only from one unique live dispatch ta
     options: { taskId: 'task-unique' },
     idempotencyKey: 'legacy-continuation',
   });
+  await unique.runtime.tick();
   assert.equal(unique.injections.length, 2);
   assert.equal(unique.injections[1].opts.originDispatchId, dispatch.id);
   assert.match(unique.logs.join('\n'), /dispatch_lineage_recovered/);
@@ -698,6 +759,7 @@ test('legacy continuation lineage recovers only from one unique live dispatch ta
     options: { taskId: 'task-shared' },
     idempotencyKey: 'ambiguous-continuation',
   });
+  await ambiguous.runtime.tick();
   const delivered = ambiguous.injections.find(entry => entry.text === 'ambiguous continuation');
   assert.ok(delivered);
   assert.equal(delivered.opts.originDispatchId, undefined);
@@ -827,6 +889,7 @@ test('a user shell continuation supersedes the old question; automatic continuat
     await runtime.admitSessionWork({ sessionId: 'worker', text: 'new instruction', source,
       options: { originContinue: true, ...(source === 'task-shell' ? { taskShellReceiptId: 'receipt-1' } : {}) },
       idempotencyKey: 'new-message' });
+    await runtime.tick();
     assert.equal(injections.length, 1);
     assert.equal(injections[0].opts.originContinue, true, 'native continuation keeps its task lineage');
     assert.equal(injections[0].opts.directUserInput, source === 'task-shell');
@@ -846,6 +909,7 @@ test('direct messages and dispatch requests share one success-gated FIFO', async
     idempotencyKey: 'direct-1',
   });
   assert.equal(first.ok, true);
+  await runtime.tick();
   assert.deepEqual(injections.map(entry => entry.text), ['direct one']);
   assert.equal(injections[0].opts.clientMsgId, 'browser-direct-1',
     'the committed message must reconcile the browser optimistic bubble');
@@ -1137,6 +1201,7 @@ test('a delivery that never settles releases the tick instead of freezing the wo
   await withTimeout(h.runtime.admitSessionWork({
     sessionId: 'other-1', text: 'unrelated', idempotencyKey: 'unrelated-1', options: {},
   }), 2000, 'a stuck delivery froze admission for an unrelated session');
+  await withTimeout(h.runtime.tick(), 2000, '其他会话的后台投递被卡住');
   assert.ok(
     h.injections.some(injection => injection.sessionId === 'other-1'),
     'an unrelated session keeps being delivered while one delivery hangs',

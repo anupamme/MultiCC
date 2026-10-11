@@ -82,5 +82,5 @@ test('the current tracked tree satisfies the ratcheted budget', () => {
   // refactor brought it below 3000. server.js registered its new debt on
   // 2026-10-09. Pin those policy changes without relaxing either budget.
   assert.deepEqual(result.debts.map(entry => entry.file),
-    ['server.js', 'src/chat/turn-engine.js']);
+    ['server.js']);
 });

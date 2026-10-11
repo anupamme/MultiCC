@@ -50,7 +50,7 @@ const {
 } = require('./provider-invocation');
 const { createAutoProviderRuntime } = require('./auto-provider-runtime');
 const { createAutoRouteNotes } = require('./auto-route-notes');
-const { admissionRootCause, deliverAfterPendingMemory } = require('./admission-progress');
+const { admissionRootCause, deliverAfterPendingMemory, createQueuedTurnPreparation } = require('./admission-progress');
 const { createAutoProviderHandoff } = require('./auto-provider-handoff');
 const { redactProviderRouteCapability } = require('../observability');
 const { createWsEnvelope } = require('../api-contract');
@@ -2936,31 +2936,7 @@ function createChatTurnEngine(deps) {
           // Send-time 中文/English toggle + voice-dictation marker; composeMessage renders both.
           if (msg.lang === 'zh' || msg.lang === 'en') turnOpts.lang = msg.lang;
           if (normalizeVoiceInput(msg)) turnOpts.voice = normalizeVoiceInput(msg);
-          let pendingMemory;
-          try { pendingMemory = getPendingMemoryDistill(sessionName); }
-          catch (error) { pendingMemory = Promise.reject(error); }
-          // Auto Provider difficulty routing has to land before the turn starts —
-          // runChatTurn resolves its initial provider route synchronously — so it
-          // rides this async admission window (see admission-progress.js).
-          const pendingRouting = prepareAutoProviderAdmission(sessionName, msg.text, turnOpts.clientMsgId);
-          if (pendingRouting) await pendingRouting;
-          const deliver = () => taskContextHost.deliverSessionMessage(sessionName, msg.text, turnOpts);
-          // A pending memory distill delays delivery so the new turn sees the
-          // distilled memory. Surface that otherwise-invisible admission phase
-          // immediately, but always continue delivery when distillation fails.
-          if (pendingMemory) await deliverAfterPendingMemory(
-            pendingMemory,
-            progress => chatBroadcast(sessionName, {
-              type: 'message_admission_progress',
-              stage: 'memory_distill',
-              message: msg.text,
-              clientMsgId: turnOpts.clientMsgId || null,
-              at: Date.now(),
-              ...progress,
-            }),
-            deliver,
-          );
-          else await deliver();
+          await taskContextHost.deliverSessionMessage(sessionName, msg.text, turnOpts);
           return;
         }
       } catch (e) {
@@ -2992,6 +2968,8 @@ function createChatTurnEngine(deps) {
     finalizeStreamingTurn,
     handleChatWs,
     prepareAutoProviderAdmission, autoProviderRuntime,
+    prepareQueuedTurn: createQueuedTurnPreparation({ prepareRouting: prepareAutoProviderAdmission,
+      getPendingMemory: getPendingMemoryDistill, broadcast: chatBroadcast }),
   };
 }
 

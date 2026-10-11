@@ -15,8 +15,33 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createChatTurnEngine, deliverAfterPendingMemory } = require('../src/chat/turn-engine');
 const { createSessionNotices } = require('../src/chat/session-notices');
+const { createQueuedTurnPreparation } = require('../src/chat/admission-progress');
 
 const noop = () => {};
+
+test('后台准备等路由结论落定后才放行，路由或记忆失败保留兜底与反馈', async () => {
+  let release, ready = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const events = [], calls = [];
+  const prepare = createQueuedTurnPreparation({
+    prepareRouting: (...args) => { calls.push(args); return gate; },
+    getPendingMemory: () => Promise.reject(new Error('记忆整理失败')),
+    broadcast: (id, frame) => events.push({ id, frame }),
+  });
+  const pending = prepare({ sessionId: 's1', text: '消息', opts: { directUserInput: true, clientMsgId: 'm1' } }).then(() => { ready = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ready, false);
+  assert.deepEqual(calls, [['s1', '消息', 'm1']]);
+  release(); await pending;
+  assert.equal(ready, true);
+  assert.equal(events.at(-1).frame.reason, 'memory_distill_failed');
+  assert.equal(events.at(-1).frame.clientMsgId, 'm1');
+  const fallback = createQueuedTurnPreparation({ prepareRouting: () => { throw new Error('路由不可用'); } });
+  await fallback({ sessionId: 's1', text: '继续', opts: { directUserInput: true, taskShellReceiptId: 'r1' } });
+  await prepare({ sessionId: 's1', text: '后台通知', opts: {} });
+  await prepare({ sessionId: 's1', text: '回答确认', opts: { directUserInput: true, taskShellControl: { intent: 'answer' } } });
+  assert.equal(calls.length, 1, '后台通知不额外调用用户输入路由');
+});
 
 function makeEngine({ hostAdmit } = {}) {
   const broadcasts = [];
@@ -45,7 +70,8 @@ test('task-shell admission can prepare Jev with the persisted session before its
     logger: { warn: noop, info: noop, error: noop }, chatBroadcast: noop,
     cancelClassify: noop, emitTurnOutcome: noop, classifyTurnEnd: noop,
   });
-  await engine.prepareAutoProviderAdmission('s1', 'Fix a typo', 'receipt-1');
+  await engine.prepareQueuedTurn({ sessionId: 's1', text: 'Fix a typo',
+    opts: { directUserInput: true, clientMsgId: 'receipt-1', taskShellReceiptId: 'receipt-1' } });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].session, session);
   assert.equal(calls[0].text, 'Fix a typo');
