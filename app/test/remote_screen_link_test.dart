@@ -12,7 +12,10 @@
 //
 // 独立文件而不是并进 message_bubble_task_test.dart：SettingsService 是进程内
 // 单例，一个文件只能钉一种服务器配置，那边的 host 固定是 127.0.0.1:3000。
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:multicc_app/models/message.dart';
 import 'package:multicc_app/services/settings_service.dart';
 import 'package:multicc_app/widgets/message_bubble.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -117,5 +120,56 @@ void main() {
       remoteScreenLinkMode('http://192.168.1.9:3000/chat.html?rs=control', null),
       isNull,
     );
+  });
+
+  testWidgets('message links launch externally and keep the chat route', (
+    tester,
+  ) async {
+    const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      calls.add(call);
+      return true;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+
+    for (final href in [
+      'https://example.com/report',
+      '/artifacts/report/index.html',
+      'mailto:help@example.com',
+    ]) {
+      calls.clear();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MessageBubble(
+              message: ChatMessage(
+                role: MessageRole.assistant,
+                content: '[打开链接]($href)',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开链接', findRichText: true));
+      await tester.pump();
+      final launch = calls.singleWhere((call) => call.method == 'launch');
+      final arguments = launch.arguments as Map;
+      expect(
+        arguments['url'],
+        href.startsWith('/') ? settings.buildHttpUrl(href) : href,
+      );
+      expect(arguments['useSafariVC'], isFalse);
+      expect(arguments['useWebView'], isFalse);
+      expect(find.byType(MessageBubble), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    }
   });
 }

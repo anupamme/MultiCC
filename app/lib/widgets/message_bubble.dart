@@ -75,7 +75,11 @@ Future<void> _handleLinkTap(BuildContext context, String? href) async {
   final uri = Uri.tryParse(target);
   if (uri == null) return;
 
-  final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  final ok = await launchUrl(
+    uri,
+    mode: LaunchMode.externalApplication,
+    webOnlyWindowName: '_blank',
+  );
   if (!ok && context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -212,7 +216,11 @@ Future<void> _openLocalFile(
       ),
     );
     if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+        webOnlyWindowName: '_blank',
+      );
       return;
     }
   } catch (_) {

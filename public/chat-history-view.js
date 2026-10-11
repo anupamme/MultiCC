@@ -203,6 +203,12 @@
       try {
         const safeHtml = safeMarkdown.render(text);
         root.innerHTML = typeof safeHtml === 'string' ? safeHtml : '';
+        // Apply after sanitization (which strips target), including raw HTML
+        // anchors. A chat embedded in Air must never navigate its own iframe.
+        root.querySelectorAll('a[href]').forEach(link => {
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+        });
       } catch (_) {
         root.textContent = text;
       }
