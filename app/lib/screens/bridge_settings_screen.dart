@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/manage_service.dart';
@@ -197,6 +198,8 @@ class _BridgeSettingsScreenState extends State<BridgeSettingsScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('消息桥接'),
         actions: [
           IconButton(

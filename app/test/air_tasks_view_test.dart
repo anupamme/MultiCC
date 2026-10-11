@@ -510,12 +510,8 @@ void main() {
     expect(tester.takeException(), isNull);
     // 首页只问一次 /api/air —— 目录库、侧栏、统计都从这一份快照里出。（侧栏底部
     // 的主机运维是另一条线，它自己问 /api/server-info 和 /api/version-check。）
-    // 起手是两份：首页自己一份，落地的控制台那一页自成一页（`AirConsoleBody` 自己
-    // 拉 `/api/air`）又一份；切进目录首页之后整块都吃首页那一份，不再有新请求。
-    expect(requests.where((path) => path.startsWith('/api/air')), [
-      '/api/air',
-      '/api/air',
-    ]);
+    // 手机控制台直接消费宿主快照，进入目录页也不重复请求。
+    expect(requests.where((path) => path.startsWith('/api/air')), ['/api/air']);
 
     await tester.tap(find.byKey(const ValueKey('air-task-delete-t1')));
     await tester.pumpAndSettle();
@@ -987,12 +983,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('最近任务')));
     await tester.pumpAndSettle();
 
     // 钉住的 t5 排在 t1 上面 —— t1 才是 updatedAt 最新的那一条。
-    final pinnedRow = find.byKey(const ValueKey('air-side-task-t5'));
-    final newestRow = find.byKey(const ValueKey('air-side-task-t1'));
+    final pinnedRow = find.byKey(const ValueKey('air-task-t5'));
+    final newestRow = find.byKey(const ValueKey('air-task-t1'));
     expect(pinnedRow, findsOneWidget);
     expect(
       tester.getTopLeft(pinnedRow).dy < tester.getTopLeft(newestRow).dy,
@@ -1094,17 +1090,17 @@ void main() {
     expect(bodies.single, {'taskId': 't1'});
     expect(find.text('已 Pin 住「任务 1」'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
+    await tester.tap(find.descendant(of: find.byType(NavigationBar), matching: find.text('最近任务')));
     await tester.pumpAndSettle();
     // 服务端回来的顺序是 [t4, t1]，不是客户端按 updatedAt 排的 [t1, t4]。
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('air-side-task-t4'))).dy <
-          tester.getTopLeft(find.byKey(const ValueKey('air-side-task-t1'))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey('air-task-t4'))).dy <
+          tester.getTopLeft(find.byKey(const ValueKey('air-task-t1'))).dy,
       isTrue,
     );
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('air-side-task-t1')),
+        of: find.byKey(const ValueKey('air-task-t1')),
         matching: find.byIcon(Icons.push_pin_rounded),
       ),
       findsOneWidget,
@@ -1379,7 +1375,7 @@ void main() {
     // 四组默认都折着，先展开它。
     await tapInSidebar(tester, find.text('重要功能'));
     expect(find.byKey(const ValueKey('air-more-task-graph')), findsOneWidget);
-    expect(find.text('任务图谱'), findsOneWidget);
+    expect(find.text(t('airTaskGraph')), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     client.close();
@@ -1681,12 +1677,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // 面板自己拉一次详情 —— 任务行那份快照里没有 attribution / execution。
-    // 前面那两份 `/api/air` 是加进来的：首页自己一份，转场前落地的控制台那一页
-    // 自成一页，也拉一份。
+    // 手机控制台与目录共享快照，详情只额外查询当前任务。
     expect(requests.where((path) => path.startsWith('/api/air')), [
-      '/api/air',
-      '/api/air',
-      '/api/air/tasks/t1',
+      '/api/air', '/api/air/tasks/t1',
     ]);
     expect(find.byKey(const ValueKey('air-details-panel')), findsOneWidget);
     // 计划任务还没发第一条消息：交付卡说的是「计划尚未执行」，不是「任务已就绪」。
@@ -1796,7 +1789,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('侧栏的「＋ 新任务」开的是统一输入框，不是把首页切回来', (tester) async {
+  testWidgets('手机底部的「新任务」开的是统一输入框，不是把首页切回来', (tester) async {
     final settings = await _settings();
     final requests = <String>[];
     final client = _client(requests);
@@ -1810,9 +1803,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
+    await tester.tap(find.byKey(const ValueKey('air-mobile-create')));
     await tester.pumpAndSettle();
-    await tapInSidebar(tester, find.text('新任务'));
 
     // 开出来的是目录首页那一个统一输入框模块本身 —— AI 配置和角色都在同一套
     // 胶囊里，提交就是那颗「创建并执行」。旧的简易表单（任务名称 / 模型 / 角色
@@ -1891,9 +1883,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
+    await tester.tap(find.byKey(const ValueKey('air-mobile-create')));
     await tester.pumpAndSettle();
-    await tapInSidebar(tester, find.text('新任务'));
 
     await tester.tap(
       find.descendant(
@@ -1951,9 +1942,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
+    await tester.tap(find.byKey(const ValueKey('air-mobile-create')));
     await tester.pumpAndSettle();
-    await tapInSidebar(tester, find.text('新任务'));
 
     await tester.enterText(
       find.descendant(

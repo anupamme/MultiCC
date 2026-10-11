@@ -201,7 +201,10 @@ void main() {
     expect(find.text('b 的终端'), findsNothing);
     // 混排的判据：任务那一类的东西整块不在了（不是排在下面）。
     expect(find.text('登录页面'), findsNothing);
-    expect(find.text('最近任务'), findsNothing);
+    // 最近任务仍作为主导航保留，终端正文中没有任务行。
+    expect(find.byKey(const ValueKey('air-task-t1')), findsNothing);
+    expect(find.descendant(of: find.byType(NavigationBar),
+      matching: find.text('最近任务')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // 切回 Chat，任务又回来 —— 两边是同一份快照的两种摆法，谁也不吃掉谁。
@@ -399,13 +402,9 @@ void main() {
     await closeView(tester);
   });
 
-  testWidgets('侧栏不再有 TERMINAL 一组：终端只在目录页里', (tester) async {
+  testWidgets('设置不混入终端列表：终端只在目录页里', (tester) async {
     await pumpView(tester);
-    await tester.tap(find.byKey(const ValueKey('air-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('更多与系统'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('更多与系统'));
+    await tester.tap(find.byKey(const ValueKey('air-mobile-settings')));
     await tester.pumpAndSettle();
 
     // 这一组原来在「更多与系统」里，和设置、主机运维混着排；终端属于每个目录，

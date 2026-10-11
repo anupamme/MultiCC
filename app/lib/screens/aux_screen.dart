@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 
 import '../models/provider_limit_label.dart';
 import '../services/manage_service.dart';
@@ -156,6 +157,8 @@ class _AuxScreenState extends State<AuxScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('AI 助手'),
         actions: [
           IconButton(

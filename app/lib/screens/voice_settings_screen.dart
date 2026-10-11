@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 
 import '../services/manage_service.dart';
 import '../services/settings_service.dart';
@@ -53,6 +54,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('语音设置'),
         actions: [
           IconButton(

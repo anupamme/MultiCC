@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 
 import '../services/manage_service.dart';
 import '../services/settings_service.dart';
@@ -80,6 +81,8 @@ class _TunnelSettingsScreenState extends State<TunnelSettingsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: const Text('外网穿透'),
         actions: [
           IconButton(

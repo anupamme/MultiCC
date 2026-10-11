@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/named_back_button.dart';
 
 import '../i18n.dart';
 import '../services/manage_service.dart';
@@ -207,6 +208,8 @@ class _AgentResourcesScreenState extends State<AgentResourcesScreen> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
+        leading: const NamedBackButton(),
+        leadingWidth: 110,
         title: Text(t('agentResources')),
         actions: [
           IconButton(
