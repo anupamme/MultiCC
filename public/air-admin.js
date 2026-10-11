@@ -396,6 +396,43 @@
     return card;
   }
 
+  // 「需要你处理」卡片：列数由 CSS 的 auto-fill 按宽度定，张数按可用高度裁 ——
+  // 视口占 40% 左右留给这一格，其余让给「进行中」和任务清单。手机端（≤760px）
+  // 仍走 air-mobile.css 的固定两张，这里不插手。
+  const PRIORITY_CARD_MAX = 24;
+  const PRIORITY_HEIGHT_SHARE = 0.4;
+  let priorityObserver = null;
+  function fitPriorityCards(grid) {
+    const cards = [...grid.querySelectorAll('.console-priority-card')];
+    if (!cards.length || !grid.isConnected) return;
+    for (const card of cards) card.classList.remove('fit-out');
+    if (window.matchMedia('(max-width: 760px)').matches) return;
+    const style = getComputedStyle(grid);
+    const columns = Math.max(1, style.gridTemplateColumns.split(' ').filter(Boolean).length);
+    const gap = parseFloat(style.rowGap) || 0;
+    const cardHeight = cards[0].getBoundingClientRect().height || 64;
+    const rows = Math.max(1, Math.min(6, Math.floor((window.innerHeight * PRIORITY_HEIGHT_SHARE + gap) / (cardHeight + gap))));
+    cards.slice(columns * rows).forEach(card => card.classList.add('fit-out'));
+  }
+  let priorityGrid = null;
+  function watchPriorityFit(grid) {
+    priorityObserver?.disconnect();
+    priorityObserver = null;
+    priorityGrid = grid;
+    if (typeof ResizeObserver !== 'function') { requestAnimationFrame(() => fitPriorityCards(grid)); return; }
+    // 只在宽度变了才重算：裁卡会改网格自身高度，不能被自己的变化再触发。
+    let width = -1;
+    priorityObserver = new ResizeObserver(() => {
+      if (!grid.isConnected) { priorityObserver?.disconnect(); return; }
+      if (Math.round(grid.clientWidth) === width) return;
+      width = Math.round(grid.clientWidth);
+      fitPriorityCards(grid);
+    });
+    priorityObserver.observe(grid);
+  }
+  // 视口高度变了网格宽度不一定变，所以窗口缩放单独挂一条（全局只挂一次）。
+  window.addEventListener('resize', () => { if (priorityGrid?.isConnected) fitPriorityCards(priorityGrid); });
+
   function renderOverview(context) {
     const { data, setMode, navigate } = context;
     const tasks = data?.tasks || [];
@@ -625,7 +662,7 @@
     const attentionHead = make('div', null, 'admin-panel-head');
     attentionHead.append(make('h2', t('airNeedsYou')), action(t('airRecentAll'), () => setMode('attention')));
     const cards = make('div', null, 'console-priority-grid');
-    for (const task of urgent.slice(0, 4)) {
+    for (const task of urgent.slice(0, PRIORITY_CARD_MAX)) {
       const error = taskStatus(task) === 'error';
       const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
       card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
@@ -636,6 +673,7 @@
     }
     if (!urgent.length) cards.append(make('p', t('airNothingNeedsYou'), 'admin-empty'));
     attention.append(attentionHead, cards);
+    watchPriorityFit(cards);
     const runningPanel = make('section', null, 'admin-panel console-running');
     runningPanel.append(make('h3', t('airAdminTileRunning')));
     for (const task of executing.slice(0, 5)) runningPanel.append(openRow(task));
