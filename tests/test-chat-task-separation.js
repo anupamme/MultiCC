@@ -51,6 +51,61 @@ test('a late fetch cannot display a suggestion for an old session', async () => 
   const p = c.refresh(); session = 'b'; release({ suggestion: { id: 'old' } }); await p;
   await new Promise(r => setImmediate(r)); assert.equal(shows, 0);
 });
+test('stream metadata does not poll suggestions and a replay burst performs one read', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture();
+  for (let i = 0; i < 537; i++) {
+    f.controller.onEvent({ type: 'chat_msg_meta' });
+    f.controller.onEvent({ type: 'system', subtype: 'status' });
+  }
+  t.mock.timers.tick(2000);
+  assert.equal(f.requests.length, 0);
+  for (let i = 0; i < 537; i++) f.controller.onEvent({ type: 'task_state' });
+  t.mock.timers.tick(999);
+  assert.equal(f.requests.length, 0);
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.shown.length, 1);
+  t.mock.timers.tick(10000);
+  assert.equal(f.requests.length, 1, 'no polling continues without a new event');
+});
+test('changes during a slow request get one delayed trailing read without overlapping', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let requests = 0, release;
+  const shown = [];
+  const controller = createController({ getSession: () => 's1',
+    request: () => { requests++; return new Promise(resolve => { release = resolve; }); },
+    show: suggestion => { shown.push(suggestion.id); }, navigate() {} });
+  const first = controller.refresh();
+  for (let i = 0; i < 80; i++) controller.onEvent({ type: 'task_separation_updated' });
+  t.mock.timers.tick(10000);
+  assert.equal(requests, 1);
+  release({ suggestion: null }); await first;
+  t.mock.timers.tick(999);
+  assert.equal(requests, 1);
+  t.mock.timers.tick(1);
+  assert.equal(requests, 2);
+  release({ suggestion: { id: 'new', title: 'New goal' } }); await Promise.resolve();
+  assert.deepEqual(shown, ['new']);
+  t.mock.timers.tick(10000);
+  assert.equal(requests, 2);
+});
+test('reconnect and turn boundaries restore or clear suggestions, using the current session', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture();
+  f.controller.onEvent({ type: 'system', subtype: 'init' });
+  f.session = 's2';
+  t.mock.timers.tick(1000); await Promise.resolve();
+  assert.equal(f.requests[0].url, '/api/sessions/s2/task-separation');
+  assert.equal(f.shown.length, 1);
+  f.suggestion = null;
+  f.controller.onEvent({ type: 'stream_start' });
+  f.controller.onEvent({ type: 'stream_end' });
+  t.mock.timers.tick(1000); await Promise.resolve();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.closes, 1);
+});
 test('popup renders untrusted names/reasons as text and disables both actions while saving', async () => {
   const old = global.document;
   const elements = [];

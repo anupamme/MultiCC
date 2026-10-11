@@ -6,7 +6,20 @@
       collapse: typeof handle?.collapse === 'function' ? handle.collapse : null };
   }
   function createController({ getSession, request, show, showPill = () => {}, navigate, report = () => {} }) {
-    let loading = false, again = false, displayed = null, handle = null;
+    let loading = false, again = false, displayed = null, handle = null, timer = null;
+    // Replay and streaming can emit hundreds of frames. A pending suggestion
+    // needs one refresh per burst, including one trailing read after a change
+    // during a slow request; it must not create a continuous fetch loop.
+    function scheduleRefresh() {
+      if (!getSession()) return;
+      if (loading) { again = true; return; }
+      if (timer !== null) return;
+      timer = setTimeout(() => { timer = null; void refresh(); }, 1000);
+    }
+    function onEvent(message) {
+      if (['task_state', 'task_separation_updated', 'stream_start', 'stream_end'].includes(message?.type)
+          || (message?.type === 'system' && message.subtype === 'init')) scheduleRefresh();
+    }
     function clear() { try { handle?.close?.(); } catch (_) {} handle = null; displayed = null; }
     function open(suggestion) {
       const session = getSession();
@@ -35,6 +48,7 @@
       else expandCard();
     }
     async function refresh() {
+      if (timer !== null) { clearTimeout(timer); timer = null; }
       if (loading) { again = true; return; }
       const session = getSession();
       if (!session) return;
@@ -50,10 +64,10 @@
         if (error.status !== 404) report(error);
       } finally {
         loading = false;
-        if (again) { again = false; void refresh(); }
+        if (again) { again = false; scheduleRefresh(); }
       }
     }
-    return { refresh };
+    return { refresh, onEvent };
   }
   function text(value) { return typeof value === 'string' ? value : value == null ? '' : String(value); }
   // 服务端拒绝带稳定 code（fork_source_busy 等），裸英文 message 可读性差；
