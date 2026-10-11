@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多电脑互联 · 业界做法调研 — MultiCC</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 32px 28px 90px; }
+  h1 { font-size: 28px; margin: 4px 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 10px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+  h3 { font-size: 15px; margin: 18px 0 6px; }
+  p, li { font-size: 14px; }
+  code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--panel-soft); border: 1px solid var(--hairline); border-radius: 5px; padding: 0 4px; }
+  pre { background: #1d2a3d; color: #dfe9f6; padding: 12px 14px; border-radius: 12px; font-size: 12.5px; line-height: 1.55; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; margin: 8px 0; }
+  th, td { border-bottom: 1px solid var(--hairline); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel-soft); color: var(--muted); font-size: 12px; }
+  .decision { border-left: 4px solid var(--accent); background: var(--blue-soft); padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .risk { border-left: 4px solid var(--amber); background: #fff8ee; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .found { border-left: 4px solid var(--green); background: #eefaf4; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .muted { color: var(--muted); }
+  .pat { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .pat .card { padding: 14px 16px; }
+  .pat .card h3 { margin: 0 0 4px; }
+  .pat .who { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+  .tag2 { display: inline-block; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--panel-soft); border: 1px solid var(--line); margin-right: 4px; }
+  .src { font-size: 12.5px; columns: 2; }
+  .src a { display: block; margin: 2px 0; }
+</style>
+</head>
+<body>
+<div class="proto-bar"><b>多电脑互联 · 业界做法</b><span class="tag">第三轮调研 · 2026-10-11</span><span class="sp"></span><a href="a-direct-research.html">直连 vs 中转</a><a href="index.html">← 返回对比</a></div>
+<div class="wrap">
+  <div class="muted" style="font-size:12px">MultiCC 多电脑统一管理 · 方案 A · 第三轮调研</div>
+  <h1>专门做多机互联的项目，都是怎么做的？</h1>
+  <p>调研了 18 个项目，分三类：<b>多机遥控 AI 编码代理</b>（Happy、happier、Omnara、VS Code Remote Tunnels、Coder、Claude Code Remote Control 等），<b>自托管多节点管理</b>（Proxmox、Portainer、Cockpit、Netdata、Home Assistant、Plex、Unraid、Syncthing 等），以及<b>组网层</b>（Tailscale、Cloudflare Tunnel）。</p>
+
+  <h2>0. 结论</h2>
+  <div class="decision">
+    <b>① 没有一个项目让浏览器在同一个页面里直接调用另一台电脑的接口。</b>Coder 的文档原话是「不支持浏览器直连」；Cockpit 做过类似的事，后来因为安全问题默认关掉了。<br>
+    <b>② 浏览器端只有两条成熟的路：</b>一是由某台电脑在服务端转发，浏览器只连一个地址（Proxmox、Portainer、Coder、Happy）；二是每台电脑一个独立地址，切换就是整页跳过去（VS Code Tunnels、Cockpit 新版、Home Assistant 网页）。<br>
+    <b>③ 原生 App 一律直连：</b>本地存一份服务器列表，滑一下或点一下就切换（Home Assistant、Plex、Jellyfin）。<br>
+    <b>④ 你要的「平等、没有主控」，Proxmox 有现成答案：</b>每个节点都能当入口，登录任意一台就能管全部；入口挂了换一台登录即可。
+  </div>
+  <p>对 MultiCC 的意思是：<b>你倾向的「客户端来做」在 App 上完全成立，而且是业界标准做法</b>；在浏览器上，「客户端来做」只能是整页跳转。要在浏览器里做到同页无感，只能由服务端转发，没有第三条路。</p>
+
+  <h2>1. 五种做法</h2>
+  <div class="pat">
+    <div class="card"><h3>① 入口节点转发（同源代理）</h3>
+      <div class="who">Proxmox · Portainer · Coder 的网页端 · TrueCommand</div>
+      <p style="margin:0">浏览器只连一台，这台在服务端把请求转给目标节点。<b>Proxmox 的每个节点都能转发</b>，登录票据用集群共享的密钥签名，任何节点都能验票。</p>
+      <p style="margin:6px 0 0"><span class="tag2">同页无感</span><span class="tag2">避开浏览器的所有限制</span><span class="tag2">多一跳</span></p></div>
+    <div class="card"><h3>② 机器主动外连到中继</h3>
+      <div class="who">Happy / happier · Portainer Edge · Netdata · Home Assistant 云 · Claude Code Remote Control</div>
+      <p style="margin:0">每台机器只往外连，长连到一个中继或汇聚点，<b>不需要开放任何入站端口，也不怕 NAT</b>。Happy、happier 的中继可以自建，只转发加密数据。</p>
+      <p style="margin:6px 0 0"><span class="tag2">外网手机也能看到只在内网的电脑</span><span class="tag2">需要一个常在线的中继</span></p></div>
+    <div class="card"><h3>③ 原生 App 存服务器列表，直连</h3>
+      <div class="who">Home Assistant App · Plex · Jellyfin</div>
+      <p style="margin:0">App 存多台服务器，Home Assistant 三指一滑就切换，Plex 按「内网 → 外网 → 中继」依次探测。各台独立登录，彼此之间没有信任关系。</p>
+      <p style="margin:6px 0 0"><span class="tag2">最简单</span><span class="tag2">切换快</span><span class="tag2">要求手机能直接连到那台</span></p></div>
+    <div class="card"><h3>④ 每台一个地址，整页跳转</h3>
+      <div class="who">VS Code Tunnels（<code>vscode.dev/tunnel/机器名</code>）· 网页版 Home Assistant · 各种「切换服务器」</div>
+      <p style="margin:0">切换就是换一个地址打开，用一次性票据免去重新登录。整页跳转不受跨域、混合内容、Chrome 本地网络授权的限制。</p>
+      <p style="margin:6px 0 0"><span class="tag2">实现最省事</span><span class="tag2">切换时刷新一次页面</span></p></div>
+    <div class="card" style="grid-column: span 2"><h3>⑤ 让 https 页面能直连局域网 IP（Plex 的绝招）</h3>
+      <div class="who">Plex（<code>*.plex.direct</code>）· Unraid（<code>*.myunraid.net</code>）</div>
+      <p style="margin:0">把 IP 编进域名：<code>192-168-1-7.&lt;机器哈希&gt;.plex.direct</code> 解析回 192.168.1.7，每台机器有一张通配证书。https 页面就能合法地直连局域网 IP。代价是要自己运营 DNS 和签证书服务，开了「DNS 重绑定防护」的路由器还会拦截。<b>这是浏览器直连唯一成熟的解法，但对 MultiCC 来说太重。</b></p></div>
+  </div>
+
+  <h2>2. 逐个项目</h2>
+  <table>
+    <tr><th>项目</th><th>拓扑</th><th>怎么加机器</th><th>怎么切换</th><th>对 MultiCC 的启示</th></tr>
+    <tr><td><b>Happy</b>（Claude Code 手机遥控）</td><td>手机和机器都外连到中继（可自建，MIT），端到端加密</td><td>电脑显示二维码，手机扫码交换密钥</td><td>同一 App，新建会话时用下拉框选机器</td><td>选机器只是请求里的一个参数，不跳地址</td></tr>
+    <tr><td><b>happier</b></td><td>同上，自建中继只要一条命令</td><td>同一账号；可以 SSH 一键装好并注册远程机器</td><td>同一 App，每个会话选「机器 + 目录」，可以把会话迁到另一台</td><td>「SSH 一键添加」值得借鉴</td></tr>
+    <tr><td><b>Claude Code Remote Control</b>（Anthropic 官方）</td><td>本机外连 Anthropic，不能自建</td><td>同一 claude.ai 账号</td><td>统一会话列表，用主机名区分</td><td>大厂也选择「外连 + 统一列表」</td></tr>
+    <tr><td><b>VS Code Remote Tunnels</b></td><td>两端都外连微软中继</td><td><code>code tunnel</code> + GitHub 登录</td><td>每台一个 <code>vscode.dev/tunnel/&lt;名&gt;</code> 地址，同一个域名</td><td>同域名 + 路径区分机器，就没有跨域问题</td></tr>
+    <tr><td><b>Coder</b></td><td>控制面 + 各节点外连；CLI 走 WireGuard 直连</td><td>—</td><td>同一个面板</td><td><b>浏览器明确不直连，统一由控制面转发</b></td></tr>
+    <tr><td><b>Proxmox VE</b></td><td><b>每个节点都能转发到其它节点</b></td><td>复制加入信息（IP + 证书指纹）</td><td>左侧资源树，同页切换</td><td><b>「平等 + 同页无感」的范本</b></td></tr>
+    <tr><td><b>Portainer</b></td><td>中心 Server；Edge Agent 主动外连并建立反向隧道</td><td>一串加入密钥 + 一条安装命令</td><td>环境卡片，同页切换</td><td>反向隧道成熟，但是中心化</td></tr>
+    <tr><td><b>Cockpit</b></td><td>入口机器 SSH 到别的机器并转发</td><td>填 SSH</td><td>地址变成 <code>/@主机/</code></td><td><b>反面教材</b>：几台机器的网页脚本跑在同一个源里，一台被攻破就能控制其它所有台，已默认关闭。<b>转发只转接口和数据，不转对方的前端</b></td></tr>
+    <tr><td><b>Netdata</b></td><td>子节点外推到父节点；子节点可以列多个父节点，自动切换</td><td>配置父节点地址和密钥</td><td>父节点面板看所有子节点</td><td>多个入口互为备份</td></tr>
+    <tr><td><b>Home Assistant</b></td><td>各实例独立；云端只做 TLS 透传，看不到明文</td><td>App 里添加服务器，局域网能自动发现</td><td><b>App 三指滑动切换</b>；网页版各开各的地址</td><td>App 多服务器列表成本最低</td></tr>
+    <tr><td><b>Plex</b></td><td>plex.tv 做目录 + 中继兜底</td><td>账号登录</td><td>App / 网页选服务器</td><td>按「内网 → 外网 → 中继」顺序探测；<code>plex.direct</code> 证书</td></tr>
+    <tr><td><b>Syncthing</b></td><td>每台各有自己的网页界面，没有跨设备管理</td><td>设备 ID = 证书指纹，双方都添加才连通</td><td>—</td><td>双向确认的配对方式值得借鉴</td></tr>
+  </table>
+  <p class="muted">另外看过：Omnara（中心化平台，偏重）、Claude Code UI（只支持单机，和 MultiCC 现状一样）、Remote Harness（一台当 Hub、其余外连，和 MultiCC 形态最像的小项目）、Unraid / TrueCommand（同 Plex / Portainer 的思路）、Jellyfin（客户端存列表）。</p>
+
+  <h2>3. 浏览器的硬约束（已核实）</h2>
+  <table>
+    <tr><th>浏览器</th><th>https 页面直连 http 内网 IP</th><th>说明</th></tr>
+    <tr><td>Chrome</td><td class="warn">普通请求要弹授权；<code>ws://</code> 直接拦</td><td>142 起普通请求需要授权，147（2026-04）起 WebSocket 也要。只有「公网页面访问内网」才会弹，内网之间、以及 Tailscale 的 <code>*.ts.net</code> 之间互访不弹。整页跳转不受影响。</td></tr>
+    <tr><td>Safari / iPhone</td><td class="warn">一律当混合内容拦掉</td><td>localhost 也不例外。唯一可靠的是「正规域名 + 正规证书」。</td></tr>
+    <tr><td>原生 App</td><td style="color:var(--green);font-weight:600">没有这些限制</td><td>iOS 需要声明本地网络权限（App 已声明）；Tailscale 的 100.x 地址要走 https。</td></tr>
+  </table>
+  <div class="found"><b>一个有用的发现：</b>如果你的几台电脑都装了 Tailscale，并用 <code>tailscale serve</code> 拿到 <code>机器名.xxx.ts.net</code> 的 https 地址，那么从一台的页面去调另一台，<b>不弹授权、证书合法</b>，加上 CORS 就能在浏览器里同页直连。代价是手机也得装 Tailscale 并登录同一个账号。</div>
+
+  <h2>4. 对 MultiCC 的建议（据此修正）</h2>
+  <pre>              App（主力）                         浏览器
+切换电脑      直连，本地存电脑列表（③）            整页跳到那台自己的 Air + 一次性票据（④）
+              HA 式快速切换；内网 → 外网依次探测    不跨域、不碰混合内容、不弹授权；用的是那台自己的前端，没有版本差异
+其它电脑状态  App 直接拉各台的摘要                  当前电脑的服务端去拉各台摘要（只读、只有计数）
+                                                    浏览器只读本机接口，不撞任何墙
+推送          每台电脑直接推给手机，点开自动切机    —
+以后（可选）  —                                     Proxmox 式「每台都能转发」（①）：
+                                                    同页无感 + 外网也能看只在内网的电脑；方案 B 也要用它</pre>
+  <ul>
+    <li><b>第一步完全是「客户端来做」</b>，符合你的倾向：App 直连；浏览器整页跳转也是浏览器自己完成的，服务端不转发任何对话或接口。</li>
+    <li><b>唯一的服务端之间调用</b>是拉其它电脑的摘要（几个数字），给浏览器里的切换器和「其它电脑」状态条用。这样浏览器端绕开了全部四道墙，也是 Netdata、Portainer 的做法。</li>
+    <li><b>Proxmox 式转发留作第二步</b>：等你要做方案 B（统一控制台），或者确实需要「外网手机看只在内网的电脑」时再上。它和第一步不冲突，配对和凭证可以直接复用。</li>
+    <li>借鉴：配对用 Syncthing / Happy 式的<b>双向确认</b>；加机器参考 happier 的「SSH 一键安装并注册」（远期）；转发时牢记 Cockpit 的教训，<b>只转接口，不转前端</b>。</li>
+    <li>暂不做：Plex 式证书和 DNS（太重）、WebRTC 打洞（工程量最大）、自建公网中继（与「平等、自托管」不符，需要时再说）。</li>
+  </ul>
+
+  <h2>5. 参考来源</h2>
+  <div class="src">
+    <a href="https://github.com/slopus/happy">slopus/happy</a>
+    <a href="https://happy.engineering/docs/how-it-works/">Happy · how it works</a>
+    <a href="https://github.com/happier-dev/happier">happier-dev/happier</a>
+    <a href="https://docs.happier.dev/security/encryption">happier · encryption</a>
+    <a href="https://github.com/omnara-ai/omnara">omnara-ai/omnara</a>
+    <a href="https://github.com/siteboon/claudecodeui">siteboon/claudecodeui</a>
+    <a href="https://code.visualstudio.com/docs/remote/tunnels">VS Code Remote Tunnels</a>
+    <a href="https://coder.com/docs/admin/networking">Coder · networking</a>
+    <a href="https://code.claude.com/docs/en/remote-control">Claude Code Remote Control</a>
+    <a href="https://github.com/Lakshay-bleh/remote-harness-for-vms">Remote Harness</a>
+    <a href="https://pve.proxmox.com/pve-docs/pveproxy.8.html">Proxmox pveproxy(8)</a>
+    <a href="https://pve.proxmox.com/wiki/Cluster_Manager">Proxmox Cluster Manager</a>
+    <a href="https://docs.portainer.io/advanced/edge-agent">Portainer Edge Agent</a>
+    <a href="https://cockpit-project.org/blog/cockpit-322.html">Cockpit 322（多主机默认关闭）</a>
+    <a href="https://learn.netdata.cloud/docs/netdata-parents">Netdata Parents</a>
+    <a href="https://support.nabucasa.com/hc/en-us/articles/25619268678557-Remote-access-Deep-dive">Nabu Casa remote access</a>
+    <a href="https://www.home-assistant.io/blog/2023/03/30/android-20233/">Home Assistant Android 多服务器</a>
+    <a href="https://words.filippo.io/how-plex-is-doing-https-for-all-its-users/">Plex HTTPS（Filippo）</a>
+    <a href="https://support.plex.tv/articles/206225077-how-to-use-secure-server-connections/">Plex secure connections</a>
+    <a href="https://docs.unraid.net/unraid-os/release-notes/6.10.0/">Unraid 6.10</a>
+    <a href="https://docs.syncthing.net/users/security.html">Syncthing security</a>
+    <a href="https://developer.chrome.com/blog/local-network-access">Chrome Local Network Access</a>
+    <a href="https://wicg.github.io/local-network-access/">LNA 规范</a>
+    <a href="https://groups.google.com/a/chromium.org/g/blink-dev/c/O6GMKt44Ups">Intent to Ship: LNA for WebSockets</a>
+    <a href="https://bugs.webkit.org/show_bug.cgi?id=171934">WebKit bug 171934</a>
+    <a href="https://tailscale.com/kb/1153/enabling-https">Tailscale HTTPS</a>
+    <a href="https://tailscale.com/kb/1223/funnel">Tailscale Funnel</a>
+    <a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/tunnel-availability/deploy-replicas/">Cloudflare Tunnel replicas</a>
+  </div>
+</div>
+</body>
+</html>
