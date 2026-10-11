@@ -564,3 +564,15 @@ test('start and stop own one watcher and periodic timer and can restart cleanly'
   assert.equal(harness.state.timers.length, 2);
   await harness.runtime.stop();
 });
+
+test('every bundled skill in the repo carries a .skill-version marker', () => {
+  const root = path.join(__dirname, '..', 'skills');
+  const missing = fs.readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, 'SKILL.md')))
+    .filter((entry) => {
+      try { return !/^\d+$/.test(fs.readFileSync(path.join(root, entry.name, '.skill-version'), 'utf8').trim()); }
+      catch (_) { return true; }
+    })
+    .map(entry => entry.name);
+  assert.deepEqual(missing, [], 'skills without a numeric .skill-version are never distributed by installBundledSkills');
+});
