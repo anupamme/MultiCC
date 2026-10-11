@@ -58,7 +58,7 @@
     dialog.id = 'air-provider-dialog';
     dialog.innerHTML = `
       <form id="air-provider-form">
-        <div class="section-heading"><div><span class="eyebrow">AIR PROVIDER</span><h2 id="air-provider-form-title">${t('airProviderFormTitleNew')}</h2></div><button type="button" id="air-provider-close" aria-label="${t('airProviderClose')}">×</button></div>
+        <div class="section-heading"><div><span class="eyebrow">${t('airAdminPanelProvider')}</span><h2 id="air-provider-form-title">${t('airProviderFormTitleNew')}</h2></div><button type="button" id="air-provider-close" aria-label="${t('airProviderClose')}">×</button></div>
         <p>${t('airProviderFormIntro')}</p>
         <div id="air-provider-create-choice" class="air-provider-create-choice">
           <section><strong>${t('airProviderAddByKey')}</strong><span>${t('airProviderAddByKeyDesc')}</span><div><button type="button" data-provider-key="claude">Claude</button><button type="button" data-provider-key="codex">Codex</button></div></section>
@@ -366,7 +366,7 @@
     const form = make('form'); form.method = 'dialog';
     const head = make('div', null, 'section-heading');
     const title = make('div');
-    title.append(make('span', 'PROVIDER IN USE', 'eyebrow'), make('h2', t('airProviderInUseTitle', { name: displayName(provider), count: refs.count })));
+    title.append(make('span', t('airAdminPanelProvider'), 'eyebrow'), make('h2', t('airProviderInUseTitle', { name: displayName(provider), count: refs.count })));
     head.append(title, button('×', () => dialog.close()));
     form.append(head, make('p', failed ? t('airProviderInUseDetachFailed') : t('airProviderInUseBody')));
     for (const kind of refKinds) {
@@ -453,7 +453,7 @@
     const form = make('form'); form.method = 'dialog';
     const head = make('div', null, 'section-heading');
     const title = make('div');
-    title.append(make('span', 'BATCH MIGRATION', 'eyebrow'),
+    title.append(make('span', t('airAdminPanelProvider'), 'eyebrow'),
       make('h2', t('airProviderReassignTitle', { name: displayName(provider) })));
     head.append(title, button('×', () => dialog.close()));
     const host = make('div');
@@ -614,7 +614,7 @@
     const page = make('div', null, 'air-provider-page');
     const intro = make('section', null, 'admin-panel air-provider-intro');
     const introCopy = make('div');
-    introCopy.append(make('span', 'ROUTING CATALOG', 'eyebrow'), make('h3', t('airProviderIntroTitle')), make('p', t('airProviderIntroBody')));
+    introCopy.append(make('span', t('airAdminPanelProvider'), 'eyebrow'), make('h3', t('airProviderIntroTitle')), make('p', t('airProviderIntroBody')));
     const count = make('strong', t('airProviderLoadingCount')); count.id = 'air-provider-count'; intro.append(introCopy, count);
     const defaults = make('section', null, 'admin-panel');
     const defaultsHead = make('div', null, 'admin-panel-head'); defaultsHead.append(make('h3', t('airProviderDefaultsTitle')));

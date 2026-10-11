@@ -59,7 +59,7 @@
       <div class="air-tunnel-page">
         <section class="air-tunnel-hero">
           <div class="air-tunnel-hero-copy">
-            <span class="eyebrow">ONE-STOP REMOTE ACCESS</span>
+            <span class="eyebrow">${t('airTunnel')}</span>
             <h2>${t('airTunnelHeroTitle')}</h2>
             <p>${t('airTunnelHeroCopy')}</p>
           </div>
@@ -73,7 +73,7 @@
         <section class="air-tunnel-security admin-panel" aria-labelledby="air-tunnel-security-title">
           <div class="air-tunnel-security-mark">⌁</div>
           <div class="air-tunnel-security-copy">
-            <span class="eyebrow">PUBLIC ACCESS GUARD</span>
+            <span class="eyebrow">${t('airSettingsData')}</span>
             <h3 id="air-tunnel-security-title">${t('airTunnelGuardTitle')}</h3>
             <p id="air-access-copy">${t('airTunnelCheckingAccessPassword')}</p>
           </div>
@@ -202,7 +202,7 @@
           <summary><span><b>${t('airTunnelAdvancedTitle')}</b><small>${t('airTunnelBrandPhddns')} / Natapp / cpolar / ${t('airTunnelAdvancedCompatHint')}</small></span><span>${t('airTunnelExpandConfig')}</span></summary>
           <div class="air-tunnel-advanced-body">
             <section class="admin-panel">
-              <div class="admin-panel-head"><div><span class="eyebrow">MONITOR POLICY</span><h3>${t('airTunnelMonitorPolicyTitle')}</h3></div></div>
+              <div class="admin-panel-head"><div><span class="eyebrow">${t('airTunnelMonitorPolicyTitle')}</span><h3>${t('airTunnelMonitorPolicyTitle')}</h3></div></div>
               <div class="air-tunnel-form-grid policy">
                 <label><span>${t('airTunnelIntervalLabel')}</span><input id="air-tunnel-interval" type="number" min="10"></label>
                 <label><span>${t('airTunnelThresholdLabel')}</span><input id="air-tunnel-threshold" type="number" min="1"></label>

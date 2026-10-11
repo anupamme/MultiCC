@@ -1002,6 +1002,15 @@
       ]
     },
     {
+      "path": "tests/test-air-navigation-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
+      ]
+    },
+    {
       "path": "tests/test-air-notify-deck-cdp.js",
       "tier": "flow",
       "lane": "cdp",

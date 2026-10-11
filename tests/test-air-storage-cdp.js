@@ -89,11 +89,11 @@ test('the Air uploads panel is native: server-side stats, empty-state button, co
     await page.evaluate(`[...document.querySelectorAll('.air-setting-card')]
       .find(card => card.querySelector('strong')?.textContent === ${JSON.stringify(T.storage)}).click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent === ${JSON.stringify(T.storage)}`), '点进去落在临时上传页');
-    assert.equal(await text('#task-breadcrumb'), T.crumbSettings, '面包屑说的是设置中心这一类');
+    assert.equal(await text('#task-breadcrumb'), T.settingsCenter + ' / ' + T.storage, '面包屑说的是设置中心这一类');
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .air-legacy-frame').length`), 0, '原生面板里没有旧 manage 的 iframe');
     assert.equal(page.requests.some(r => r.path === '/manage.html'), false, 'iframe 的 src 会真的发出去 —— 没这条请求才算真没嵌');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←' + T.back, '↻' + T.refresh], '工具条是面板自己的（返回设置中心 / 刷新），不是旧页面的');
+      ['↻' + T.refresh], '工具条是面板自己的（返回设置中心 / 刷新），不是旧页面的');
     assert.equal(await text('.air-storage-panel h3'), T.title);
     assert.equal(await text('.air-storage-panel .admin-panel-note'), T.hint, '副标题说的是这一格是干什么的');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.air-storage-label')].map(node => node.textContent)`),
@@ -115,7 +115,7 @@ test('the Air uploads panel is native: server-side stats, empty-state button, co
 
     // ── ③ 空目录：按钮真的 disabled，并补一句为什么没得清 ────────────────
     uploads = { count: 0, totalSize: 0, dir: '/tmp/x/uploads' };
-    await page.evaluate(`document.querySelectorAll('#admin-actions button')[1].click()`); // 工具条那颗「刷新」
+    await page.evaluate(`document.querySelector('#admin-actions button').click()`); // 工具条那颗「刷新」
     assert.ok(await page.waitFor(`document.getElementById('air-storage-size').textContent === '0 B'`), '刷新后读到 0');
     assert.deepEqual(calls().slice(-1), ['GET /api/uploads/stats'], '工具条的刷新就是重读统计');
     assert.equal(await text('#air-storage-count'), T.count0);
@@ -127,7 +127,7 @@ test('the Air uploads panel is native: server-side stats, empty-state button, co
 
     // ── ④ 清理：先问一句，答「否」不发请求，答「是」才删 ──────────────────
     uploads = { count: 3, totalSize: 5242880, dir: '/tmp/x/uploads' };
-    await page.evaluate(`document.querySelectorAll('#admin-actions button')[1].click()`);
+    await page.evaluate(`document.querySelector('#admin-actions button').click()`);
     assert.ok(await page.waitFor(`document.getElementById('air-storage-size').textContent === '5.0 MB'`), '又有文件了');
     assert.equal(await page.evaluate(`document.getElementById('air-storage-cleanup').disabled`), false, '有文件时按钮又亮回来');
     await page.evaluate(`window.__realConfirm = window.confirm; window.confirm = text => { window.__asked = (window.__asked||[]).concat([text]); return false; }`);

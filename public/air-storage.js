@@ -131,7 +131,7 @@
     const panel = make('section', null, 'admin-panel air-storage-panel');
     const head = make('div', null, 'admin-panel-head');
     const title = make('div');
-    title.append(make('span', 'STORAGE', 'eyebrow'), make('h3', t('airStorageTitle')));
+    title.append(make('span', t('airAdminPanelStorage'), 'eyebrow'), make('h3', t('airStorageTitle')));
     head.append(title, make('span', t('airStorageHint'), 'admin-panel-note'));
 
     const button = make('button', t('airStorageCleanup'), 'danger');

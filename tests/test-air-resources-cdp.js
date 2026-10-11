@@ -103,12 +103,12 @@ test('the Air agent-resources panel is native: skill list, history list, guarded
       card.click();
     })()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent===t('airAdminResources')`), '点进去落在 Agent 资源页');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), await i18n('airCrumbSettings'),
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), await page.evaluate(`t('airSettingsCenter') + ' / ' + document.getElementById('task-title').textContent`),
       '面包屑说的是设置中心这一类（页头别再露出 resources 这个 mode 名）');
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .air-legacy-frame').length`), 0, '原生面板里没有旧 manage 的 iframe');
     assert.equal(page.requests.some(r => r.path === '/manage.html'), false, 'iframe 的 src 会真的发出去 —— 没这条请求才算真没嵌');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←' + await i18n('airAdminBackToSettings'), '↻' + await i18n('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
+      ['↻' + await i18n('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
     await page.screenshot('01-resources-native-desktop');
 
     // ── ② 打开只打两条列表：技能一次、会话一次 ─────────────────────────────

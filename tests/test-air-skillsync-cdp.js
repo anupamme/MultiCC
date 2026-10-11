@@ -92,7 +92,7 @@ test('the Air skill-sync panel is native: status snapshot, provider order, local
     // 工具条是 air-admin 给原生面板统一装的（返回 + 刷新）。旧 manage 那条路画的是
     // 「在新页面打开」，所以这组按钮本身就是「走的原生那条路」的证据。
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←' + await tz('airAdminBackToSettings'), '↻' + await tz('airAdminRefresh')],
+      ['↻' + await tz('airAdminRefresh')],
       '工具条是面板自己的（返回设置中心 / 刷新），不是旧页面的');
     await page.screenshot('00-skillsync-native-desktop');
 

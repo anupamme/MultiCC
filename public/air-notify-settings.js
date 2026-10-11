@@ -145,7 +145,7 @@
     for (const key of ['airNotifyChannelBark', 'airNotifyChannelWebhook']) {
       const button = make('button', 'notify-channel', t(key));
       button.type = 'button';
-      button.onclick = () => { close(); root.location.assign('/air?view=push'); };
+      button.onclick = () => { close(); if (root.MultiCCAirNavigation) root.MultiCCAirNavigation.go('push'); else root.location.assign('/air?view=push'); };
       side.append(button);
     }
     box.append(side);

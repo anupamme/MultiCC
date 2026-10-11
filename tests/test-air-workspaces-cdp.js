@@ -85,13 +85,13 @@ test('the Air workspaces panel is native: one overview read, guarded sweep, hone
     const label = await t('airAdminPanelWorkspaces');
     await page.evaluate(`document.querySelector('[data-air-card="workspaces"]').click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent === ${JSON.stringify(label)}`), '点进去落在工作区页');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), await t('airCrumbSettings'), '面包屑说的是设置中心这一类');
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), await page.evaluate(`t('airSettingsCenter') + ' / ' + document.getElementById('task-title').textContent`), '面包屑说的是设置中心这一类');
     assert.ok(await page.waitFor(`document.querySelectorAll('#air-ws-dirs .air-ws-item').length === 2`), '四张卡都画出来了');
     assert.equal(overviewReads() - before, 1, '打开面板只读一次 overview —— 四张卡是同一份回包的四个切片');
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .air-legacy-frame').length`), 0, '原生面板里没有旧 manage 的 iframe');
     assert.equal(page.requests.some(r => r.path === '/manage.html'), false, 'iframe 的 src 会真的发出去 —— 没这条请求才算真没嵌');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←' + await t('airAdminBackToSettings'), '↻' + await t('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
+      ['↻' + await t('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
 
     // ── ② 概览：三行状态照回包读，阈值跨过一小时就换成小时 ────────────────
     const summary = await text('#air-ws-summary');

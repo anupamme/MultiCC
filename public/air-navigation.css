@@ -1,0 +1,99 @@
+/* Air navigation and task-first console. Keep these after the base skin. */
+#sidebar { gap: 5px; padding-top: 18px; background: rgba(255,255,255,.85); }
+#sidebar > .space-card, #sidebar > #create, #sidebar > #onboarding-entry, #sidebar > .sidebar-resources { flex-shrink: 0; }
+#sidebar #create { width: 100%; margin: 6px 0; min-height: 42px; color: white; border: 0; background: linear-gradient(180deg,#2585f0,#1272df); box-shadow: 0 5px 14px #1678e82b; }
+#sidebar #task-sidebar { flex: 1 1 auto; min-height: 110px; overflow: hidden; }
+#tasks { min-height: 0; overflow-y: auto; }
+#recent-all { margin-left: auto; min-height: 28px; padding: 0 3px; border: 0; background: transparent; color: var(--accent); font-size: 12px; }
+.task-heading { gap: 7px; }
+.sidebar-resources { border-top: 1px solid var(--hairline); padding-top: 5px; }
+.sidebar-resources summary { display: flex; align-items: center; gap: 10px; padding: 8px 10px; cursor: pointer; list-style: none; }
+.sidebar-resources summary::after { content: '›'; margin-left: auto; }
+.sidebar-resources[open] summary::after { transform: rotate(90deg); }
+.sidebar-resources button { display: block; width: 100%; text-align: left; padding-left: 36px; border: 0; background: transparent; }
+.sidebar-resources button:hover { background: var(--blue-soft); }
+.side-bottom > small { display: none; }
+#page-back { flex: 0 1 auto; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-strong); }
+#task-header { min-width: 0; }
+#task-header .breadcrumb { min-width: 0; }
+#task-breadcrumb button { min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--muted); font-size: inherit; }
+#task-breadcrumb button:hover { color: var(--accent); text-decoration: underline; }
+#onboarding-entry { display: flex; justify-content: space-between; background: var(--blue-soft); color: var(--accent-strong); font-size: 13px; }
+.directory-flyout { z-index: 65; width: min(320px, calc(100vw - 24px)); overflow-y: auto; }
+.directory-flyout input { margin: 6px 0; }
+.directory-flyout-action { width: 100%; text-align: left; border: 0; color: var(--accent-strong); background: none; }
+.directory-flyout-action:last-child { border-top: 1px solid var(--hairline); border-radius: 0; }
+.console-priority { margin-bottom: 24px; }
+.console-priority .admin-panel-head { padding: 0 0 12px; }
+.console-priority .admin-panel-head button { border: 0; background: transparent; color: var(--accent); }
+.console-priority-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.console-priority-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 18px 20px; border: 1px solid var(--hairline); border-left: 4px solid var(--warning); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-1); }
+.console-priority-card.error { border-left-color: var(--danger); }
+.console-priority-card h3 { font-size: 16px; overflow-wrap: anywhere; }
+.console-priority-card p { color: var(--muted); font-size: 13px; }
+.console-priority-card button { align-self: flex-end; color: var(--accent-strong); margin-top: auto; }
+.console-running > h3 { padding: 14px 18px; font-size: 15px; }
+.console-filter-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 12px; }
+.console-filter-tabs .admin-stat { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8px; padding: 7px 12px; min-height: 38px; border-radius: 10px; box-shadow: none; }
+.console-filter-tabs .admin-stat strong { font-size: 14px; }
+.console-filter-tabs .admin-stat small { display: none; }
+.console-filter-tabs .admin-stat.selected { color: var(--accent-strong); background: var(--blue-soft); }
+.air-settings-layout { display: grid; grid-template-columns: 190px minmax(0,1fr); gap: 24px; align-items: start; }
+.air-settings-categories { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--hairline); border-radius: 14px; background: var(--panel); }
+.air-settings-categories button { border: 0; background: transparent; text-align: left; }
+.air-settings-categories button[aria-current="page"] { background: var(--blue-soft); color: var(--accent-strong); font-weight: 600; }
+.air-settings-groups { min-width: 0; }
+.air-settings-group { padding: 8px 0; }
+.air-settings-group > h3 { margin: 0; padding: 8px 20px; color: var(--muted); }
+.air-settings-layout .air-settings-grid { display: flex; flex-direction: column; gap: 0; }
+.air-settings-layout .air-setting-card { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px 20px; border: 0; border-top: 1px solid var(--hairline); border-radius: 0; box-shadow: none; }
+.air-setting-icon { flex: 0 0 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: var(--blue-soft); color: var(--accent); font-size: 19px; }
+.air-setting-copy { flex: 1; min-width: 0; }
+.air-setting-copy strong, .air-setting-copy small { display: block; }
+.air-setting-copy small { font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+#settings-power-controls, #settings-host-controls { padding: 10px 20px; border-top: 1px solid var(--hairline); }
+#settings-power-controls button { width: 100%; }
+#settings-host-controls .ops-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#setup-card { display: block; max-width: 720px; margin: 0 auto 24px; padding: 12px 0 24px; background: transparent; border: 0; box-shadow: none; }
+.setup-intro { margin-bottom: 20px; }
+.setup-intro h2 { font-size: 28px; }
+.setup-intro p { margin: 8px 0 16px; color: var(--muted); }
+#setup-progress { width: 100%; height: 6px; accent-color: var(--accent); }
+.setup-step { display: flex; gap: 16px; padding: 18px 20px; margin-bottom: 12px; border: 1px solid var(--hairline); border-radius: 16px; background: var(--panel); }
+.setup-step > div { min-width: 0; flex: 1; }
+.setup-step.current { border: 2px solid var(--accent); box-shadow: 0 12px 30px #1678e818; }
+.setup-step.upcoming { opacity: .68; }
+.setup-step h3 { font-size: 16px; margin-bottom: 4px; }
+.setup-step p { font-size: 13px; color: var(--muted); }
+.setup-number { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; border-radius: 50%; background: var(--blue-soft); color: var(--accent); font-weight: 700; }
+.setup-step.done .setup-number { color: white; background: var(--green); }
+.setup-step.current .setup-number { color: white; background: var(--accent); }
+.setup-step .setup-actions { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; margin-top: 12px; }
+#setup-dismiss { display: block; margin: 18px auto 0; border: 0; background: transparent; color: var(--muted); }
+@media (max-width: 1000px) { .air-settings-layout { grid-template-columns: 160px minmax(0,1fr); gap: 16px; } }
+@media (max-width: 760px) {
+  .console-priority-grid { grid-template-columns: 1fr; }
+  .air-settings-layout { display: block; }
+  .air-settings-categories { flex-direction: row; overflow-x: auto; margin-bottom: 16px; }
+  .air-settings-categories button { flex-shrink: 0; }
+  #page-back { max-width: 140px; padding: 5px 8px; font-size: 12px; }
+  #sidebar #task-sidebar { flex: 1 0 150px; }
+  .setup-step { padding: 16px 12px; gap: 10px; }
+  .console-filter-tabs .admin-stat { padding: 6px 8px; }
+}
+@media (max-height: 640px) {
+  #sidebar #task-sidebar { flex: 0 0 auto; overflow: visible; }
+  #tasks { min-height: 0; overflow: visible; }
+}
+.air-settings-layout .air-setting-card { flex-direction: row; text-align: left; min-height: 84px; }
+#tasks button { padding: 7px 11px; }
+.power-setting-wrap { display: flex; align-items: center; position: relative; gap: 8px; }
+#settings-power-controls .sidebar-setting-row { flex: 1; font-size: 14px; padding: 12px 0; min-height: 48px; }
+#settings-power-controls .more-setting-copy { white-space: normal; flex: 1; }
+#settings-power-controls .row-switch { width: 36px; height: 22px; }
+#settings-power-controls .row-switch::after { width: 18px; height: 18px; margin: 2px; }
+#settings-power-controls .on .row-switch::after { transform: translateX(14px); }
+.power-setting-wrap:has(button[hidden]) { display: none; }
+.power-setting-wrap details summary { list-style: none; color: var(--muted); cursor: pointer; padding: 8px; }
+.power-setting-wrap details small { position: absolute; z-index: 2; right: 0; top: 100%; width: min(300px, 100%); padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: white; box-shadow: var(--shadow-2); }
+#settings-host-controls .ops-actions button, #settings-host-controls .ops-actions a { font-size: 13px; padding: 8px 10px; }

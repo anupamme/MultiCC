@@ -296,7 +296,7 @@
     context = nextContext;
     const page = make('section', null, 'air-usage');
     // 这一块是只读参考，不是配置：跟上面的线路表单分开讲，免得看成「某条线路的用量」。
-    page.append(make('span', 'TOKEN USAGE', 'eyebrow'));
+    page.append(make('span', t('tokenUsage'), 'eyebrow'));
 
     const global = card(
       t('airUsageGlobalTitle'),

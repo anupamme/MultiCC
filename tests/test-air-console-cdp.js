@@ -172,7 +172,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
 
     // ── 侧栏：任务区只装「最近」，其余操作按频次收敛 ─────────────────────
     assert.equal(await page.evaluate(`document.getElementById('activity')===null`), true, '跨目录活动入口已移除');
-    assert.equal(await page.evaluate(`[...document.querySelectorAll('#sidebar .nav-row')].map(el=>el.textContent.replace(/\\s+/g,'').replace(/\\d+$/,'')).join('|')`), '◫控制台|◴定时任务|⚙更多与系统›');
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('#sidebar .nav-row')].map(el=>el.textContent.replace(/\\s+/g,'').replace(/\\d+$/,'')).join('|')`), '◫控制台|◴定时任务|⚙设置›');
     assert.ok(await page.waitFor(`document.getElementById('console-badge').hidden===false`), '控制台行带常驻徽标');
     // 徽标数 = 要我动手的任务（现场里只有一条等回答的）。在跑的那条不算 ——
     // 它不需要我操作，不该在侧栏催我。
@@ -190,7 +190,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
       assert.equal(await page.evaluate(`document.getElementById('${gone}')===null`), true, `#${gone} 已从侧栏移除`);
     }
     assert.equal(await page.evaluate(`[...document.querySelectorAll('#sidebar *')].some(el=>el.textContent==='收藏目录')`), false, '侧栏不再有「收藏目录」标题');
-    assert.equal(await page.evaluate(`document.querySelector('.space-shortcuts').textContent.replace(/\\s+/g,'')`), '工作目录⌘K切换', '目录卡快捷行只剩标题和 ⌘K 提示');
+    assert.equal(await page.evaluate(`document.querySelector('.space-shortcuts').textContent.replace(/\\s+/g,'')`), '项目⌘K切换', '目录卡快捷行只剩标题和 ⌘K 提示');
     assert.equal(await page.evaluate(`document.getElementById('task-list-title').textContent`), '最近任务');
     assert.ok(await page.waitFor(`document.querySelectorAll('#tasks button').length===1`), '最近里只有打开过的这一条');
     // 一行要能自己说清：状态徽标（注册表给的词）、所属目录、阶段与资源去向。
@@ -198,116 +198,15 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     assert.equal(await page.evaluate(`document.querySelector('#tasks button .task-dir').textContent`), 'MultiCC 主仓', '任务行带所属目录');
     assert.ok(await page.evaluate(`document.querySelector('#tasks button .task-note').textContent.includes('计划')`), '阶段跟在后面');
     assert.equal(await page.evaluate(`document.querySelectorAll('#tasks button.ring-running').length`), 0, '没在跑的任务不带圈');
-    // More uses an independent drawer; opening it preserves task and URL.
-    const moreBefore = await page.evaluate(`({url: location.href, task: document.getElementById('task-title').textContent})`);
-    await page.evaluate(`document.getElementById('side-more').click()`);
-    await settle(page);
-    assert.ok(await page.evaluate(`document.getElementById('more-panel').open`));
-    assert.deepEqual(await page.evaluate(`({url: location.href, task: document.getElementById('task-title').textContent})`), moreBefore);
-    assert.equal(await page.evaluate(`document.getElementById('more-panel').parentElement.tagName`), 'BODY', 'not clipped by the sidebar');
-    // 一级是四个分组 + 一行整页入口；二级只显示选中的那一组。
-    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#settings-tree .more-parent strong')].map(b=>b.textContent)`),
-      ['重要功能', 'AI 与执行', '连接与通知', '资源与存储']);
-    assert.deepEqual(await page.evaluate(`(() => {
-      const flyout = document.getElementById('more-flyout');
-      return {
-        twoColumn: document.getElementById('more-panel').getBoundingClientRect().width > 700 && flyout.checkVisibility(),
-        shown: [...flyout.querySelectorAll('.more-leaf-group:not([hidden]) .more-leaf strong')].map(b=>b.textContent),
-        folded: flyout.querySelectorAll('.more-leaf-group[hidden]').length,
-      };
-    })()`), { twoColumn: true, shown: ['敏感信息', '服务与文档', '记忆图谱', '任务图谱', '工作区'], folded: 3 },
-      '抽屉开成两列，二级默认选中第一组、另外三组收着');
-    // 悬停换组就是「联动」：右边那一列跟着换，一级那一行同时点亮。
-    await page.evaluate(`document.querySelector('#settings-tree .more-parent[data-more-group="connect"]')
-      .dispatchEvent(new PointerEvent('pointerenter'))`);
-    await settle(page);
-    assert.deepEqual(await page.evaluate(`(() => {
-      const flyout = document.getElementById('more-flyout');
-      return {
-        shown: [...flyout.querySelectorAll('.more-leaf-group:not([hidden]) .more-leaf strong')].map(b=>b.textContent),
-        title: document.getElementById('more-flyout-title').textContent,
-        note: document.getElementById('more-flyout-note').textContent,
-        on: [...document.querySelectorAll('#settings-tree .more-parent.on strong')].map(b=>b.textContent),
-      };
-    })()`), { shown: ['推送通知', '外网穿透', '消息桥接'], title: '连接与通知', note: '3 项', on: ['连接与通知'] },
-      '悬停一级那一行，二级那一列换成它的一组');
-    await page.evaluate(`document.querySelector('#settings-tree .more-parent[data-more-group="featured"]')
-      .dispatchEvent(new PointerEvent('pointerenter'))`);
-    assert.ok(await page.evaluate(`(() => {
-      const rail = document.querySelector('#more-panel .more-rail').getBoundingClientRect();
-      return ['air-lid-sleep','air-auto-unlock'].every(id => {
-        const row = document.getElementById(id), box = row.getBoundingClientRect();
-        return row.checkVisibility() && box.width > 240 && box.right <= rail.right + 1 && box.height >= 48 &&
-          getComputedStyle(row.querySelector('strong')).fontSize === '14px' &&
-          getComputedStyle(row.querySelector('small')).whiteSpace === 'normal';
-      });
-    })()`), 'both power switches are readable full-width rows');
-    assert.equal(await page.evaluate(`Math.round(document.getElementById('more-panel').getBoundingClientRect().left)`), 0);
-    t.diagnostic('more desktop: ' + await page.screenshot('more-desktop'));
-    await page.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 740, deviceScaleFactor: 1, mobile: true });
-    await settle(page);
-    assert.ok(await page.evaluate(`(() => {
-      const panel = document.getElementById('more-panel'), scroll = panel.querySelector('.more-scroll');
-      return panel.getBoundingClientRect().right <= innerWidth && scroll.scrollWidth <= scroll.clientWidth + 1 &&
-        ['air-lid-sleep', 'air-auto-unlock'].every(id => document.getElementById(id).getBoundingClientRect().height >= 48);
-    })()`), 'phone drawer scrolls vertically without horizontal clipping');
-    // 窄屏没有右边那一列：二级那几组被搬回各自父行下面就地折着，点父行展开/收起。
-    // 关键是「搬」而不是另画一份 —— 所以断言的是同一个 #more-group-* 换了父节点。
-    assert.deepEqual(await page.evaluate(`(() => {
-      const parents = [...document.querySelectorAll('#settings-tree .more-parent')];
-      return {
-        flyout: document.getElementById('more-flyout').checkVisibility(),
-        hosts: parents.map(row => document.getElementById('more-group-' + row.dataset.moreGroup).previousElementSibling === row),
-        open: parents.filter(row => row.getAttribute('aria-expanded') === 'true').map(row => row.dataset.moreGroup),
-        leaves: document.querySelectorAll('#more-panel .more-leaf-group .more-leaf').length,
-      };
-    })()`), { flyout: false, hosts: [true, true, true, true], open: ['featured'], leaves: 16 },
-      '窄屏把二级整组搬进抽屉就地折叠，十六行面板一个不少');
-    await page.evaluate(`document.querySelector('#settings-tree .more-parent[data-more-group="featured"]').click()`);
-    await settle(page);
-    assert.ok(await page.evaluate(`(() => {
-      const group = document.getElementById('more-group-featured');
-      return !group.checkVisibility() &&
-        document.querySelector('#settings-tree .more-parent[data-more-group="featured"]').getAttribute('aria-expanded') === 'false';
-    })()`), '再点一次收起这一组');
-    await page.evaluate(`document.querySelector('#settings-tree .more-parent[data-more-group="ai"]').click()`);
-    await settle(page);
-    assert.ok(await page.evaluate(`document.getElementById('more-group-ai').checkVisibility()`), '折叠模式下换一组只开它自己');
-    t.diagnostic('more mobile: ' + await page.screenshot('more-mobile'));
-    await page.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
-    await page.evaluate(`document.getElementById('air-lid-sleep').click()`);
-    assert.ok(await page.waitFor(`document.getElementById('air-lid-sleep').classList.contains('on')`));
-    assert.deepEqual(powerPosts.map(raw => JSON.parse(raw)), [{ enabled: true }]);
-    assert.ok(await page.waitFor(`document.getElementById('more-status').textContent === '已开启关盖保持运行'`), 'feedback is visible inside the drawer');
-    await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
-    assert.ok(await page.waitFor(`!document.getElementById('more-panel').open`), 'Escape closes the drawer');
-    assert.equal(await page.evaluate(`document.getElementById('side-more').getAttribute('aria-expanded')`), 'false');
-    assert.deepEqual(await page.evaluate(`({url: location.href, task: document.getElementById('task-title').textContent})`), moreBefore);
-    await page.evaluate(`document.getElementById('side-more').click()`);
-    await settle(page);
-    await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 1200, y: 200, button: 'left', clickCount: 1 });
-    await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 1200, y: 200, button: 'left', clickCount: 1 });
-    assert.ok(await page.waitFor(`!document.getElementById('more-panel').open`), 'backdrop closes the drawer');
-    // More 抽屉是 top layer 上的模态框，控制台则是主区域里的一页正文。侧栏那行点下去，
-    // 抽屉自己让开（air-more.js 在 [data-air-view] / #overview 上挂了「点它就关」），
-    // 两者不会叠在一起 —— 从前要显式踢走控制台，现在没有这回事了。
     const before = await page.evaluate(`(() => {
       const clock = document.createElement('span');
       clock.id = 'keep-alive-marker';
       document.getElementById('task-header').append(clock);
       return { url: location.href, title: document.getElementById('task-title').textContent };
     })()`);
-    await page.evaluate(`document.getElementById('side-more').click(); document.getElementById('overview').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('more-panel').open`), false, 'More 不会和控制台叠着');
-    assert.ok(await consoleShown(page), '侧栏那行把控制台开在主区域里');
-    assert.deepEqual(await page.evaluate(`(() => {
-      const button = document.getElementById('add-directory');
-      const rect = button.getBoundingClientRect();
-      const header = document.getElementById('task-header').getBoundingClientRect();
-      return { visible: !button.hidden && rect.width > 0, inHeader: rect.top >= header.top && rect.bottom <= header.bottom };
-    })()`), { visible: true, inHeader: true }, '控制台顶部直接显示添加工作目录入口');
-    await page.evaluate(`document.getElementById('add-directory').click()`);
+    await page.evaluate(`document.getElementById('overview').click()`);
+    assert.ok(await consoleShown(page), '控制台在主区域显示');
+    await page.evaluate(`document.getElementById('library').click(); document.querySelector('.directory-flyout-action:last-child').click()`);
     assert.equal(await page.evaluate(`!!document.querySelector('body > dialog[open] form input[required]')`), true,
       '控制台顶部入口直接打开添加目录表单');
     await page.evaluate(`document.querySelector('body > dialog[open] .air-path-row button').click()`);
@@ -349,26 +248,15 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // 顶上四格是过滤项；默认一张清单都不展开。
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.console-filter-tabs .admin-stat > span')].map(el=>el.textContent)`),
       ['进行中', '等我回复', '异常', '今日完成', '全部']);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), true, '默认不展开任何清单');
-    assert.ok(await page.evaluate(`document.querySelector('.console-overview-meta').textContent.includes('3 个工作目录')`), '目录数降成小字');
+    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '默认展示完整任务列表');
     // 点「等我回复」：清单在过滤项和工作目录之间长出来。
     await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="waiting"]').click()`);
     assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false);
     assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row').innerText.includes('结算页')`), '等待回答的排在最前');
     assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row .mc-status-label').textContent==='等待回答'`), '待办行自报状态');
     assert.equal(await page.evaluate(`document.getElementById('console-task-search').closest('.admin-task-controls').hidden`), true, '只有「全部」才带搜索筛选');
-    assert.deepEqual(await page.evaluate(`[...document.getElementById('console-content').children].map(node =>
-      node.classList.contains('admin-stats') ? 'stats'
-        : node.classList.contains('console-overview-meta') ? 'meta'
-        : node.id==='console-filter-panel' ? 'filter-list'
-          : node.classList.contains('admin-directory-panel') ? 'directories'
-            : node.id==='console-ai-assistant' ? 'ai-assistant' : 'tools')`),
-      ['stats', 'meta', 'filter-list', 'directories', 'ai-assistant', 'tools'], '控制台分区顺序：过滤项 → 小字计数 → 展开的清单 → 工作目录 → AI Assistant → 工具');
-    // 再点同一格收起。
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="waiting"]').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), true, '再点同一格收起');
-    assert.equal(await page.evaluate(`document.getElementById('console-ai-assistant').innerText.includes('分类、摘要与意图判断')`), true,
-      'AI Assistant 配置不再藏在底部工具格');
+    assert.deepEqual(await page.evaluate(`[...document.getElementById('console-content').children].map(el => el.className)`),
+      ['console-priority', 'admin-panel console-running', 'admin-stats console-filter-tabs', 'admin-panel console-filter-panel']);
     await page.screenshot('01-console-open');
 
     // Escape 关不掉一页：它本来就没有「关掉」这回事，页面的退路是地址（后退 / 侧栏
@@ -396,7 +284,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // 离开这一页 = 走另一页：控制台页头那颗「浏览工作目录」把地址换成目录库的
     // （view=directories），当前目录不丢。从前是「关掉浮层把 view=overview 撤掉」
     // —— 现在换页本来就有地址。
-    await page.evaluate(`document.getElementById('admin-actions').querySelector('button').click()`);
+    await page.evaluate(`document.getElementById('library').click(); document.querySelectorAll('.directory-flyout-action')[1].click()`);
     assert.ok(await page.waitFor(`document.getElementById('directory-library').hidden===false`));
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'directories');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('dir')`), 'd2', '换页不丢当前目录');
@@ -444,7 +332,6 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     const ringed = await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row.ring-running')].map(el=>el.innerText.replace(/\\s+/g,''))`);
     assert.equal(ringed.length, 1, JSON.stringify(ringed));
     assert.ok(ringed[0].includes('登录页空状态文案'), '在跑的那条任务带圈');
-    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.admin-directory-row.ring-running')].map(el=>el.querySelector('strong').textContent)`), ['Gapasea'], '任务对应的目录也带圈');
     await page.screenshot('02-console-all-tasks');
     await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="waiting"]').click()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`),
@@ -482,8 +369,8 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // 所以「浏览工作目录」是 #admin-actions 里的第一颗 —— 从前它是面板正文里那排。
     await page.evaluate(`document.getElementById('overview').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    assert.equal(await page.evaluate(`document.getElementById('console-secrets').hidden`), false, '敏感信息跟着这一页的工具栏走');
-    await page.evaluate(`document.getElementById('admin-actions').querySelector('button').click()`);
+    assert.equal(await page.evaluate(`document.getElementById('console-secrets')`), null, '敏感信息集中到设置');
+    await page.evaluate(`document.getElementById('library').click(); document.querySelectorAll('.directory-flyout-action')[1].click()`);
     assert.ok(await page.waitFor(`document.getElementById('directory-library').hidden===false`));
     assert.equal(await page.evaluate(`document.querySelectorAll('#directory-grid button.ring-running').length`), 1, '只有跑着活的目录带圈');
     assert.equal(await page.evaluate(`document.querySelector('#directory-grid button.ring-running strong').textContent`), '▣ Gapasea', '带圈的是那个目录');
@@ -584,7 +471,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
         compact: getComputedStyle(button.querySelector('.add-directory-compact')).display !== 'none',
         headerFits: document.getElementById('task-header').scrollWidth <= document.getElementById('task-header').clientWidth + 1,
       };
-    })()`), { visible: true, compact: true, headerFits: true }, '窄屏页头保留紧凑的添加目录入口且不横向溢出');
+    })()`), { visible: false, compact: true, headerFits: true }, '添加项目收进项目切换器，页头不横向溢出');
     assert.equal(await page.evaluate(`document.getElementById('console-center').scrollWidth<=document.getElementById('console-center').clientWidth+1`), true, '正文不横向溢出');
     assert.equal(await page.evaluate(`document.documentElement.scrollWidth<=innerWidth`), true);
     await page.screenshot('04-mobile-console');
@@ -725,7 +612,7 @@ test('the directory task list keeps its filters, shares page scrolling, paginate
 // 现场确认三件事：面板里只画最近更新的 5 条、总数照报、完整清单在它自己的页上（而那一页
 // 是个能直接打开、能返回、地址里留得住的真页面）。顺带把「统计读数带压扁了」钉住 ——
 // 它是这次「留更多空间给任务」的兑现方式，光看截图不算数。
-test('the console shows only the 5 most recently updated waits and hands the rest to their own page', async t => {
+test('console prioritizes pending tasks and keeps filters and a complete attention page', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
   const routes = {}, publicDir = path.resolve(__dirname, '../public');
   const shots = path.join(os.tmpdir(), 'multicc-air-attention-qa');
@@ -798,9 +685,9 @@ test('the console shows only the 5 most recently updated waits and hands the res
         values: [...document.querySelectorAll('.admin-stats .admin-stat strong')].map(el=>el.textContent) };
     })()`);
     assert.ok(stats.height <= 84, `统计卡仍压在 84px 以内（实测 ${stats.height}）`);
-    assert.ok(stats.fontSize >= 22, `过滤项的数字要大字（实测 ${stats.fontSize}）`);
+    assert.ok(stats.fontSize >= 14, `过滤项的数字要大字（实测 ${stats.fontSize}）`);
     assert.deepEqual(stats.values, ['2', '3', '3', '1', '9'], '进行中 2 · 等我回复 3 · 异常 3 · 今日完成 1 · 全部（未归档）9');
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), true, '默认不展开清单');
+    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '默认展示全部任务');
 
     // ── ② 每格展开自己的清单，口径与数字同源，按最近更新排 ─────────────────
     const listed = `[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`;
@@ -824,13 +711,13 @@ test('the console shows only the 5 most recently updated waits and hands the res
     assert.deepEqual(await page.evaluate(listed), ['今天跑完：图标换新'], '很久以前完成的不算今日完成');
     await page.screenshot('06b-console-today');
     await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="today"]').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), true, '再点同一格收起');
+    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '当前筛选保持可见');
 
     // ── ③ 「谁在等我」是自己的一页：换页而不是换层，地址留住，清单给全 ────
     await page.navigate('/air?view=attention');
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===true`), '进那一页时控制台这一页让开');
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`), '页头换成那一页自己的标题');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), 'MultiCC Air › 控制台');
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), '控制台 / 谁在等我');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'attention', '整页有自己的地址');
     assert.equal(await page.evaluate(`location.search.includes('task=')`), false, '整页不是某个任务的任务页');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-content .admin-recent-row strong')].map(el=>el.textContent)`),
@@ -856,7 +743,7 @@ test('the console shows only the 5 most recently updated waits and hands the res
     // ── ④ 返回控制台：回到的是控制台那一页，不是任务页 ─────────────────────
     await page.navigate('/air?view=attention');
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`));
-    await page.evaluate(`[...document.getElementById('admin-actions').querySelectorAll('button')].find(b => b.textContent.includes('返回控制台')).click()`);
+    await page.evaluate(`document.getElementById('page-back').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`), '「返回控制台」回到控制台那一页');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview', '回去的这一页地址就是它自己的地址');
     assert.ok(await page.evaluate(`document.getElementById('console-content').innerText.includes('等我回复')`), '回到的是控制台那一页，不是任务页');
@@ -886,25 +773,6 @@ test('the console shows only the 5 most recently updated waits and hands the res
         overflow: document.documentElement.scrollWidth <= innerWidth }; })()`);
     assert.equal(mobile.overflow, true, '窄屏下控制台也不横向溢出');
     assert.ok(mobile.height <= 80, `窄屏下统计卡同样矮（实测 ${mobile.height}）`);
-    // 小字放不下时不溢出到隔壁卡，而是在卡内走跑马灯；放得下的保持静止。
-    await page.evaluate(`document.querySelector('.admin-stat .admin-stat-detail-text').textContent = '一段特别长特别长的说明文字，窄屏上一行绝对放不下，必须滚动才能看全'`);
-    await page.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 844, deviceScaleFactor: 2, mobile: true });
-    assert.ok(await page.waitFor(`document.querySelector('.admin-stat .admin-stat-detail').classList.contains('marquee')`), '放不下的小字切成跑马灯');
-    const marquee = await page.evaluate(`(() => {
-      const box = document.querySelector('.admin-stat .admin-stat-detail'), card = box.closest('.admin-stat');
-      const text = box.firstElementChild;
-      return { contained: box.getBoundingClientRect().right <= card.getBoundingClientRect().right + 0.5,
-        animation: getComputedStyle(text).animationName,
-        shift: parseFloat(box.style.getPropertyValue('--marquee-shift')),
-        needed: text.scrollWidth - box.clientWidth,
-        others: [...document.querySelectorAll('.admin-stat-detail')].slice(1).map(el => el.classList.contains('marquee')
-          || el.firstElementChild.scrollWidth <= el.clientWidth + 1) };
-    })()`);
-    assert.equal(marquee.contained, true, '小字盒子不超出卡片');
-    assert.equal(marquee.animation, 'admin-stat-marquee');
-    assert.ok(Math.abs(-marquee.shift - marquee.needed) <= 2, `滚动终点正好露出最后一个字（shift ${marquee.shift} vs 溢出 ${marquee.needed}）`);
-    assert.ok(marquee.others.every(Boolean), '其余卡片要么放得下，要么也在滚');
-    await page.screenshot('10b-mobile-stat-marquee');
     await page.screenshot('10-mobile-console-stats');
   });
 

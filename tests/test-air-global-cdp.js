@@ -188,7 +188,7 @@ test('the Air global panel is native: install hint and the macOS lid-sleep switc
     await page.navigate('/air?dir=d1&view=overview');
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`), '控制台那一页打开');
     // 它住在侧栏「更多与系统」那一栏里（默认收着），展开就该点得到。
-    await page.evaluate(`document.getElementById('side-more').click()`);
+    await page.evaluate(`document.getElementById('side-more').click(); document.querySelector('[data-category="airSettingsComputer"]').click()`);
     assert.ok(await page.waitFor(`document.getElementById('air-apk-btn')?.checkVisibility() === true`), '安装包那颗按钮展开「更多与系统」就在，一直点得到');
     await page.screenshot('00-apk-entry');
 
@@ -203,7 +203,7 @@ test('the Air global panel is native: install hint and the macOS lid-sleep switc
     const globalLabel = await t('airAdminPanelGlobal');
     await page.evaluate(`[...document.querySelectorAll('.air-setting-card')].find(card => card.querySelector('strong')?.textContent === ${JSON.stringify(globalLabel)}).click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent === ${JSON.stringify(globalLabel)}`), '点进去落在全局配置页');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), await t('airCrumbSettings'), '面包屑说的是设置中心这一类');
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), settingsLabel + ' / ' + globalLabel, '面包屑显示实际来路和当前页');
     // 状态回来了再数请求：面板打开时打的就是电源这一条，一次。
     assert.ok(await page.waitFor(`(() => {
       const state = document.getElementById('air-global-power-status');
@@ -218,7 +218,7 @@ test('the Air global panel is native: install hint and the macOS lid-sleep switc
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .air-legacy-frame').length`), 0, '原生面板里没有旧 manage 的 iframe');
     assert.equal(page.requests.some(r => r.path === '/manage.html'), false, 'iframe 的 src 会真的发出去 —— 没这条请求才算真没嵌');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←' + await t('airAdminBackToSettings'), '↻' + await t('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
+      ['↻' + await t('airAdminRefresh')], '工具条是面板自己的（返回设置中心 / 刷新）');
 
     // ── ② 安装包不在这页重复：只留一句指路，没有第二个下载入口 ────────────
     assert.equal(await text('#admin-content .air-global-hint'), await t('airGlobalInstallHint'), '顶上是安装包的指路');
