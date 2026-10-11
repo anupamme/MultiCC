@@ -50,6 +50,128 @@ test('agent + scroll sources: ungated code stays Swift 5.5 compatible (macOS 11 
   }
 });
 
+test('computer use: human input pauses dispatch, resets countdown, respects held input and Esc', { skip: !hasSwift, timeout: 60000 }, t => {
+  const root = fs.mkdtempSync('/tmp/multicc-input-native-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/macos-agent/MultiCCAgent.swift'), 'utf8');
+  const gate = source.slice(source.indexOf('final class HumanInputGate {'), source.indexOf('// No-focus, click-through'));
+  const control = source.slice(source.indexOf('final class Control {'), source.indexOf('// Password prompts,'));
+  const wait = source.slice(source.indexOf('func waitForHumanIdle()'), source.indexOf('// MARK: - Safety:'));
+  const record = source.slice(source.indexOf('func recordHumanInput('), source.indexOf('let escTaps ='));
+  const mutation = source.slice(source.indexOf('enum MutKind'), source.indexOf('// MARK: - Operations'));
+  const file = path.join(root, 'main.swift');
+  fs.writeFileSync(file, `import Foundation
+import CoreGraphics
+import Darwin
+let EVENT_MARK: Int64 = 0x4D43_4341
+func log(_ s: String) {}
+${gate}
+${control}
+${wait}
+${record}
+// Native integration harness: real arbitration/locking/event classification;
+// stub only OS target queries and dispatch so no real pointer/key is touched.
+func sampleHumanInput() {}
+var targetPid: pid_t = 42
+var locked = false
+func AXIsProcessTrusted() -> Bool { true }
+func screenLocked() -> Bool { locked }
+func bundleOf(_ pid: pid_t) -> String? { "test.app" }
+func pidAt(_ point: CGPoint) -> pid_t? { targetPid }
+func focusedAppPid() -> pid_t? { targetPid }
+func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
+func refused(_ reason: String, _ message: String, retrySafe: Bool = true) -> [String: Any] {
+  ["ok": false, "reason": reason, "dispatched": "none", "retrySafe": retrySafe]
+}
+let PROTECTED_APPS: Set<String> = [], SYSTEM_SURFACES: Set<String> = [], TERMINALS: Set<String> = []
+final class HUD { func update() {} }
+let computerUseHUD = HUD()
+${mutation}
+// Deterministic timing: no early resume, held keys/buttons, restart on input,
+// duplicate tap observations and monotonic timestamps, automatic HUD expiry.
+let g = HumanInputGate()
+precondition(!g.snapshot(at: 0).visible)
+g.begin(at: 0)
+precondition(g.snapshot(at: 0).phase == "running")
+g.input(at: 10)
+precondition(g.snapshot(at: 10.79).phase == "paused")
+precondition(g.snapshot(at: 10.81).seconds == 3)
+precondition(g.snapshot(at: 11.81).seconds == 2)
+precondition(g.snapshot(at: 12.81).seconds == 1)
+g.input(at: 13)
+g.input(at: 12) // late sample must not move the idle deadline backwards
+precondition(g.snapshot(at: 13.2).phase == "paused")
+precondition(g.snapshot(at: 16.79).phase == "countdown")
+precondition(g.snapshot(at: 16.81).phase == "running")
+g.input(at: 20, token: 1, down: true)
+g.input(at: 20, token: 1, down: true) // same down observed by both taps
+g.input(at: 20, token: 1000, down: true)
+precondition(g.snapshot(at: 100).phase == "paused")
+g.input(at: 100, token: 1)
+precondition(g.snapshot(at: 110).phase == "paused") // mouse still held
+g.input(at: 110, token: 1000)
+precondition(g.snapshot(at: 110.79).phase == "paused")
+precondition(g.snapshot(at: 113.81).phase == "running")
+g.end(at: 114)
+precondition(g.snapshot(at: 114.9).visible)
+precondition(!g.snapshot(at: 115.1).visible)
+g.input(at: 120, token: 55, down: true)
+g.releaseMissing { _ in false } // a dropped key-up must not pause forever
+precondition(g.snapshot(at: 123.81).phase == "running")
+// Own synthesized events never cause pause (no event is posted to the OS).
+let event = CGEvent(keyboardEventSource: CGEventSource(stateID: .privateState), virtualKey: 0, keyDown: true)!
+event.setIntegerValueField(.eventSourceUserData, value: EVENT_MARK)
+for type in [CGEventType.keyDown, .keyUp, .mouseMoved, .leftMouseDown, .scrollWheel] { recordHumanInput(type, event) }
+precondition(humanInput.snapshot(at: inputClock()).phase == "running")
+let physicalEvent = CGEvent(keyboardEventSource: CGEventSource(stateID: .privateState), virtualKey: 0, keyDown: true)!
+recordHumanInput(.keyDown, physicalEvent)
+precondition(humanInput.snapshot(at: inputClock() + 100).phase == "paused")
+recordHumanInput(.keyUp, physicalEvent)
+precondition(humanInput.snapshot(at: inputClock()).phase == "paused")
+// Run the real unified mutation entry on its worker lane; the main run loop
+// remains alive for UI dispatch while we exercise reset/resume and refusal.
+DispatchQueue.global().async {
+  humanInput.input(at: inputClock())
+  let started = inputClock()
+  DispatchQueue.global().asyncAfter(deadline: .now() + 1) { humanInput.input(at: inputClock()) }
+  let reply = withMutation(["pid": 42], session: "test", target: 42, kind: .pointer) {
+    precondition(inputClock() - started >= 4.7, "dispatch resumed before restarted countdown ended")
+    precondition(humanInput.snapshot(at: inputClock()).phase == "running")
+    return ["ok": true]
+  }
+  precondition(reply["ok"] as? Bool == true)
+  humanInput.input(at: inputClock())
+  DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { control.userEsc() }
+  let stopped = withMutation(["pid": 42], session: "test", target: 42, kind: .keyboard) { fatalError("Esc did not prevent dispatch") }
+  precondition(stopped["reason"] as? String == "user-stopped")
+  precondition(stopped["retrySafe"] as? Bool == false)
+  control.resume("test")
+  precondition(control.release("test"))
+  humanInput.input(at: inputClock())
+  let remoteStarted = inputClock()
+  let remote = withMutation(["pid": 42], session: "remote-screen", target: 42, kind: .pointer) { ["ok": true] }
+  precondition(remote["ok"] as? Bool == true && inputClock() - remoteStarted < 0.5,
+               "manual remote control was delayed by the automation countdown")
+  precondition(control.release("remote-screen"))
+  humanInput.input(at: inputClock() - 10) // must not undo the latest input
+  targetPid = 43
+  let stale = withMutation([:], session: "test", target: 42, kind: .keyboard) { fatalError("stale target received input") }
+  precondition(stale["reason"] as? String == "stale")
+  targetPid = 42
+  humanInput.input(at: inputClock())
+  DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { locked = true }
+  let lockReply = withMutation(["pid": 42], session: "test", target: 42, kind: .keyboard) { fatalError("locked screen received input") }
+  precondition(lockReply["reason"] as? String == "screen-locked")
+  print("Computer use OK: pause, 3/2/1, reset, held input, own-event exclusion, resume, Esc, stale target, screen lock")
+  exit(0)
+}
+RunLoop.main.run()
+`);
+  const binary = path.join(root, 'input-tests');
+  execFileSync('xcrun', ['swiftc', file, '-o', binary], { timeout: 30000 });
+  assert.match(execFileSync(binary, [], { encoding: 'utf8', timeout: 20000 }), /Computer use OK/);
+});
+
 test('RFB native regressions: nested dirty regions cover latest pixels and fast requests are never lost', { skip: !hasSwift, timeout: 90000 }, t => {
   const root = fs.mkdtempSync('/tmp/multicc-rfb-native-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -227,6 +349,8 @@ test('agent: installer build, client/server protocol and chrome watchdog', { ski
   assert.match(call('call', '{"op":"snap","path":"/tmp/x.png","backend":"nope"}').body.error,
     /not available|screen-recording-not-granted/);
   assert.equal(status.control.halted, false);
+  assert.equal(status.control.inputState, 'idle');
+  assert.equal(typeof status.control.resumeSecondsLeft, 'number');
 
   await sleep(1200);
   assert.ok(!fs.existsSync(marker), 'paused watchdog never launches');
