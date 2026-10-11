@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 C · 电脑舰队 — MultiCC 多电脑交互原型</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .fleet { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .mcard { background: #fff; border: 1px solid var(--hairline); border-radius: 18px; box-shadow: var(--shadow-1); padding: 16px 18px; position: relative; border-top: 4px solid var(--c); }
+  .mcard.sel { outline: 2px solid var(--accent); }
+  .mcard.offline { opacity: .7; }
+  .mcard .hd { display: flex; align-items: center; gap: 10px; }
+  .mcard .hd b { font-size: 15px; }
+  .mcard .hd small { color: var(--muted); }
+  .mcard .hd .sp { flex: 1; }
+  .mcard input[type=checkbox] { width: 16px; height: 16px; }
+  .meters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+  .meter small { display: block; color: var(--muted); font-size: 11px; }
+  .meter b { font-size: 15px; }
+  .meter .track { height: 4px; border-radius: 2px; background: var(--hairline); margin-top: 4px; overflow: hidden; }
+  .meter .track span { display: block; height: 100%; }
+  .mtasks { border-top: 1px solid var(--hairline); padding-top: 8px; min-height: 64px; border-radius: 8px; }
+  .mtasks.drop { background: var(--blue-soft); outline: 2px dashed var(--accent); }
+  .tk { display: flex; gap: 8px; align-items: center; font-size: 12.5px; padding: 5px 8px; border-radius: 8px; cursor: grab; border: 1px solid transparent; }
+  .tk:hover { background: var(--panel-soft); border-color: var(--hairline); }
+  .tk .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcard .ft { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .batch { position: sticky; top: 38px; z-index: 20; display: flex; align-items: center; gap: 10px; background: #1d2a3d; color: #fff; border-radius: 14px; padding: 10px 14px; box-shadow: var(--shadow-2); }
+  .batch .btn { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.2); color: #fff; }
+  .batch .sp { flex: 1; }
+  table.matrix td, table.matrix th { text-align: center; }
+  table.matrix td:first-child, table.matrix th:first-child { text-align: left; }
+  .ok { color: var(--green); } .diff { color: var(--amber); font-weight: 600; } .na { color: var(--faint); }
+  .drawer { position: fixed; top: 38px; right: 0; bottom: 0; width: 420px; background: #fff; box-shadow: var(--shadow-3); z-index: 70; padding: 20px 22px; overflow: auto; transform: translateX(105%); transition: transform .2s; }
+  .drawer.show { transform: none; }
+  .timeline { border-left: 2px solid var(--hairline); margin-left: 6px; padding-left: 14px; font-size: 12.5px; }
+  .timeline div { position: relative; margin-bottom: 10px; }
+  .timeline div::before { content: ''; position: absolute; left: -20px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .timeline div.g::before { background: var(--green); } .timeline div.r::before { background: var(--danger); } .timeline div.a::before { background: var(--amber); }
+  .timeline small { color: var(--muted); }
+  .opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .opt small { display: block; color: var(--muted); font-size: 12px; }
+  .progress { height: 6px; border-radius: 3px; background: var(--hairline); overflow: hidden; }
+  .progress span { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 4px; }
+  .tabs button { border: 0; background: transparent; padding: 8px 14px; border-bottom: 2px solid transparent; font-weight: 600; color: var(--muted); }
+  .tabs button.on { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <b>方案 C · 电脑舰队</b><span class="tag">新增一级「电脑」页 · 运维 + 跨电脑调度</span>
+  <span class="sp"></span>
+  <span>演示状态：</span>
+  <span class="states" id="states">
+    <button data-s="fleet" class="on">舰队总览</button>
+    <button data-s="batch">批量升级</button>
+    <button data-s="sync">配置同步</button>
+    <button data-s="move">迁移任务</button>
+    <button data-s="detail">电脑详情</button>
+  </span>
+  <a href="index.html">← 返回对比</a>
+</div>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="logo">M</span>MultiCC <em>Air</em></div>
+    <div class="space-card">
+      <strong>multicc</strong><small>~/Downloads/gapasea-all-in-one/…/multicc</small>
+      <div class="foot"><span>工作目录</span><kbd>⌘ K 切换</kbd></div>
+    </div>
+    <button class="nav-row"><span>◫</span>控制台<span class="badge">8</span></button>
+    <!-- 新增：与控制台、定时任务平级的一页 -->
+    <button class="nav-row on" onclick="setState('fleet')"><span>⌸</span>电脑<span class="badge" style="background:var(--amber)">2</span></button>
+    <button class="nav-row"><span>◴</span>定时任务</button>
+    <div class="caption">任务 · 最近任务</div>
+    <button class="nav-row btn ghost" style="justify-content:flex-start">＋ 新任务</button>
+    <div class="side-bottom">
+      <div>📦 v2.4.3 · 本机为<b style="color:var(--text)">主控</b></div>
+      <div style="margin-top:8px">⚙ 更多与系统 ›</div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="page">
+      <div>
+        <div class="crumb">MultiCC Air › 电脑</div>
+        <h1>电脑</h1>
+        <p>4 台电脑 · 3 台在线 · 4 个任务在跑 · 1 台版本落后 · 配置有 3 处差异</p>
+      </div>
+      <span class="sp"></span>
+      <button class="btn" onclick="setState('sync')">⇅ 配置同步</button>
+      <button class="btn primary" onclick="toast('添加电脑：配对码 / 地址+令牌（同方案 A），加入后由主控统一下发配置')">＋ 添加电脑</button>
+    </header>
+    <div class="content">
+      <div class="tabs"><button id="tab-fleet" class="on" onclick="setState('fleet')">总览</button><button id="tab-sync" onclick="setState('sync')">配置同步</button><button onclick="toast('调度规则：例如「marketing 目录的定时任务只在 Mac mini 跑」「电量 < 20% 的电脑不接新任务」')">调度规则</button><button onclick="toast('审计：谁在哪台电脑做了什么（升级、推配置、迁移、远程屏幕）')">审计日志</button></div>
+
+      <div id="v-fleet">
+        <div class="annot" style="margin-bottom:14px"><b>设计要点：</b>把「电脑」当成被管理的资源：一眼看健康、版本、负载、在跑什么；
+          勾选多台做批量操作；把任务从一张卡<b>拖</b>到另一张卡就是迁移。适合机器多、长期挂机跑任务的重度用户。</div>
+        <div class="batch hide" id="batch"><span id="batch-n">已选 0 台</span><span class="sp"></span>
+          <button class="btn sm" onclick="openDialog('dlg-up')">⇧ 升级到 v2.4.3</button>
+          <button class="btn sm" onclick="setState('sync')">⇅ 推送配置</button>
+          <button class="btn sm" onclick="toast('批量暂停：所选电脑不再接新任务，在跑的跑完为止')">⏸ 暂停接单</button>
+          <button class="btn sm" onclick="toast('重启 MultiCC 服务会中断这些电脑上正在跑的会话 —— 需要逐台二次确认')">↻ 重启服务…</button>
+          <button class="btn sm" onclick="clearSel()">✕</button></div>
+        <div class="fleet" id="fleet" style="margin-top:14px"></div>
+      </div>
+
+      <div id="v-sync" class="hide">
+        <section class="card">
+          <h2><span><span class="caption">Config drift</span>配置同步</span><span class="sp"></span>
+            <button class="btn sm" onclick="toast('只推送有差异的 3 项到对应电脑；推送前先在目标电脑留一份快照，可一键回滚')">以本机为准，推送差异</button></h2>
+          <table class="list matrix"><thead><tr><th>配置项</th><th>MacBook Pro（主控）</th><th>Mac mini</th><th>Windows 台式机</th><th>Ubuntu 服务器</th></tr></thead>
+            <tbody>
+              <tr><td>MultiCC 版本</td><td class="ok">v2.4.3</td><td class="ok">✓</td><td class="diff">v2.4.1</td><td class="ok">✓</td></tr>
+              <tr><td>Provider 线路（12 条）</td><td class="ok">基准</td><td class="ok">✓</td><td class="diff">缺 3 条</td><td class="na">离线</td></tr>
+              <tr><td>技能（skills，86 个）</td><td class="ok">基准</td><td class="diff">2 个旧版</td><td class="ok">✓</td><td class="na">离线</td></tr>
+              <tr><td>内置规则 / 托管上下文</td><td class="ok">基准</td><td class="ok">✓</td><td class="ok">✓</td><td class="na">离线</td></tr>
+              <tr><td>敏感信息保险箱</td><td class="ok">基准</td><td><label><input type="checkbox"> 仅同步所选条目</label></td><td><label><input type="checkbox"> 仅同步所选条目</label></td><td class="na">离线</td></tr>
+              <tr><td>消息桥接（微信/飞书）</td><td>本机独占</td><td class="na">不同步</td><td class="na">不同步</td><td class="na">不同步</td></tr>
+            </tbody></table>
+          <div class="note" style="margin-top:12px">规则：版本、线路、技能、规则默认跟随主控；<b>密钥默认不同步</b>，要逐条勾选；消息桥接这类「只能有一个实例收消息」的配置标为本机独占，避免两台电脑同时回复同一个群。离线的电脑上线后自动补推。</div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 批量升级 -->
+<div class="scrim" id="dlg-up">
+  <div class="dialog">
+    <h3>升级 1 台电脑到 v2.4.3</h3>
+    <p class="sub">逐台滚动升级：一台成功再下一台。升级会等这台电脑上正在跑的任务告一段落。</p>
+    <div class="opt"><span class="mdot" style="background:var(--m3);margin-top:6px"></span><span style="flex:1"><b>Windows 台式机</b> v2.4.1 → v2.4.3<small>0 个任务在跑 · 可以立即升级</small>
+      <div class="progress" style="margin-top:8px"><span id="up-p" style="width:0"></span></div><small id="up-t">等待开始</small></span></div>
+    <label class="opt"><input type="checkbox" checked><span>升级后自动重启该电脑的 MultiCC 服务<small>只重启目标电脑，不影响本机和其他电脑的会话</small></span></label>
+    <label class="opt"><input type="checkbox" checked><span>失败自动回滚到 v2.4.1</span></label>
+    <div class="actions"><button class="btn" onclick="closeDialog('dlg-up')">取消</button><button class="btn primary" onclick="runUpgrade()">开始升级</button></div>
+  </div>
+</div>
+
+<!-- 迁移任务 -->
+<div class="scrim" id="dlg-move">
+  <div class="dialog">
+    <h3>把任务迁到 MacBook Pro？</h3>
+    <p class="sub">「TikTok GMV Max 补素材」 · Mac mini → MacBook Pro</p>
+    <div class="opt"><span>①</span><span>等当前这一轮结束（约 2 分钟），或<a>立即打断</a></span></div>
+    <div class="opt"><span>②</span><span>打包 worktree 分支 <code>multicc/task-7b2e…</code>（git bundle，含未提交改动快照）<small>MacBook Pro 上已有 marketing 的同一远端，只传增量 · 约 1.2 MB</small></span></div>
+    <div class="opt"><span>③</span><span>携带对话上下文（handoff 摘要 + 最近 20 轮）<small>CLI 原生会话 ID 不能跨电脑，目标电脑会开新会话并注入摘要</small></span></div>
+    <div class="opt"><span>④</span><span>在 MacBook Pro 上用相同的 CLI/线路继续<small><span class="warn">⚠ 9222 自动化 Chrome 的登录态在 Mac mini 上，迁过去后浏览器类步骤需要重新登录</span></small></span></div>
+    <div class="actions"><button class="btn" onclick="closeDialog('dlg-move');render()">取消</button><button class="btn primary" onclick="closeDialog('dlg-move');doMove()">迁移</button></div>
+  </div>
+</div>
+
+<!-- 电脑详情抽屉 -->
+<div class="drawer" id="drawer">
+  <div style="display:flex;align-items:center;gap:10px"><span class="mdot" style="background:var(--m2);width:12px;height:12px"></span><h3 style="margin:0;flex:1">Mac mini · 办公室</h3><button class="btn sm" onclick="document.getElementById('drawer').classList.remove('show')">✕</button></div>
+  <p style="color:var(--muted);font-size:12.5px;margin:4px 0 14px">macOS 14 · v2.4.3 · https://office.example.com · 已配对 23 天</p>
+  <div class="kv" style="display:grid;grid-template-columns:90px 1fr;gap:6px 10px;font-size:13px">
+    <span style="color:var(--muted)">角色</span><span>工作节点（主控：MacBook Pro）</span>
+    <span style="color:var(--muted)">CLI</span><span>claude · codex</span>
+    <span style="color:var(--muted)">驻留池</span><span>3/4 车道占用</span>
+    <span style="color:var(--muted)">接单</span><span><label><input type="checkbox" checked> 接受新任务</label></span>
+    <span style="color:var(--muted)">专属目录</span><span>marketing · Shop（调度规则）</span>
+  </div>
+  <div style="display:flex;gap:6px;margin:14px 0;flex-wrap:wrap"><button class="btn sm">🖥 屏幕</button><button class="btn sm">⌨ 终端</button><button class="btn sm">📄 日志</button><button class="btn sm">⟲ 重新配对</button><button class="btn sm danger">移除</button></div>
+  <h4 style="margin:16px 0 8px">最近 24 小时</h4>
+  <div class="timeline">
+    <div class="g">09:58 开始「小红书千帆周报复盘」<br><small>由主控派发 · 调度规则命中 marketing</small></div>
+    <div class="a">09:12 「万相台人群包」等待确认预算</div>
+    <div class="g">03:00 定时任务「每日订单抓取」完成<br><small>京东 POP · 214 单</small></div>
+    <div class="r">昨天 22:41 失联 6 分钟<br><small>Clash TUN 重连，任务未中断，消息已补齐</small></div>
+    <div class="g">昨天 20:10 配置同步：技能 +2</div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+const sel = new Set();
+const tasksOn = {}; MACHINES.forEach(m => tasksOn[m.id] = TASKS.filter(t => t.m === m.id && t.st !== 'done'));
+function meter(label, v, c) { return `<div class="meter"><small>${label}</small><b>${v}%</b><div class="track"><span style="width:${v}%;background:${c}"></span></div></div>`; }
+function render() {
+  document.getElementById('fleet').innerHTML = MACHINES.map(m => `
+    <div class="mcard ${sel.has(m.id) ? 'sel' : ''} ${m.online ? '' : 'offline'}" style="--c:${m.online ? m.color : 'var(--faint)'}" data-m="${m.id}">
+      <div class="hd"><input type="checkbox" ${sel.has(m.id) ? 'checked' : ''} onchange="toggleSel('${m.id}')">
+        <span><b>${m.name}</b>${m.role ? ' <span class="mchip">本机 · 主控</span>' : ''}<br><small>${m.os} · ${m.ver}${m.outdated ? ' <span class="warn">· 可升级</span>' : ''} · ${m.clis}</small></span>
+        <span class="sp"></span><span class="${m.online ? 'online' : 'offline'}" style="font-size:12px">${m.online ? '● 在线' : '○ 离线 · ' + m.lastSeen}</span></div>
+      ${m.online ? `<div class="meters">${meter('CPU', m.cpu, m.cpu > 70 ? 'var(--amber)' : 'var(--green)')}${meter('内存', m.mem, m.mem > 75 ? 'var(--amber)' : 'var(--green)')}
+        <div class="meter"><small>电源</small><b>${m.power}</b></div><div class="meter"><small>屏幕</small><b>${m.screen ? '可远控' : '<span style="color:var(--faint)">不支持</span>'}</b></div></div>`
+        : `<div class="note" style="margin:12px 0">离线中。它上面的定时任务会在上线后补跑；调度器不会再往它派任务。</div>`}
+      <div class="mtasks" ondragover="event.preventDefault();this.classList.add('drop')" ondragleave="this.classList.remove('drop')" ondrop="dropOn(event,'${m.id}')">
+        ${tasksOn[m.id].map((t, i) => `<div class="tk" draggable="${t.st === 'run'}" ondragstart="dragFrom(event,'${m.id}',${i})">${stLabel[t.st]}<span class="t">${t.title}</span><small style="color:var(--muted)">${t.dir}</small></div>`).join('') || '<small style="color:var(--faint);padding:6px 8px;display:block">空闲 · 把任务拖到这里迁移过来</small>'}
+      </div>
+      <div class="ft">${m.screen && m.online ? '<button class="btn sm">🖥 屏幕</button>' : ''}${m.online ? '<button class="btn sm">⌨ 终端</button>' : '<button class="btn sm">唤醒</button>'}
+        ${m.outdated ? '<button class="btn sm" onclick="sel.clear();sel.add(\'' + m.id + '\');render();openDialog(\'dlg-up\')">⇧ 升级</button>' : ''}
+        <button class="btn sm ghost" onclick="openDrawer('${m.id}')">详情 ›</button></div>
+    </div>`).join('');
+  document.getElementById('batch').classList.toggle('hide', sel.size === 0);
+  document.getElementById('batch-n').textContent = `已选 ${sel.size} 台`;
+}
+function toggleSel(id) { sel.has(id) ? sel.delete(id) : sel.add(id); render(); }
+function clearSel() { sel.clear(); render(); }
+let drag = null;
+function dragFrom(e, m, i) { drag = { m, i }; }
+function dropOn(e, to) { e.preventDefault(); if (!drag || drag.m === to) { render(); return; } pending = { ...drag, to }; openDialog('dlg-move'); }
+let pending = { m: 'mini', i: 1, to: 'mbp' };
+function doMove() { const t = tasksOn[pending.m].splice(pending.i, 1)[0]; if (t) { t.m = pending.to; t.phase = '迁移完成，继续执行'; tasksOn[pending.to].unshift(t); } render(); toast('已迁移到 ' + machine(pending.to).name + '，对话里留了一条迁移记录'); }
+function openDrawer() { document.getElementById('drawer').classList.add('show'); }
+function runUpgrade() {
+  const p = document.getElementById('up-p'), t = document.getElementById('up-t'); let v = 0;
+  const steps = ['下载安装包…', '校验 SHA256…', '等待空闲…', '替换并重启服务…', '健康检查…', '✓ 已升级到 v2.4.3'];
+  const timer = setInterval(() => { v += 20; p.style.width = Math.min(v, 100) + '%'; t.textContent = steps[Math.min(v / 20, 5)];
+    if (v >= 100) { clearInterval(timer); MACHINES[2].outdated = false; MACHINES[2].ver = 'v2.4.3'; setTimeout(() => { closeDialog('dlg-up'); render(); toast('Windows 台式机 已升级'); }, 700); } }, 450);
+}
+function setState(s) {
+  document.querySelectorAll('#states button').forEach(b => b.classList.toggle('on', b.dataset.s === s));
+  ['dlg-up', 'dlg-move'].forEach(closeDialog); document.getElementById('drawer').classList.remove('show');
+  const sync = s === 'sync';
+  document.getElementById('v-fleet').classList.toggle('hide', sync); document.getElementById('v-sync').classList.toggle('hide', !sync);
+  document.getElementById('tab-fleet').classList.toggle('on', !sync); document.getElementById('tab-sync').classList.toggle('on', sync);
+  if (s === 'fleet') clearSel();
+  if (s === 'batch') { sel.clear(); sel.add('win'); render(); openDialog('dlg-up'); }
+  if (s === 'move') { pending = { m: 'mini', i: 1, to: 'mbp' }; render(); openDialog('dlg-move'); }
+  if (s === 'detail') { render(); openDrawer('mini'); }
+}
+document.querySelectorAll('#states button').forEach(b => b.onclick = () => setState(b.dataset.s));
+render();
+const hs = location.hash.match(/s=(\w+)/); if (hs) setState(hs[1]);
+</script>
+</body>
+</html>

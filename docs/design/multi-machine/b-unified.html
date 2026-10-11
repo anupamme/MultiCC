@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 B · 统一控制台 — MultiCC 多电脑交互原型</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .mfilter { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mfilter button { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 3px 10px 3px 8px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .mfilter button.on { border-color: var(--accent); background: var(--blue-soft); color: var(--accent-strong); }
+  .mfilter button.off { opacity: .55; }
+  .stat .bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 6px; background: var(--hairline); }
+  .stat .bar span { display: block; }
+  .group-h { display: flex; align-items: center; gap: 10px; padding: 10px 4px 8px; font-size: 13px; }
+  .group-h b { font-size: 14px; }
+  .group-h small { color: var(--muted); }
+  .group-h .sp { flex: 1; }
+  .group + .group { margin-top: 10px; }
+  .inbox td:first-child { width: 28px; }
+  .pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pick button { text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; }
+  .pick button.on { border-color: var(--accent); background: var(--blue-soft); }
+  .pick button[disabled] { opacity: .5; cursor: not-allowed; }
+  .pick small { display: block; color: var(--muted); font-size: 11.5px; }
+  .chatview { display: grid; grid-template-columns: 1fr 300px; gap: 20px; }
+  .bubble { background: #fff; border: 1px solid var(--hairline); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow-1); }
+  .bubble.me { background: var(--blue-soft); border-color: #cfe3fb; margin-left: 80px; }
+  .kv { display: grid; grid-template-columns: 82px 1fr; gap: 6px 10px; font-size: 13px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .tab-h { display: flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <b>方案 B · 统一控制台</b><span class="tag">所有电脑汇成一张任务板 · 电脑是任务的属性</span>
+  <span class="sp"></span>
+  <span>演示状态：</span>
+  <span class="states" id="states">
+    <button data-s="all" class="on">全部电脑</button>
+    <button data-s="filter">只看 Mac mini</button>
+    <button data-s="new">新建任务选电脑</button>
+    <button data-s="remote">打开远端任务</button>
+  </span>
+  <a href="index.html">← 返回对比</a>
+</div>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="logo">M</span>MultiCC <em>Air</em></div>
+    <div class="space-card">
+      <strong id="dir-name">multicc</strong><small id="dir-path">MacBook Pro · ~/Downloads/gapasea-all-in-one/…/multicc</small>
+      <div class="foot"><span>工作目录 · 跨 4 台电脑</span><kbd>⌘ K 切换</kbd></div>
+    </div>
+    <button class="nav-row on" onclick="setState('all')"><span>◫</span>控制台<span class="badge">8</span></button>
+    <button class="nav-row"><span>◴</span>定时任务</button>
+    <div class="caption">任务 · 最近任务（所有电脑）</div>
+    <button class="nav-row btn ghost" style="justify-content:flex-start" onclick="setState('new')">＋ 新任务</button>
+    <div id="side-tasks"></div>
+    <div class="side-bottom">
+      <div style="display:flex;justify-content:space-between"><span>📦 v2.4.3 · 1 台待升级</span><span>中/EN</span></div>
+      <div style="margin-top:8px;display:flex;gap:6px;align-items:center"><span class="mdot" style="background:var(--green)"></span>3/4 台电脑在线</div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="v-console">
+      <header class="page">
+        <div>
+          <div class="crumb">MultiCC Air › 控制台</div>
+          <h1>控制台</h1>
+          <p>跨所有电脑、所有工作目录：任务总览、目录与常用工具。</p>
+        </div>
+        <span class="sp"></span>
+        <button class="btn primary">＋ 添加工作目录</button>
+        <button class="btn primary" onclick="setState('new')">＋ 新建任务</button>
+      </header>
+      <div class="content">
+        <div class="annot"><b>设计要点：</b>入口不变，还是「控制台」。数字、目录、任务全部是所有电脑的合集；电脑只在两处出现——
+          顶部的电脑筛选条，和每一行上的色点徽标。用户默认不必关心任务在哪台机器上跑。</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span style="font-size:12.5px;color:var(--muted)">电脑：</span>
+          <div class="mfilter" id="mfilter"></div>
+          <span class="sp" style="flex:1"></span>
+          <button class="btn sm ghost" onclick="toast('打开「添加电脑」：配对码 / 地址+令牌（与方案 A 相同流程）')">＋ 添加电脑</button>
+        </div>
+        <div class="stats" id="stats"></div>
+
+        <section class="card">
+          <h2><span><span class="caption">Needs you</span>需要你处理</span><span class="sp"></span><small style="color:var(--muted);font-weight:400">按紧急程度，跨电脑排序</small></h2>
+          <table class="list inbox"><thead><tr><th></th><th>任务</th><th>电脑 / 目录</th><th>状态</th><th>时间</th><th></th></tr></thead><tbody id="inbox"></tbody></table>
+        </section>
+
+        <section class="card">
+          <h2><span><span class="caption">Work directories</span>工作目录</span><span class="sp"></span>
+            <span class="tab-h"><button class="btn sm" id="g-m" onclick="groupBy='m';render()">按电脑分组</button><button class="btn sm" id="g-n" onclick="groupBy='n';render()">按名称合并</button></span></h2>
+          <div id="dirs"></div>
+        </section>
+      </div>
+    </div>
+
+    <div id="v-remote" class="hide">
+      <header class="page">
+        <div>
+          <div class="crumb">marketing › 任务</div>
+          <h1>小红书千帆周报复盘 <span class="st run" style="font-size:13px;vertical-align:middle">● 执行中</span></h1>
+          <p style="display:flex;gap:8px;align-items:center"><span class="mchip"><span class="mdot" style="background:var(--m2)"></span>运行在 Mac mini · 办公室</span> worktree：~/code/gapasea-marketing/.multicc-worktrees/task-91ac…</p>
+        </div>
+        <span class="sp"></span>
+        <button class="btn" onclick="toast('打开 Mac mini 的 🖥 屏幕（远程协助链接由那台电脑签发）')">🖥 Mac mini 屏幕</button>
+        <button class="btn" onclick="toast('迁移任务需要方案 C 的编排能力；方案 B 只做到「看和管」')">⇄ 迁到别的电脑</button>
+        <button class="btn">ⓘ 详情</button>
+      </header>
+      <div class="content">
+        <div class="annot"><b>设计要点：</b>对话页和本机任务长得一模一样，只是页头多一颗「运行在 X」徽标；
+          消息、文件链接、截图、🖥 屏幕都自动走那台电脑。本地路径链接打开的是 <i>那台电脑</i> 上的文件，所以链接上也带色点。</div>
+        <div class="chatview">
+          <div>
+            <div class="bubble me">把上周千帆的计划级数据拉一下，做个复盘网页。</div>
+            <div class="bubble">已抓取 7 天报表：38 个计划、212 条创意。正在按笔记素材聚合点击归因…<br>
+              <span style="font-size:12px;color:var(--muted)">📄 <a>/Users/office/code/gapasea-marketing/out/qianfan-week41.html</a> <span class="mchip" style="font-size:10.5px"><span class="mdot" style="background:var(--m2)"></span>Mac mini</span></span></div>
+            <div class="bubble" style="color:var(--muted)">▍正在生成图表…</div>
+            <div class="field"><textarea placeholder="发消息给 Mac mini 上的这个任务…"></textarea></div>
+          </div>
+          <div class="card" style="padding:16px">
+            <h2 style="font-size:14px">运行环境</h2>
+            <div class="kv">
+              <span>电脑</span><span><span class="mdot" style="background:var(--m2)"></span> Mac mini · 办公室</span>
+              <span>状态</span><span class="online">● 在线 · 延迟 46ms</span>
+              <span>CLI</span><span>claude（官方线路）</span>
+              <span>负载</span><span>CPU 72% · 内存 78%</span>
+              <span>电源</span><span>⚡ 接电</span>
+            </div>
+            <div class="note" style="margin-top:12px">如果 Mac mini 掉线，这个任务会在那边继续跑；这里显示「失联」并停止推送，恢复后自动补齐消息。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- 新建任务：多了「在哪台电脑执行」 -->
+<div class="scrim" id="dlg-new">
+  <div class="dialog" style="width:min(620px,94vw)">
+    <h3>新任务</h3>
+    <p class="sub">和现在的新建任务一样，只是多了一行「在哪台电脑执行」。默认跟着工作目录走。</p>
+    <div class="field"><label>工作目录</label>
+      <select id="new-dir" onchange="renderPick()">
+        <option value="multicc">multicc（2 台电脑上都有）</option>
+        <option value="marketing">marketing（只在 Mac mini）</option>
+        <option value="trader_hermes">trader_hermes（只在 Ubuntu 服务器）</option>
+      </select></div>
+    <div class="field"><label>在哪台电脑执行</label><div class="pick" id="pick"></div></div>
+    <div class="note" id="pick-note"></div>
+    <div class="field"><label>任务目标</label><textarea placeholder="想做什么…"></textarea></div>
+    <div class="actions"><button class="btn" onclick="closeDialog('dlg-new')">取消</button><button class="btn primary" onclick="closeDialog('dlg-new');toast('已在所选电脑上创建并开始执行')">创建并执行</button></div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+let only = null, groupBy = 'm', pickId = 'auto';
+const visible = m => !only || only === m;
+function render() {
+  document.getElementById('mfilter').innerHTML = `<button class="${only ? '' : 'on'}" onclick="only=null;render()">全部 4 台</button>` +
+    MACHINES.map(m => `<button class="${only === m.id ? 'on' : ''} ${m.online ? '' : 'off'}" onclick="only='${m.id}';render()">${dot(m.online ? m : { color: 'var(--faint)' })}${m.name}<small style="color:var(--muted)">${m.online ? m.running + ' 在跑' : '离线'}</small></button>`).join('');
+  const ms = MACHINES.filter(m => visible(m.id));
+  const sum = k => ms.reduce((a, m) => a + m[k], 0);
+  const bar = k => `<div class="bar">${ms.filter(m => m[k]).map(m => `<span title="${m.name} ${m[k]}" style="flex:${m[k]};background:${m.color}"></span>`).join('')}</div>`;
+  document.getElementById('stats').innerHTML = [
+    ['进行中', sum('running'), 'var(--green)', 'running'], ['等我回复', sum('waiting'), 'var(--amber)', 'waiting'],
+    ['异常', sum('error'), 'var(--danger)', 'error'],
+  ].map(([k, v, c, key]) => `<div class="stat"><i style="background:${c}"></i><small>${k}</small><b>${v}</b>${bar(key)}</div>`).join('') +
+    `<div class="stat"><i style="background:var(--accent)"></i><small>今日完成</small><b>${only ? 3 : 14}</b><small>色条 = 各电脑占比</small></div>` +
+    `<div class="stat"><i style="background:#8b5cf6"></i><small>电脑</small><b>${ms.filter(m => m.online).length}/${ms.length}</b><small>${ms.some(m => !m.online) ? '1 台离线 · 2 小时' : '全部在线'}</small></div>`;
+  const order = { err: 0, wait: 1, off: 2, run: 3 };
+  document.getElementById('inbox').innerHTML = TASKS.filter(t => t.st !== 'done' && visible(t.m)).sort((a, b) => order[a.st] - order[b.st]).map(t => `
+    <tr onclick="${t.m === 'mini' && t.st === 'run' ? "setState('remote')" : ''}" style="cursor:pointer"><td>${dot(machine(t.m))}</td><td><b>${t.title}</b></td>
+    <td>${chip(t.m)} <span style="color:var(--muted)">/ ${t.dir}</span></td><td>${stLabel[t.st]}<br><small style="color:var(--muted)">${t.phase}</small></td>
+    <td style="color:var(--muted)">${t.at}</td><td><button class="btn sm">${t.st === 'off' ? '查看' : t.st === 'err' ? '重试' : '打开'}</button></td></tr>`).join('');
+  document.getElementById('g-m').classList.toggle('primary', groupBy === 'm');
+  document.getElementById('g-n').classList.toggle('primary', groupBy === 'n');
+  const dirRow = (d, withChip) => `<div class="dir"><span class="ico">▣</span><span class="main"><strong>${d.name} ${withChip ? chip(d.m) : ''}</strong><small>${d.path}</small></span><span class="cnt"><b>${d.run} 进行中</b><br>${d.total} 个任务</span></div>`;
+  if (groupBy === 'm') {
+    document.getElementById('dirs').innerHTML = ms.map(m => `<div class="group"><div class="group-h">${dot(m.online ? m : { color: 'var(--faint)' })}<b>${m.name}</b>
+      <small>${m.os} · ${m.online ? '<span class="online">在线</span>' : '<span class="offline">离线 · 上次 ' + m.lastSeen + '</span>'} · ${m.power} · ${m.ver}${m.outdated ? ' <span class="warn">待升级</span>' : ''}</small><span class="sp"></span>
+      ${m.screen ? '<button class="btn sm">🖥 屏幕</button>' : '<small style="color:var(--faint)">暂不支持远程屏幕</small>'}</div>
+      <div class="grid2" style="${m.online ? '' : 'opacity:.55'}">${DIRS.filter(d => d.m === m.id).map(d => dirRow(d, false)).join('')}</div></div>`).join('');
+  } else {
+    const names = [...new Set(DIRS.filter(d => visible(d.m)).map(d => d.name))];
+    document.getElementById('dirs').innerHTML = `<div class="grid2">${names.map(n => { const ds = DIRS.filter(d => d.name === n && visible(d.m));
+      return `<div class="dir"><span class="ico">▣</span><span class="main"><strong>${n}</strong><small>${ds.map(d => chip(d.m)).join(' ')}</small></span><span class="cnt"><b>${ds.reduce((a, d) => a + d.run, 0)} 进行中</b><br>${ds.reduce((a, d) => a + d.total, 0)} 个任务</span></div>`; }).join('')}</div>
+      <p class="note" style="margin-top:10px">「按名称合并」把多台电脑上同名（同 git 远端）的目录合成一张卡，例如 multicc 同时在 MacBook Pro 和 Mac mini 上。</p>`;
+  }
+  document.getElementById('side-tasks').innerHTML = TASKS.slice(0, 6).map(t => `<button class="nav-row" style="font-size:12.5px">${dot(machine(t.m))}<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.title}</span></button>`).join('');
+}
+function renderPick() {
+  const dir = document.getElementById('new-dir').value;
+  const has = DIRS.filter(d => d.name === dir).map(d => d.m);
+  const opts = [{ id: 'auto', name: '自动', sub: dir === 'multicc' ? '推荐 MacBook Pro：负载最低、正在开盖' : '跟随目录所在的电脑' }]
+    .concat(MACHINES.map(m => ({ id: m.id, name: m.name, sub: !m.online ? '离线' : has.includes(m.id) ? `有此目录 · CPU ${m.cpu}% · ${m.power}` : '没有此目录（会提示先克隆）', dis: !m.online, m })));
+  if (!opts.find(o => o.id === pickId) || (opts.find(o => o.id === pickId) || {}).dis) pickId = 'auto';
+  document.getElementById('pick').innerHTML = opts.map(o => `<button class="${pickId === o.id ? 'on' : ''}" ${o.dis ? 'disabled' : ''} onclick="pickId='${o.id}';renderPick()">
+    ${o.m ? dot(o.m.online ? o.m : { color: 'var(--faint)' }) : '<span>✦</span>'}<span><b style="font-size:13px">${o.name}</b><small>${o.sub}</small></span></button>`).join('');
+  const sel = MACHINES.find(m => m.id === pickId);
+  document.getElementById('pick-note').innerHTML = sel && !has.includes(sel.id)
+    ? `⚠ ${sel.name} 上没有「${dir}」。创建时会先在那台电脑上 <b>git clone</b> 同一远端到它的默认工作区，再开任务。`
+    : dir === 'trader_hermes' ? '⚠ 这个目录只在 Ubuntu 服务器上，而它离线。可以选别的电脑（会先克隆），或等它上线后自动开始。' : '任务会跑在所选电脑的 worktree 里，结果、通知、文件链接都会回到这里。';
+}
+function setState(s) {
+  document.querySelectorAll('#states button').forEach(b => b.classList.toggle('on', b.dataset.s === s));
+  closeDialog('dlg-new');
+  document.getElementById('v-console').classList.toggle('hide', s === 'remote');
+  document.getElementById('v-remote').classList.toggle('hide', s !== 'remote');
+  if (s === 'all') { only = null; render(); }
+  if (s === 'filter') { only = 'mini'; render(); }
+  if (s === 'new') { renderPick(); openDialog('dlg-new'); }
+}
+document.querySelectorAll('#states button').forEach(b => b.onclick = () => setState(b.dataset.s));
+render();
+const hs = location.hash.match(/s=(\w+)/); if (hs) setState(hs[1]);
+</script>
+</body>
+</html>
