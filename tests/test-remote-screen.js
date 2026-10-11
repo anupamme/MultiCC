@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { createDesktopHost, profileFor } = require('../src/desktop-host');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-screen-test-'));
 process.env.MULTICC_DATA_DIR = tmp;
@@ -32,6 +33,20 @@ let commandLog = [];
 let agentLog = [];
 let agentReply = () => ({ ok: true });
 rs._deps.agentCall = async req => { agentLog.push(req); return agentReply(req); };
+
+// These fixtures model macOS Retina capture, even when CI runs on Linux.
+// Pin the host as well as its commands; platform-specific tests replace it
+// explicitly below, so Linux capture and unsupported platforms remain covered.
+rs._deps.host = createDesktopHost({
+  platform: 'darwin', home: tmp, env: {},
+  call: (req, timeoutMs) => rs._deps.agentCall(req, timeoutMs),
+  exec: (cmd, args, timeout) => new Promise((resolve, reject) => {
+    rs._deps.execFile(cmd, args, { timeout, encoding: 'utf8' },
+      (error, stdout) => error ? reject(error) : resolve(stdout));
+  }),
+});
+rs._deps.sock = rs._deps.host.profile.agentSock;
+rs._deps.rfbSock = rs._deps.host.profile.rfbSock;
 
 function fakeApp() {
   const handlers = {};
@@ -152,7 +167,6 @@ test('annotation-live hands remote-screen shots to the built-in handler without 
 });
 
 // ── 跨平台：本机 desktop agent 的画像、能力接口、非 macOS 的干净拒绝 ──
-const { createDesktopHost, profileFor } = require('../src/desktop-host');
 
 test('desktop-host 画像：macOS 与 Linux X11 有 agent，win32 如实报不支持', () => {
   const mac = profileFor('darwin', { home: '/Users/x' });

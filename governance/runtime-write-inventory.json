@@ -272,6 +272,32 @@
       ]
     },
     {
+      "id": "default-user-workspace",
+      "classification": "workspace-scoped",
+      "owner": "first-launch workspace bootstrap",
+      "rationale": "The default Git workspace contains user-owned work and must survive replacement of the application bundle; configured deployments keep it below their data root.",
+      "migrationStrategy": "Preserve the existing workspace and registered path during upgrades; any relocation must copy user files and Git history without overwriting or deleting the original workspace.",
+      "sources": [
+        {
+          "file": "src/paths.js",
+          "anchor": "? path.join(os.homedir(), '.multicc', 'workspaces', 'default')"
+        }
+      ]
+    },
+    {
+      "id": "official-login-workspaces",
+      "classification": "ephemeral",
+      "owner": "official-account login terminals",
+      "rationale": "Login terminals need a session-specific working directory outside macOS protected folders; these Gitless directories are not account credentials or user projects.",
+      "migrationStrategy": "Recreate disposable login working directories beneath the configured data root when the layout changes; retain account credentials in the native CLI's own credential store.",
+      "sources": [
+        {
+          "file": "src/paths.js",
+          "anchor": "? path.join(os.homedir(), '.multicc', 'login-workspaces')"
+        }
+      ]
+    },
+    {
       "id": "human-assist-screenshots",
       "classification": "ephemeral",
       "owner": "human-assist screenshot sweep (src/assist-snapshots)",

@@ -292,8 +292,7 @@ const NO_TOOLS = 'Command failed: git init\n'
       'wiring: a failing xattr never aborts the install');
 
     const server = read('server.js');
-    ok(/directoryWriteDenied/.test(server.split('\n').filter(l => /require\('\.\/src\/directories'\)/.test(l)).join(''))
-      || /directoryWriteDenied,?\s*\n?\s*\} = require\('\.\/src\/directories'\)/.test(server),
+    ok(/const\s*\{[^}]*\bdirectoryWriteDenied\b[^}]*\}\s*=\s*require\('\.\/src\/directories'\)/.test(server),
       'wiring: server.js takes the write probe from src/directories');
     ok(!/^function directoryWriteDenied/m.test(server),
       'wiring: server.js does not keep a second copy of the probe');
