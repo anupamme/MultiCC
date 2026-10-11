@@ -127,6 +127,10 @@ async function stop() {
         PORT: String(port), HOST: '127.0.0.1', NODE_ENV: 'test', ACCESS_TOKEN: 'completion-test',
         MULTICC_DATA_DIR: dataDir, MULTICC_MEMORY_ROOT: path.join(dataDir, 'memories'),
         MULTICC_ENV_FILE: path.join(root, 'test.env'), MULTICC_TASK_SHELLS: '0', ASR_LOCAL: 'off',
+        // Fake turns must not launch the runner's real Chrome for quota checks.
+        // An explicit unavailable binary prevents fallback to installed browsers
+        // and profile writes racing temporary-directory cleanup after host exit.
+        MULTICC_CHROME_BIN: path.join(root, 'no-chrome'),
         CODEX_OAUTH_AUTO_REFRESH: '0', CLAUDE_OAUTH_AUTO_REFRESH: '0',
         MULTICC_ORCHESTRATION_WORKER_INTERVAL_MS: '60000' }, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -186,5 +190,5 @@ async function stop() {
       ws.terminate(); ws = null;
     }
   } catch (error) { console.error(output); throw error; }
-  finally { await stop(); fs.rmSync(root, { recursive: true, force: true }); }
+  finally { await stop(); await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 5 }); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

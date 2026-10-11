@@ -78,24 +78,9 @@ test('the current tracked tree satisfies the ratcheted budget', () => {
   // budget is a violation above, so this pins the declared set — a new god file
   // cannot be quietly parked here, and retiring an entry (by splitting the file
   // back under 3000) means shrinking this list in the same commit. The
-  // manage.js entry was retired by the manage-aux-history.js split.
-  // main_shell.dart was retired when the task-board UI moved out of it.
-  // air.js crossed 3000 in 0f276ebc and was retired again on 2026-09-29, when
-  // renderSchedules moved to public/air-schedule-center.js and dropped it to
-  // 2903 — the debt entry went in the same commit, so the list below lost it.
-  // chat_provider.dart crossed 3000 (from exactly 3000) in the limit-bar
-  // structural review and was retired on 2026-09-29, when the server-side
-  // auto-commit refactor removed the per-turn checkbox state (~50 lines) and
-  // dropped it to 2963 — the debt entry went in the same commit, so the list
-  // below lost it. It crossed again on 2026-10-01 (voice-dictation voiceRaw
-  // passthrough, 67022e75, +6 lines) without a registration, which turned the
-  // v2.2.3 tag CI red; the entry is back at 3005/121819, so the list below
-  // carries it again until the vendor-quota cluster split retires it.
-  // turn-engine.js joined the list on 2026-10-05: it has actually been over 3000
-  // since 0f276ebc (2026-09-22) — 40-odd commits — but the entry was never
-  // written, so this gate had been failing on main the whole time. Registering it
-  // at the measured watermark (3012) is the fix the file's own policy asks for;
-  // the real retirement is still to split the per-turn completion cluster out.
+  // chat_provider.dart retired its debt on 2026-10-08 after the usage-cache
+  // refactor brought it below 3000. server.js registered its new debt on
+  // 2026-10-09. Pin those policy changes without relaxing either budget.
   assert.deepEqual(result.debts.map(entry => entry.file),
-    ['app/lib/providers/chat_provider.dart', 'src/chat/turn-engine.js']);
+    ['server.js', 'src/chat/turn-engine.js']);
 });
