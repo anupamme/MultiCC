@@ -163,6 +163,13 @@ function createCodexExpAdapter(deps = {}) {
       }
       if (method === 'item/started') {
         const item = params.item || {};
+        if (item.type === 'collabAgentToolCall') {
+          const labels = { spawnAgent: 'Agent', wait: 'Agent Wait', sendInput: 'Agent Input',
+            closeAgent: 'Agent Close', followupTask: 'Agent Followup', sendMessage: 'Agent Message',
+            resumeAgent: 'Agent Resume', interruptAgent: 'Agent Interrupt', listAgents: 'Agent List' };
+          return [{ type: 'tool_start', id: item.id, name: labels[item.tool] || 'Agent',
+            input: { prompt: item.prompt || undefined, agentIds: item.receiverThreadIds || [] }, status: 'running' }];
+        }
         if (item.type === 'commandExecution') {
           return [{ type: 'tool_start', id: item.id, name: 'Bash', input: { command: item.command, cwd: item.cwd }, status: 'running' }];
         }
@@ -179,6 +186,14 @@ function createCodexExpAdapter(deps = {}) {
       }
       if (method === 'item/completed') {
         const item = params.item || {};
+        if (item.type === 'collabAgentToolCall') {
+          const labels = { pendingInit: '正在初始化', running: '正在执行', completed: '已完成',
+            errored: '执行失败', interrupted: '已中断', shutdown: '已关闭', notFound: '未找到' };
+          const content = Object.entries(item.agentsStates || {}).map(([id, state]) =>
+            `${id}：${labels[state?.status] || '状态未知'}${state?.message ? `\n${state.message}` : ''}`).join('\n');
+          return [{ type: 'tool_result', id: item.id, content: content || 'Agent 工具调用结束',
+            isError: item.status === 'failed' || item.status === 'interrupted' }];
+        }
         if (item.type === 'agentMessage') {
           const streamed = textDeltaItems.delete(item.id);
           return streamed ? [] : [{ type: 'assistant_text', text: item.text || '' }];

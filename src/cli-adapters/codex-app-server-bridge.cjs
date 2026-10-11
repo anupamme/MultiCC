@@ -19,6 +19,7 @@
 
 const { spawn } = require('node:child_process');
 const readline = require('node:readline');
+const { createCodexBackgroundEvents } = require('./codex-background-events.cjs');
 
 const MIN_CODEX_VERSION = Object.freeze([0, 154, 0]);
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -58,9 +59,24 @@ let terminal = false;
 // is over, i.e. the bridge is ready for the next stdin line.
 let onTurnComplete = null;
 let stopping = false;
+let mainThreadId = options.threadId || null;
+const background = createCodexBackgroundEvents({
+  mainThreadId,
+  emit: event => process.stdout.write(`${JSON.stringify({ method: 'multicc/background', params: { event } })}\n`),
+  attach: async threadId => {
+    const result = await request('thread/resume', { threadId, excludeTurns: true });
+    if (result.thread?.id !== threadId) throw new Error('子线程接入身份不匹配');
+    if (result.thread?.status?.type !== 'idle') return result;
+    // 只取最近一轮摘要，避免读取子线程完整历史；旧 CLI 无此接口时保留实时接收。
+    const page = await request('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'summary' })
+      .catch(() => null);
+    return { ...result, latestTurn: page?.data?.[0] };
+  },
+});
 function stopChild(error) {
   if (stopping) return;
   stopping = true;
+  background.dispose();
   if (error) {
     process.stderr.write(`[codex-exp] ${error.message}\n`);
     process.exitCode = 1;
@@ -125,12 +141,23 @@ childLines.on('line', (line) => {
     return;
   }
   if (!message.method) return;
+  const eventThreadId = message.params?.threadId || message.params?.thread?.id;
+  // 首次主线程通知可能早于 thread/start 的响应；子线程不得覆盖主线程身份。
+  if (!mainThreadId && message.method === 'thread/started' && !message.params?.thread?.parentThreadId) {
+    mainThreadId = eventThreadId;
+    background.setMainThread(mainThreadId);
+  }
+  const ownership = background.consume(message);
+  if (ownership.child) {
+    if (message.id !== undefined) replyUnsupported(message);
+    return;
+  }
   process.stdout.write(`${JSON.stringify(message)}\n`);
   if (message.id !== undefined) {
     replyUnsupported(message);
     return;
   }
-  if (message.method === 'turn/completed') {
+  if (message.method === 'turn/completed' && (!eventThreadId || eventThreadId === mainThreadId)) {
     if (onTurnComplete) { onTurnComplete(); return; }
     terminal = true;
     setImmediate(() => stopChild());
@@ -143,6 +170,7 @@ child.on('error', (error) => {
   process.exitCode = 1;
 });
 child.on('close', (code, signal) => {
+  background.dispose();
   for (const waiter of pending.values()) {
     clearTimeout(waiter.timer);
     waiter.reject(new Error('app-server exited before responding'));
@@ -188,12 +216,18 @@ function commonParams(model) {
 // Returns the thread id the app-server will accept turns against.
 async function openThread(threadId, model) {
   if (threadId) {
+    mainThreadId = threadId;
+    background.setMainThread(threadId);
     try {
       await request('thread/resume', { threadId, excludeTurns: true, ...commonParams(model) });
+      mainThreadId = threadId;
+      background.setMainThread(threadId);
       return threadId;
     } catch (error) {
       // 只在恢复请求明确报告历史缺失时重建，其他错误仍按原路径处理。
       if (!/\bno rollout found for thread id\b/i.test(String(error.message))) throw error;
+      mainThreadId = null;
+      background.setMainThread(null);
       process.stdout.write(`${JSON.stringify({ method: 'multicc/native_session_missing', params: { threadId } })}\n`);
     }
   }
@@ -204,6 +238,8 @@ async function openThread(threadId, model) {
   });
   const created = started.thread?.id || started.threadId || started.id;
   if (!created) throw new Error('app-server did not return a thread id');
+  mainThreadId = created;
+  background.setMainThread(created);
   return created;
 }
 

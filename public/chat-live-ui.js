@@ -1100,7 +1100,16 @@
     // (i.e. it finished) we settle it, so a lost `monitor_done` can't leave the
     // spinner running forever.
     function reconcileDanmakuTasks(activeTaskIds) {
-      const active = new Set((activeTaskIds || []).map(String));
+      const active = new Set();
+      for (const task of activeTaskIds || []) {
+        const id = typeof task === 'object' && task ? task.task_id || task.id : task;
+        if (!id) continue;
+        active.add(String(id));
+        // 重连快照恢复任务行，也补齐断线期间丢失的开始事件。
+        if (typeof task === 'object' && task && danmaku.rows.get(`t:${id}`)?.state !== 'start') {
+          pushDanmaku('progress', task.description, String(id));
+        }
+      }
       let changed = false;
       for (const [key, row] of danmaku.rows) {
         if (!key.startsWith('t:')) continue;

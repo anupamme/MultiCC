@@ -1,6 +1,7 @@
 'use strict';
 
 const { redactProviderRouteCapability } = require('../observability');
+const { createNativeBackgroundTasks } = require('./native-background-tasks');
 
 // Session-scoped runtime for Claude Code Monitor / run_in_background events.
 // All host effects are injected so this module can be exercised without
@@ -78,6 +79,7 @@ function createBackgroundTaskRuntime(deps = {}) {
   const stoppedNotes = new Map();
   const mainToolUses = new Map();
   const knownSessions = new Set();
+  const nativeTasks = createNativeBackgroundTasks({ broadcast, observe, now });
 
   const schedule = (fn, ms) => {
     const timer = setTimer(fn, ms);
@@ -300,6 +302,7 @@ function createBackgroundTaskRuntime(deps = {}) {
   }
 
   function hasLiveBackgroundTasks(sessionName) {
+    if (nativeTasks.has(sessionName)) return true;
     const sessionShadows = shadows.get(sessionName);
     if (!sessionShadows || sessionShadows.size === 0) return false;
     for (const taskId of sessionShadows.keys()) {
@@ -324,8 +327,8 @@ function createBackgroundTaskRuntime(deps = {}) {
   // only escalated once that work has stopped saying anything at all.
   function backgroundSilenceMs(sessionName, at = now()) {
     const sessionShadows = shadows.get(sessionName);
-    if (!sessionShadows || sessionShadows.size === 0) return 0;
-    let longest = 0;
+    if (!sessionShadows || sessionShadows.size === 0) return nativeTasks.silence(sessionName, at);
+    let longest = nativeTasks.silence(sessionName, at);
     for (const taskId of sessionShadows.keys()) {
       if (!isBackgroundShadow(sessionName, taskId)) continue;
       longest = Math.max(longest, at - sessionShadows.get(taskId).lastProgressAt);
@@ -339,8 +342,8 @@ function createBackgroundTaskRuntime(deps = {}) {
   // `monitor_done` was lost in transit.
   function listActiveBackgroundTasks(sessionName) {
     const sessionShadows = shadows.get(sessionName);
-    const out = [...(monitorWatches.get(sessionName) || [])].filter(([, watch]) => watch.live)
-      .map(([id, watch]) => ({ id, task_id: id, description: safeDescription(watch.description) }));
+    const out = [...nativeTasks.list(sessionName), ...[...(monitorWatches.get(sessionName) || [])].filter(([, watch]) => watch.live)
+      .map(([id, watch]) => ({ id, task_id: id, description: safeDescription(watch.description) }))];
     for (const [taskId, shadow] of sessionShadows || []) {
       if (!isBackgroundShadow(sessionName, taskId)) continue;
       out.push({ id: taskId, task_id: taskId, description: safeDescription(shadow.description) });
@@ -360,7 +363,7 @@ function createBackgroundTaskRuntime(deps = {}) {
     const ids = new Set([...(sessionShadows?.keys() || []),
       ...[...(watches || [])].filter(([, watch]) => watch.live).map(([id]) => id)]);
     const reason = String(opts.reason || 'process_exit');
-    let reaped = 0;
+    let reaped = nativeTasks.reap(sessionName);
     for (const taskId of ids) {
       const background = isBackgroundShadow(sessionName, taskId);
       const description = sessionShadows?.get(taskId)?.description || watches?.get(taskId)?.description || '';
@@ -727,6 +730,11 @@ function createBackgroundTaskRuntime(deps = {}) {
     if (!sessionName || !event || typeof event !== 'object') return { handled: false };
     event = redactProviderRouteCapability(event);
     knownSessions.add(sessionName);
+    const native = nativeTasks.handle(sessionName, event);
+    if (native) {
+      if (native.changed) broadcast(sessionName, { type: 'background_tasks', tasks: listActiveBackgroundTasks(sessionName) });
+      return native;
+    }
     if (event.subtype === 'monitor_prompt') {
       const watch = monitorWatches.get(sessionName)?.get(String(event.task_id));
       if (!watch) return handleTaskPrompt(sessionName, chatState, event);
@@ -785,6 +793,7 @@ function createBackgroundTaskRuntime(deps = {}) {
       }
     }
     coalescer.cancel(sessionName);
+    nativeTasks.stop(sessionName);
     taskOutputAwaiting.map.delete(sessionName);
     syncBashTasks.map.delete(sessionName);
     subagentTasks.map.delete(sessionName);
