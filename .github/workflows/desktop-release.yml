@@ -91,6 +91,11 @@ jobs:
         working-directory: desktop
         run: npm ci --no-audit --no-fund
 
+      - name: Check extraResources copies server dependencies
+        run: node --test --test-name-pattern="extraResources preserves server dependencies" tests/test-desktop-shell.js
+        env:
+          MULTICC_REQUIRE_BUILDER_TEST: '1'
+
       # Stage → gate → package, once per target arch.
       #
       # This has to be a loop, not three separate steps: desktop/package.json
@@ -210,6 +215,13 @@ jobs:
               fi
             done
             echo "$app_resources carries the standalone tree"
+            dependency_verify_flags=()
+            if [ "$host_arch" != "$arch" ]; then
+              dependency_verify_flags+=(--no-execute)
+            fi
+            node ../scripts/desktop-verify-resources.js \
+              --resources "$app_resources" \
+              ${dependency_verify_flags[@]+"${dependency_verify_flags[@]}"}
             echo "::endgroup::"
           done
 

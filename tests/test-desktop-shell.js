@@ -34,6 +34,7 @@ const desktopEnv = require(path.join(DESKTOP, 'lib', 'desktop-env.js'));
 const { createBackendSupervisor } = require(path.join(DESKTOP, 'lib', 'backend-supervisor.js'));
 const { reclaimOrphan, pidAlive } = require(path.join(DESKTOP, 'lib', 'orphan-reclaim.js'));
 const releaseArtifacts = require(path.join(DESKTOP, 'lib', 'release-artifacts.js'));
+const { verifyServerDependencies, verifyDesktopResources } = require('../scripts/desktop-verify-resources');
 
 function tmpdir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -498,6 +499,7 @@ test('desktop-bundle-server stages a runnable server tree without the APK', { ti
   const pkg = JSON.parse(fs.readFileSync(path.join(staged, 'package.json'), 'utf8'));
   assert.ok(pkg.optionalDependencies['sherpa-onnx-node'], 'sherpa becomes optional (graceful ASR degrade)');
   assert.equal(pkg.dependencies['sherpa-onnx-node'], undefined);
+  assert.ok(pkg.dependencies['@iarna/toml'], 'the server imports TOML directly, so it must be a direct production dependency');
   assert.equal(pkg.version, require(path.join(ROOT, 'package.json')).version);
   assert.equal(require(path.join(staged, 'src/memory/builtin-rules')).DOCS_REGISTRY_RULE,
     require('../src/memory/builtin-rules').DOCS_REGISTRY_RULE);
@@ -583,6 +585,107 @@ test('desktop-bundle-server spawns npm through a shell on Windows', () => {
 });
 
 // ── gates: MULTICC_DESKTOP server-side behavior ─────────────────────────────
+
+function writeBundleFile(resources, rel, content = '') {
+  const file = path.join(resources, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+}
+
+function dependencyFixture(resources) {
+  writeBundleFile(resources, 'app-server/server.js');
+  writeBundleFile(resources, 'app-server/package.json', JSON.stringify({ dependencies: {
+    '@iarna/toml': '^2.2.5', 'cli-provider-router': '0.5.1',
+  } }));
+  writeBundleFile(resources, 'app-server/node_modules/@iarna/toml/index.js',
+    'exports.parse = () => ({ value: 1 });');
+  writeBundleFile(resources, 'app-server/node_modules/cli-provider-router/index.js',
+    "require('@iarna/toml'); exports.API_VERSION = '1.1.0';");
+  for (const rel of ['launcher/standalone-cli.js', 'launcher/standalone-launcher.js', 'bundle-manifest.json']) {
+    writeBundleFile(resources, rel);
+  }
+  const nodeBin = process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node';
+  writeBundleFile(resources, nodeBin);
+  return path.join(resources, nodeBin);
+}
+
+test('packaged dependency gate rejects missing modules and build-host fallback resolution', t => {
+  const resources = tmpdir('desktop-deps-');
+  t.after(() => fs.rmSync(resources, { recursive: true, force: true }));
+  dependencyFixture(resources);
+  const server = path.join(resources, 'app-server');
+  assert.equal(verifyServerDependencies(server).length, 2);
+  fs.rmSync(path.join(server, 'node_modules/cli-provider-router'), { recursive: true });
+  assert.throws(() => verifyServerDependencies(server), /cli-provider-router.*missing/);
+  // A development checkout can make a broken installed tree appear healthy:
+  // Node searches ancestors. Such a package must never satisfy this gate.
+  // Use a fresh tree because Node caches successful resolutions from above.
+  const fallback = tmpdir('desktop-deps-fallback-');
+  t.after(() => fs.rmSync(fallback, { recursive: true, force: true }));
+  dependencyFixture(fallback);
+  fs.rmSync(path.join(fallback, 'app-server/node_modules/cli-provider-router'), { recursive: true });
+  writeBundleFile(fallback, 'node_modules/cli-provider-router/index.js', "exports.API_VERSION = '1.1.0';");
+  assert.throws(() => verifyServerDependencies(path.join(fallback, 'app-server')), /cli-provider-router.*outside its node_modules/);
+});
+
+test('packaged dependency gate checks cross-arch trees and detects transitive load failures', t => {
+  const resources = tmpdir('desktop-deps-smoke-');
+  t.after(() => fs.rmSync(resources, { recursive: true, force: true }));
+  const runtime = dependencyFixture(resources);
+  assert.equal(verifyDesktopResources({ resourcesDir: resources, execute: false }).executed, false);
+  if (process.platform === 'win32') fs.copyFileSync(process.execPath, runtime);
+  else {
+    // Homebrew Node relies on dylibs relative to its real executable; copying
+    // just that executable to a temp tree cannot run it on macOS.
+    fs.unlinkSync(runtime);
+    fs.symlinkSync(process.execPath, runtime);
+  }
+  assert.equal(verifyDesktopResources({ resourcesDir: resources }).executed, true);
+  writeBundleFile(resources, 'app-server/node_modules/cli-provider-router/index.js',
+    "require('./missing-transitive'); exports.API_VERSION = '1.1.0';");
+  assert.throws(() => verifyDesktopResources({ resourcesDir: resources }), /smoke failed:[\s\S]*missing-transitive/);
+  fs.rmSync(path.join(resources, 'app-server/node_modules/@iarna/toml'), { recursive: true });
+  assert.throws(() => verifyDesktopResources({ resourcesDir: resources, execute: false }), /@iarna\/toml.*missing/);
+});
+
+test('extraResources preserves server dependencies with the real electron-builder copier', async t => {
+  let copier;
+  try { copier = require(require.resolve('app-builder-lib/out/fileMatcher', { paths: [DESKTOP] })); }
+  catch (error) {
+    if (process.env.MULTICC_REQUIRE_BUILDER_TEST === '1') throw error;
+    t.skip('desktop toolchain not installed; the desktop-release workflow requires this test');
+    return;
+  }
+  const root = tmpdir('desktop-resource-copy-');
+  try {
+    const source = path.join(root, '.staging/resources');
+    dependencyFixture(source);
+    writeBundleFile(source, 'must-not-ship.txt', 'outside the declared resource trees');
+    const options = { defaultSrc: root, globalOutDir: path.join(root, 'dist'),
+      customBuildOptions: {}, macroExpander: value => value };
+    const broken = path.join(root, 'broken');
+    await copier.copyFiles(copier.getFileMatchers({ extraResources: [{
+      from: '.staging/resources/app-server', to: 'app-server', filter: ['**/*'],
+    }] }, 'extraResources', broken, options));
+    assert.ok(fs.existsSync(path.join(broken, 'app-server/server.js')));
+    assert.equal(fs.existsSync(path.join(broken, 'app-server/node_modules')), false,
+      'the old config copies code but silently drops the entire dependency directory');
+    assert.throws(() => verifyServerDependencies(path.join(broken, 'app-server')), /missing/);
+
+    const packaged = path.join(root, 'packaged');
+    await copier.copyFiles(copier.getFileMatchers(require(path.join(DESKTOP, 'package.json')).build,
+      'extraResources', packaged, options));
+    assert.equal(verifyDesktopResources({ resourcesDir: packaged, execute: false }).dependencies.length, 2);
+    const hook = require('../desktop/after-pack');
+    const context = { appOutDir: packaged, arch: 1,
+      packager: { getResourcesDir: dir => dir,
+        platform: { nodeName: process.platform === 'win32' ? 'linux' : 'win32' } } };
+    assert.equal(hook(context).dependencies.length, 2, 'local packaging runs the gate too');
+    assert.throws(() => hook({ ...context, appOutDir: broken }), /missing/);
+    assert.equal(fs.existsSync(path.join(packaged, 'must-not-ship.txt')), false);
+    assert.equal(fs.existsSync(path.join(packaged, 'app-server/app-server')), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 function fakeApp() {
   const handlers = {};
@@ -778,16 +881,16 @@ test('desktop packaging config: pinned versions, stable names, user-scope instal
     'electron-builder 26.16.1 fixes CSC_LINK temporary-keychain password handling (#10101)');
   const b = pkg.build;
   assert.equal(b.asar, true);
+  assert.equal(b.afterPack, 'after-pack.js', 'local installer builds must also validate copied dependencies');
   assert.equal(pkg.main, 'main.js');
   assert.deepEqual(b.files.sort(), ['assets/**/*', 'lib/**/*', 'main.js', 'package.json', 'preload.js'].sort());
   // The app ships a whole standalone Resources tree, staged by the same builder
   // that produces multicc-standalone-*.tar.gz. A missing entry here is an
   // installer with no server (or no runtime to run it on).
-  assert.deepEqual(b.extraResources.map(r => r.to).sort(),
-    ['app-server', 'bundle-manifest.json', 'launcher', 'runtime']);
-  for (const resource of b.extraResources) {
-    assert.match(resource.from, /^\.staging\/resources\//, `${resource.to} must come from the standalone staging tree`);
-  }
+  // electron-builder skips root node_modules in every directory mapping, so
+  // app-server must be nested under the source instead of being its root.
+  assert.deepEqual(b.extraResources, [{ from: '.staging/resources', to: '.',
+    filter: ['app-server/**/*', 'runtime/**/*', 'launcher/**/*', 'bundle-manifest.json'] }]);
   assert.match(pkg.scripts['stage:resources'], /desktop-stage-standalone\.js/,
     'the staging step must be the standalone tree, not a bare app-server copy');
   assert.doesNotMatch(pkg.scripts.dist, /stage:server/,
@@ -869,6 +972,11 @@ test('desktop-release workflow: three native runners, attaches (never creates) t
   // And the packaged bundle has to be checked, not just the staging dir: a bad
   // extraResources mapping builds an installer whose window shows an error page.
   assert.match(wf, /packaged app carries the standalone tree/);
+  assert.match(wf, /desktop-verify-resources\.js[\s\S]*--resources "\$app_resources"/,
+    'dependency verification must inspect the packaged app, after resource copying');
+  assert.match(wf, /dependency_verify_flags\+=\(--no-execute\)/);
+  assert.match(wf, /MULTICC_REQUIRE_BUILDER_TEST: '1'/,
+    'the real copier regression must run in desktop CI, not silently skip');
   assert.doesNotMatch(wf, /desktop-bundle-server\.js/,
     'the desktop build must not stage a bare app-server without its runtime');
   // `--mac --x64` does NOT pin the arch: desktop/package.json declares `arch`
