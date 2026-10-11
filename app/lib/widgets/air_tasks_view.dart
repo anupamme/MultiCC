@@ -22,6 +22,7 @@ import '../screens/terminal_screen.dart';
 import '../services/air_service.dart';
 import '../services/session_service.dart';
 import '../services/settings_service.dart';
+import '../services/update_service.dart';
 import '../theme.dart';
 import '../utils/format.dart';
 import 'air/air_console.dart';
@@ -56,6 +57,7 @@ import 'workspace_navigation_drawer.dart';
 class AirTasksView extends StatefulWidget {
   final SettingsService settings;
   final http.Client? httpClient;
+  final VoidCallback? onSwitchServer;
 
   /// 「更多与系统」里那些已经有原生页面的入口（定时任务、服务与文档…）交给宿主
   /// 决定怎么开——Air 只负责列出来。
@@ -77,6 +79,7 @@ class AirTasksView extends StatefulWidget {
     super.key,
     required this.settings,
     this.httpClient,
+    this.onSwitchServer,
     this.onOpenDestination,
     this.onOpenVoiceCall,
     this.beforeOpenNavigation,
@@ -164,6 +167,7 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 目录也回到 Chat —— 「默认还是 chat 模式」不该被上一次切到 Terminal 记住。
   _DirectoryMode _dirMode = _DirectoryMode.chat;
   Timer? _timer;
+  String _clientVersion = '…';
 
   /// 快照轮询的间隔。一次 `/api/air` 回来的是全量正文（本机实测 ~800KB，App 侧
   /// 还没有条件请求），原先 4 秒一次基本是空转；15 秒对「谁在跑、谁在等我」这种
@@ -175,6 +179,9 @@ class _AirTasksViewState extends State<AirTasksView>
   @override
   void initState() {
     super.initState();
+    unawaited(UpdateService.currentVersion().then((version) {
+      if (mounted) setState(() => _clientVersion = version);
+    }));
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadStore());
     _ops.start();
@@ -1532,6 +1539,11 @@ class _AirTasksViewState extends State<AirTasksView>
         pinnedTaskIds: data?.taskPins.toSet() ?? const <String>{},
         advancedMode: widget.settings.advancedMode.value,
         serverLabel: widget.settings.host,
+        clientVersion: _clientVersion,
+        onSwitchServer: widget.onSwitchServer == null ? null : () {
+          _closeDrawer();
+          widget.onSwitchServer!();
+        },
         onSelectDirectory: _selectDirectory,
         onOpenLibrary: () {
           _closeDrawer();

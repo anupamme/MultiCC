@@ -14,6 +14,7 @@ import '../i18n.dart';
 import '../theme.dart';
 import '../widgets/directory_card.dart';
 import '../widgets/air_tasks_view.dart';
+import '../widgets/server_switch_dialog.dart';
 import '../widgets/workspace_navigation_drawer.dart';
 import 'agent_resources_screen.dart';
 import 'bridge_settings_screen.dart';
@@ -352,6 +353,32 @@ class _DirectoryListBody extends StatefulWidget {
 }
 
 class _DirectoryListBodyState extends State<_DirectoryListBody> {
+  Future<void> _switchServer() async {
+    final selected = await showDialog<ServerHistoryEntry>(
+      context: context,
+      builder: (_) => ServerSwitchDialog(settings: widget.settings),
+    );
+    if (!mounted || selected == null) return;
+    final settings = widget.settings;
+    if (selected.host == settings.host && selected.token == settings.token) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (settings.host.isNotEmpty && !settings.isDemo) {
+      await settings.rememberServer(settings.host, settings.token);
+    }
+    await settings.rememberServer(selected.host, selected.token);
+    await settings.save(host: selected.host, token: selected.token, session: '', cwd: '');
+    if (!mounted) return;
+    // Same reconnect lifecycle as SettingsScreen: replace the shell and dispose
+    // its sockets/providers. Server-side tasks continue running independently.
+    navigator.pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (_) => ChangeNotifierProvider(
+        create: (_) => SessionManager(settings: settings),
+        child: MainShell(settings: settings),
+      )),
+      (_) => false,
+    );
+  }
+
   // Machine-wide voice entry. No sourceSessionId is sent, which is exactly what
   // tells the Host to route through the global voice router instead of a chat.
   Future<void> _openGlobalVoice() async {
@@ -453,6 +480,7 @@ class _DirectoryListBodyState extends State<_DirectoryListBody> {
     final mgr = context.read<SessionManager>();
     return AirTasksView(
       settings: widget.settings,
+      onSwitchServer: _switchServer,
       onOpenDestination: _openNavigationDestination,
       // 语音通话是原生独占的（麦克风要 HTTPS），老首页那一版入口随整块首页
       // 一起下线了，这里把它接回 Air 侧栏。

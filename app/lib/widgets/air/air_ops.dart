@@ -129,11 +129,13 @@ class AirVersionRow extends StatelessWidget {
     required this.store,
     this.language,
     this.onLanguage,
+    this.clientVersion,
   });
 
   final AirOpsStore store;
   final String? language;
   final VoidCallback? onLanguage;
+  final String? clientVersion;
 
   @override
   Widget build(BuildContext context) {
@@ -146,8 +148,10 @@ class AirVersionRow extends StatelessWidget {
         final hint = opsUpdateHintFor(store) ?? opsVersionHint(info, checking: store.versionPending);
         final version = Semantics(
           button: true,
-          label: '版本 $hint，点击检查并安装更新',
-          child: Material(
+          label: '服务端版本 $current，$hint，点击检查服务端更新',
+          child: Tooltip(
+            message: '${clientVersion == null ? '' : 'App $clientVersion · '}服务端 $current · $hint',
+            child: Material(
             color: Colors.transparent,
             borderRadius: BorderRadius.circular(AppColors.radiusChip),
             child: InkWell(
@@ -169,7 +173,7 @@ class AirVersionRow extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            'v${current.isEmpty ? '—' : current}',
+                            '${clientVersion == null ? '' : language == 'en' ? 'Server ' : '服务端 '}v${current.isEmpty ? '—' : current}',
                             key: const ValueKey('air-ver-current'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -180,7 +184,8 @@ class AirVersionRow extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            hint,
+                            clientVersion != null && !store.updating
+                                ? 'App $clientVersion' : hint,
                             key: const ValueKey('air-ver-hint'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -214,7 +219,7 @@ class AirVersionRow extends StatelessWidget {
                 ),
               ),
             ),
-          ),
+          )),
         );
         final battery = store.battery;
         final showBattery = battery != null && battery.available;

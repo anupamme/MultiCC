@@ -635,6 +635,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/server_switch_dialog_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/session_card_task_icon_test.dart",
       "tier": "other",
       "lane": "flutter"
