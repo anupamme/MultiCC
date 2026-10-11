@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiCC 多电脑统一管理 · 三版交互设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 28px 80px; display: flex; flex-direction: column; gap: 22px; }
+  h1 { margin: 0; font-size: 28px; }
+  .lead { color: var(--muted); margin: 6px 0 0; }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .opt-card { background: #fff; border-radius: 18px; box-shadow: var(--shadow-1); border: 1px solid var(--hairline); padding: 20px; display: flex; flex-direction: column; gap: 10px; border-top: 4px solid var(--c); }
+  .opt-card h2 { margin: 0; font-size: 18px; }
+  .opt-card .one { color: var(--muted); font-size: 13px; margin: 0; }
+  .opt-card ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  .opt-card li { margin: 3px 0; }
+  .opt-card .sketch { background: var(--panel-soft); border: 1px solid var(--hairline); border-radius: 12px; padding: 10px; font: 12px/1.6 ui-monospace, Menlo, monospace; white-space: pre; color: #3b4d66; overflow: auto; }
+  .opt-card .go { margin-top: auto; }
+  table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+  table.cmp th, table.cmp td { border-bottom: 1px solid var(--hairline); padding: 10px 12px; text-align: left; vertical-align: top; }
+  table.cmp th { background: var(--panel-soft); font-size: 12px; color: var(--muted); }
+  table.cmp td:first-child { color: var(--muted); width: 120px; font-weight: 600; }
+  .road { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .road div { background: #fff; border: 1px solid var(--hairline); border-radius: 14px; padding: 12px 14px; font-size: 13px; box-shadow: var(--shadow-1); }
+  .road b { display: block; margin-bottom: 4px; }
+  .road small { color: var(--muted); }
+  .q li { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <div style="font-size:12px;color:var(--muted)">MultiCC · 交互设计稿 · 基于 v2.4.3 Air 界面 · 2026-10-11</div>
+    <h1>多电脑统一管理：三个版本</h1>
+    <p class="lead">三套方案都建立在当前 Air 的骨架上（左栏 → 工作目录卡 → 控制台 / 定时任务 → 最近任务），差别在于「电脑」这个新维度放在哪一层。
+      每个原型都能点：顶部深色条里的「演示状态」按钮可以直接跳到关键画面。</p>
+  </div>
+
+  <div class="three">
+    <div class="opt-card" style="--c:var(--m1)">
+      <div style="font-size:12px;color:var(--muted)">方案 A</div>
+      <h2>电脑切换器</h2>
+      <p class="one">一次只看一台电脑，像在 Slack 里切工作区。</p>
+      <div class="sketch">┌ ● MacBook Pro ⌄ ⌘⇧M ┐ ← 新增
+│ ▣ multicc   ⌘K      │
+│ ◫ 控制台            │
+│   ┌ 其它电脑 ──────┐ │ ← 新增
+│   │ Mac mini 3在跑 →│ │
+└───┴────────────────┴┘</div>
+      <ul>
+        <li>左栏顶部加电脑切换器（⌘1–⌘4 直切）</li>
+        <li>页顶 4px 机器色条 + 面包屑首段，防止在错的电脑上开任务</li>
+        <li>控制台加「其它电脑」信号条：只提示有事在等，不聚合</li>
+        <li>离线电脑：状态页 + 唤醒 / 连接诊断</li>
+        <li>配对码加电脑（共用流程）</li>
+      </ul>
+      <a class="btn primary go" href="a-switcher.html">打开原型 A →</a>
+    </div>
+    <div class="opt-card" style="--c:var(--m2)">
+      <div style="font-size:12px;color:var(--muted)">方案 B</div>
+      <h2>统一控制台</h2>
+      <p class="one">所有电脑汇成一张任务板，电脑只是任务的一个属性。</p>
+      <div class="sketch">控制台  [全部4台][●MBP][●mini]…
+┌进行中 4┐┌等我 3┐  ▬▬▬▬ 色条占比
+需要你处理（跨电脑）
+ ● ◐ 万相台人群包   Mac mini
+ ● ✕ win agent      Windows
+目录：按电脑分组 / 按名称合并</div>
+      <ul>
+        <li>控制台数字、目录、任务全部是所有电脑的合集</li>
+        <li>电脑筛选条 + 每行色点徽标</li>
+        <li>新建任务多一行「在哪台电脑执行」，默认跟目录走，可「自动」</li>
+        <li>远端任务的对话页和本机一样，只多「运行在 X」徽标</li>
+        <li>同名目录可合并成一张卡</li>
+      </ul>
+      <a class="btn primary go" href="b-unified.html">打开原型 B →</a>
+    </div>
+    <div class="opt-card" style="--c:var(--m4)">
+      <div style="font-size:12px;color:var(--muted)">方案 C</div>
+      <h2>电脑舰队</h2>
+      <p class="one">电脑当成被管理的资源：运维 + 跨电脑调度。</p>
+      <div class="sketch">◫ 控制台
+⌸ 电脑  ② ← 新增一级页
+┌MBP 主控───┐┌Mac mini────┐
+│CPU 34% 🔋 ││CPU 72% ⚡  │
+│● 设计稿   ││● 千帆周报  │
+└───────────┘└─拖动=迁移──┘
+[已选2台] 升级 推配置 暂停接单</div>
+      <ul>
+        <li>新增「电脑」页：健康、负载、版本、在跑任务</li>
+        <li>多选批量：滚动升级、推送配置、暂停接单</li>
+        <li>配置同步矩阵：线路/技能/规则跟随主控，密钥逐条勾选</li>
+        <li>把任务拖到另一台电脑 = 迁移（git bundle + handoff 摘要）</li>
+        <li>调度规则、审计日志、电脑详情时间线</li>
+      </ul>
+      <a class="btn primary go" href="c-fleet.html">打开原型 C →</a>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>横向对比</h2>
+    <table class="cmp">
+      <thead><tr><th></th><th>A · 电脑切换器</th><th>B · 统一控制台</th><th>C · 电脑舰队</th></tr></thead>
+      <tbody>
+        <tr><td>心智模型</td><td>电脑 › 目录 › 任务，电脑在最上层</td><td>任务优先，电脑退到属性</td><td>电脑是资源，任务可在资源间流动</td></tr>
+        <tr><td>界面改动</td><td>小：一个切换器 + 一条信号条</td><td>中：控制台、新建任务、对话页头都加电脑维度</td><td>大：新增一级页面 + 批量操作 + 迁移</td></tr>
+        <tr><td>底层架构</td><td>无中心，各电脑平等。前端换 API 地址；跨机只要一个轻量摘要接口</td><td>当前电脑当聚合入口（hub）：扇出拉取各电脑快照并合并；对话/文件走 hub 反向代理</td><td>主控 + 工作节点：主控持有配置真相源、调度器、升级与迁移编排</td></tr>
+        <tr><td>估算工作量</td><td>1–2 周</td><td>3–5 周（含 A 的底座）</td><td>6–10 周（含 A+B）</td></tr>
+        <tr><td>主要风险</td><td>切错电脑；跨机信号只能看个数</td><td>Air 每 4s 全量拉快照 × N 台的流量；跨机延迟；离线时数据一致性</td><td>推配置误伤（如两台都开微信桥会重复回复）；远程重启会中断那台电脑上的会话；迁移后浏览器登录态不在新电脑上</td></tr>
+        <tr><td>适合谁</td><td>2–3 台电脑、按场景各管各的</td><td>天天在多台电脑上同时开任务、主要用手机看进度</td><td>4 台以上、长期挂机跑定时/批量任务</td></tr>
+        <tr><td>App 端</td><td>侧栏顶部同款切换器</td><td>控制台同款筛选条；任务卡加色点</td><td>「电脑」页做只读 + 远程屏幕；批量运维只放 Web</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>三套共用的底座（无论选哪套都要先做）</h2>
+    <div class="road">
+      <div><b>① 配对</b>配对码 / 扫码 / 地址+令牌。配对码 5 分钟内有效且只能用一次；双方交换一枚只属于这对电脑的令牌，存进敏感信息保险箱。<br><small>复用：ACCESS_TOKEN、ws-ticket、保险箱</small></div>
+      <div><b>② 电脑表</b>每台电脑的名称、颜色、地址、令牌引用、上次在线时间。地址按每位用户自己的外网/内网入口填写，代码里不写死任何域名。<br><small>复用：外网穿透配置</small></div>
+      <div><b>③ 摘要接口</b>每台电脑暴露一个只读的轻量摘要（在线、版本、负载、电源、进行中/等待/异常计数），供切换器、信号条、舰队卡片读取。<br><small>不复用 /api/air 全量快照</small></div>
+      <div><b>④ 远程屏幕跨机</b>「🖥 屏幕」链接由目标电脑签发，前端只负责跳转。Windows/Linux 的 agent 未就绪时如实显示「不支持」。<br><small>复用：desktop-agent 协议</small></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>我的建议</h2>
+    <p style="margin:0 0 8px">三套不互斥，可以当成三个阶段：<b>先上 A</b>（底座 + 切换器，最快能用、风险最小），<b>再在 A 的底座上叠 B 的聚合控制台</b>（这才是「统一管理」的主体验），<b>C 只挑「升级」和「配置同步」两块先做</b>，迁移任务等真有需求再上。</p>
+    <p style="margin:0;color:var(--muted)">如果只能选一套直接做到位，我推荐 <b>B</b>：入口不变（还是控制台），用户不用学新概念，手机端收益最大。</p>
+  </section>
+
+  <section class="card">
+    <h2>需要你拍板的问题</h2>
+    <ol class="q">
+      <li>电脑之间是<b>平等</b>（任何一台都能当入口，A/B）还是<b>固定一台主控</b>（C）？</li>
+      <li>你的电脑之间能直接互通吗（同一局域网 / 各自都开了外网穿透），还是需要一个公网中继？</li>
+      <li>敏感信息（API key）要不要跨电脑同步？我的默认是不同步、逐条勾选。</li>
+      <li>任务跨电脑迁移是刚需吗？它是三套里最贵、最容易出问题的一块。</li>
+    </ol>
+  </section>
+</div>
+</body>
+</html>

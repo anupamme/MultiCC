@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 A · 电脑切换器 — MultiCC 多电脑交互原型</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .machine-strip { height: 4px; background: var(--cur, var(--m1)); }
+  .msw { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid var(--line); background: #fff;
+    border-radius: 12px; padding: 9px 12px; text-align: left; box-shadow: var(--shadow-1); }
+  .msw .t { flex: 1; min-width: 0; }
+  .msw b { display: block; font-size: 13.5px; }
+  .msw small { color: var(--muted); font-size: 11.5px; }
+  .msw .chev { color: var(--muted); }
+  #msw-pop { width: 330px; left: 16px; top: 140px; }
+  .mrow { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; width: 100%; border: 0; background: transparent; text-align: left; }
+  .mrow:hover { background: var(--panel-soft); }
+  .mrow.cur { background: var(--blue-soft); }
+  .mrow .t { flex: 1; min-width: 0; }
+  .mrow small { display: block; color: var(--muted); font-size: 11.5px; }
+  .mrow .k { font: 11px ui-monospace, Menlo, monospace; color: var(--faint); }
+  .pop-sep { height: 1px; background: var(--hairline); margin: 6px 4px; }
+  .others { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .other { display: flex; align-items: center; gap: 10px; border: 1px solid var(--hairline); border-radius: 12px; padding: 10px 12px; background: var(--panel-soft); }
+  .other .t { flex: 1; min-width: 0; }
+  .other small { display: block; color: var(--muted); font-size: 11.5px; }
+  .offline-page { text-align: center; padding: 60px 20px; }
+  .offline-page .big { font-size: 46px; }
+  .method { display: flex; gap: 12px; }
+  .method button { flex: 1; text-align: left; border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; }
+  .method button.on { border-color: var(--accent); background: var(--blue-soft); }
+  .method small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .swatches { display: flex; gap: 8px; }
+  .swatches span { width: 22px; height: 22px; border-radius: 50%; cursor: pointer; outline-offset: 2px; }
+  .swatches span.on { outline: 2px solid var(--text); }
+</style>
+</head>
+<body>
+<div class="proto-bar">
+  <b>方案 A · 电脑切换器</b><span class="tag">一次只看一台 · 像切换 Slack 工作区</span>
+  <span class="sp"></span>
+  <span>演示状态：</span>
+  <span class="states" id="states">
+    <button data-s="home" class="on">本机控制台</button>
+    <button data-s="menu">打开切换菜单</button>
+    <button data-s="mini">已切到 Mac mini</button>
+    <button data-s="off">切到离线电脑</button>
+    <button data-s="add">添加电脑</button>
+  </span>
+  <a href="index.html">← 返回对比</a>
+</div>
+<div class="machine-strip" id="strip"></div>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="logo">M</span>MultiCC <em>Air</em></div>
+
+    <!-- 新增：电脑切换器，放在工作目录卡之上。层级 = 电脑 › 工作目录 › 任务 -->
+    <button class="msw" id="msw" data-pop>
+      <span class="mdot" id="msw-dot" style="width:10px;height:10px"></span>
+      <span class="t"><b id="msw-name"></b><small id="msw-sub"></small></span>
+      <kbd>⌘⇧M</kbd><span class="chev">⌄</span>
+    </button>
+
+    <div class="space-card">
+      <strong id="dir-name">multicc</strong><small id="dir-path"></small>
+      <div class="foot"><span>工作目录</span><kbd>⌘ K 切换</kbd></div>
+    </div>
+    <button class="nav-row on"><span>◫</span>控制台<span class="badge" id="nav-badge">5</span></button>
+    <button class="nav-row"><span>◴</span>定时任务</button>
+    <div class="caption">任务 · 最近任务</div>
+    <button class="nav-row btn ghost" style="justify-content:flex-start">＋ 新任务</button>
+    <div id="side-tasks"></div>
+    <div class="side-bottom">
+      <div style="display:flex;justify-content:space-between"><span>📦 <span id="ver">v2.4.3</span> · 已是最新</span><span id="pwr">🔋 82%</span></div>
+      <div style="margin-top:8px">⚙ 更多与系统 › <span style="color:var(--accent)">电脑管理</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="page">
+      <div>
+        <div class="crumb"><span id="crumb-m"></span> › 控制台</div>
+        <h1>控制台</h1>
+        <p id="page-sub">这台电脑上的所有工作目录：任务总览、目录与常用工具。</p>
+      </div>
+      <span class="sp"></span>
+      <button class="btn primary">＋ 添加工作目录</button>
+      <button class="btn">浏览工作目录</button>
+      <button class="btn primary">＋ 新建任务</button>
+    </header>
+
+    <div class="content" id="online-view">
+      <div class="annot"><b>设计要点：</b>每台电脑仍是一套独立的 MultiCC。切换器只是把 Air 的「数据来源」换成另一台的 API；
+        页顶 4px 色条 + 面包屑首段始终提示「你正在操作哪台电脑」，避免在错的机器上开任务。</div>
+      <div class="stats" id="stats"></div>
+
+      <!-- 新增：其它电脑的信号条。不聚合数据，只提示「别处有事在等」，一键切过去 -->
+      <section class="card">
+        <h2><span><span class="caption">Other machines</span>其它电脑</span><span class="sp"></span>
+          <button class="btn sm ghost" onclick="openDialog('dlg-add')">＋ 添加电脑</button></h2>
+        <div class="others" id="others"></div>
+      </section>
+
+      <section class="card">
+        <h2><span><span class="caption">Work directories</span>工作目录</span><span class="sp"></span><a>目录库与搜索</a></h2>
+        <div class="grid2" id="dirs"></div>
+      </section>
+    </div>
+
+    <div class="content hide" id="offline-view">
+      <section class="card offline-page">
+        <div class="big">💤</div>
+        <h2 style="justify-content:center">Ubuntu 服务器 目前离线</h2>
+        <p style="color:var(--muted)">上次在线：2 小时前 · 地址 https://nuc.example.com</p>
+        <p style="color:var(--muted)">离线期间看不到它的目录和任务；它上面正在跑的任务不会因此停止。</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:14px">
+          <button class="btn primary" onclick="toast('已发送 Wake-on-LAN（需同一局域网的在线电脑代发）')">尝试唤醒</button>
+          <button class="btn" onclick="toast('诊断：DNS 正常 · 443 连接超时 → 多半是隧道断了或电脑休眠')">连接诊断</button>
+          <button class="btn" onclick="setState('home')">回到本机</button>
+        </div>
+        <div class="note" style="margin:22px auto 0;max-width:520px;text-align:left">
+          唤醒需要同一局域网内另一台在线电脑代发魔术包；跨公网只能等它自己上线。上线后切换器里的灰点会变绿，并推送一条通知。
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<!-- 切换菜单 -->
+<div class="pop" id="msw-pop">
+  <div style="font-size:11.5px;color:var(--muted);padding:4px 10px">切换电脑</div>
+  <div id="msw-list"></div>
+  <div class="pop-sep"></div>
+  <button class="mrow" onclick="openDialog('dlg-add');closePop()"><span style="width:8px">＋</span><span class="t">添加电脑…<small>在另一台电脑上输入配对码</small></span></button>
+  <button class="mrow" onclick="toast('打开「更多与系统 › 电脑管理」：改名、换颜色、移除、重新配对')"><span style="width:8px">⚙</span><span class="t">管理电脑</span></button>
+</div>
+
+<!-- 添加电脑 -->
+<div class="scrim" id="dlg-add">
+  <div class="dialog">
+    <div class="steps"><span class="on" id="s1"></span><span id="s2"></span><span id="s3"></span></div>
+    <div id="add-1">
+      <h3>添加一台电脑</h3>
+      <p class="sub">那台电脑需要先装好 MultiCC。两种方式二选一：</p>
+      <div class="method">
+        <button class="on" id="m-code" onclick="pick('code')"><b>配对码</b><small>同一局域网，或两台都开了外网穿透。推荐。</small></button>
+        <button id="m-url" onclick="pick('url')"><b>地址 + 访问令牌</b><small>手动填写那台电脑的外网地址与 ACCESS_TOKEN。</small></button>
+      </div>
+      <div class="actions"><button class="btn" onclick="closeDialog('dlg-add')">取消</button><button class="btn primary" onclick="step(2)">下一步</button></div>
+    </div>
+    <div id="add-2" class="hide">
+      <h3>在那台电脑上输入配对码</h3>
+      <p class="sub">打开那台电脑的 MultiCC → 更多与系统 → 电脑管理 → 「加入另一台电脑」，或在终端执行：</p>
+      <div class="code">K7Q-4M2</div>
+      <pre class="cmd">multicc pair K7Q-4M2</pre>
+      <div style="display:flex;gap:14px;align-items:center;margin-top:10px">
+        <div class="qr"></div>
+        <div class="note">手机 App 扫码也能把这台电脑加进来。配对码 5 分钟内有效、只能用一次；配对成功后双方交换一枚只属于这对电脑的令牌，存进各自的敏感信息保险箱，不会出现在聊天或日志里。</div>
+      </div>
+      <p style="color:var(--muted);font-size:12.5px">⏳ 等待对方确认…（演示：<a href="#" onclick="step(3);return false">模拟对方已输入</a>）</p>
+    </div>
+    <div id="add-3" class="hide">
+      <h3>✓ 已连上「DESKTOP-8F2K」</h3>
+      <p class="sub">Windows 11 · MultiCC v2.4.1 · 192.168.1.23:3000</p>
+      <div class="field"><label>显示名称</label><input value="Windows 台式机"></div>
+      <div class="field"><label>颜色（色条与色点）</label>
+        <div class="swatches"><span style="background:var(--m1)"></span><span style="background:var(--m2)"></span><span class="on" style="background:var(--m3)"></span><span style="background:var(--m4)"></span><span style="background:#d6457a"></span></div></div>
+      <div class="note warn">⚠ 这台电脑的版本比本机旧（v2.4.1 &lt; v2.4.3），部分功能可能不可用。可以稍后在它上面升级。</div>
+      <div class="actions"><button class="btn primary" onclick="closeDialog('dlg-add');step(1);toast('已添加：Windows 台式机')">完成</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+let cur = 'mbp';
+function render() {
+  const m = machine(cur);
+  document.getElementById('strip').style.setProperty('--cur', m.color);
+  document.getElementById('msw-dot').style.background = m.online ? m.color : 'var(--faint)';
+  document.getElementById('msw-name').textContent = m.name + (m.role ? '（' + m.role + '）' : '');
+  document.getElementById('msw-sub').innerHTML = m.online ? `<span class="online">● 在线</span> · ${m.running} 在跑 · ${m.waiting} 等你` : '<span class="offline">○ 离线</span> · 上次 ' + m.lastSeen;
+  document.getElementById('crumb-m').innerHTML = dot(m) + ' ' + m.name;
+  document.getElementById('ver').textContent = m.ver;
+  document.getElementById('pwr').textContent = m.power;
+  const dirs = DIRS.filter(d => d.m === cur);
+  document.getElementById('dir-name').textContent = dirs[0] ? dirs[0].name : '—';
+  document.getElementById('dir-path').textContent = dirs[0] ? dirs[0].path : '';
+  document.getElementById('dirs').innerHTML = dirs.map(d => `<div class="dir"><span class="ico">▣</span><span class="main"><strong>${d.name}</strong><small>${d.path}</small></span><span class="cnt"><b>${d.run} 进行中</b><br>${d.total} 个任务</span></div>`).join('');
+  const t = TASKS.filter(x => x.m === cur);
+  document.getElementById('side-tasks').innerHTML = t.slice(0, 4).map(x => `<button class="nav-row" style="font-size:13px">${stLabel[x.st].replace(/ [^<]+</, '<')} ${x.title}</button>`).join('') || '<div class="caption">还没有打开过任务。</div>';
+  document.getElementById('nav-badge').textContent = m.waiting + m.error;
+  document.getElementById('stats').innerHTML = [
+    ['进行中', m.running, 'var(--green)', '这台电脑'], ['等我回复', m.waiting, 'var(--amber)', '等待回答'],
+    ['异常', m.error, 'var(--danger)', '需要处理或重试'], ['今日完成', cur === 'mbp' ? 3 : 7, 'var(--accent)', '今天跑完'],
+    ['全部', dirs.reduce((a, d) => a + d.total, 0), '#8b5cf6', '未归档'],
+  ].map(([k, v, c, s]) => `<div class="stat"><i style="background:${c}"></i><small>${k}</small><b>${v}</b><small>${s}</small></div>`).join('');
+  document.getElementById('others').innerHTML = MACHINES.filter(x => x.id !== cur).map(x => `
+    <div class="other">${dot(x.online ? x : { color: 'var(--faint)' })}<span class="t"><b style="font-size:13px">${x.name}</b>
+      <small>${x.online ? `${x.running} 在跑 · <span class="warn">${x.waiting} 等你</span>${x.error ? ` · <span style="color:var(--danger)">${x.error} 异常</span>` : ''}` : '离线 · 上次 ' + x.lastSeen}</small></span>
+      <button class="btn sm" onclick="switchTo('${x.id}')">切过去</button></div>`).join('');
+  document.getElementById('msw-list').innerHTML = MACHINES.map((x, i) => `
+    <button class="mrow ${x.id === cur ? 'cur' : ''}" onclick="switchTo('${x.id}')">${dot(x.online ? x : { color: 'var(--faint)' })}
+      <span class="t"><b style="font-size:13px">${x.name}${x.role ? '（' + x.role + '）' : ''}</b>
+      <small>${x.online ? `${x.os} · ${x.running} 在跑 · ${x.waiting} 等你` : '离线 · 上次 ' + x.lastSeen}${x.outdated ? ' · <span class="warn">待升级</span>' : ''}</small></span>
+      <span class="k">⌘${i + 1}</span></button>`).join('');
+  const off = !m.online;
+  document.getElementById('online-view').classList.toggle('hide', off);
+  document.getElementById('offline-view').classList.toggle('hide', !off);
+}
+function closePop() { document.getElementById('msw-pop').classList.remove('show'); }
+function switchTo(id) { cur = id; closePop(); render(); if (machine(id).online) toast('已切换到 ' + machine(id).name); }
+document.getElementById('msw').onclick = () => document.getElementById('msw-pop').classList.toggle('show');
+function pick(k) { document.getElementById('m-code').classList.toggle('on', k === 'code'); document.getElementById('m-url').classList.toggle('on', k === 'url'); }
+function step(n) { [1, 2, 3].forEach(i => { document.getElementById('add-' + i).classList.toggle('hide', i !== n); document.getElementById('s' + i).classList.toggle('on', i <= n); }); }
+function setState(s) {
+  document.querySelectorAll('#states button').forEach(b => b.classList.toggle('on', b.dataset.s === s));
+  closePop(); closeDialog('dlg-add'); step(1);
+  if (s === 'home') switchTo('mbp');
+  if (s === 'menu') { cur = 'mbp'; render(); setTimeout(() => document.getElementById('msw-pop').classList.add('show')); }
+  if (s === 'mini') switchTo('mini');
+  if (s === 'off') switchTo('nuc');
+  if (s === 'add') { cur = 'mbp'; render(); openDialog('dlg-add'); }
+}
+document.querySelectorAll('#states button').forEach(b => b.onclick = e => { e.stopPropagation(); setState(b.dataset.s); });
+document.addEventListener('keydown', e => { if (e.metaKey && /^[1-4]$/.test(e.key)) { e.preventDefault(); switchTo(MACHINES[e.key - 1].id); } });
+render();
+const hs = location.hash.match(/s=(\w+)/); if (hs) setState(hs[1]);
+</script>
+</body>
+</html>
