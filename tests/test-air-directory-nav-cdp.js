@@ -7,7 +7,7 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { withCdpHarness, findChromeBinary } = require('./helpers/cdp-harness');
 
-test('directory card hover flyout switches directories; console directory rows drag-sort and persist server-side', async t => {
+test('project switcher opens on click, switches projects and persists drag order', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
   const routes = {}, publicDir = path.resolve(__dirname, '../public');
   const json = body => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -45,7 +45,7 @@ test('directory card hover flyout switches directories; console directory rows d
 
     // ── ① hover 侧拉 ──
     const card = await page.evaluate(`(() => { const r=document.querySelector('#sidebar .space-card').getBoundingClientRect(); return { x: r.left + r.width/2, y: r.top + r.height/2, right: r.right }; })()`);
-    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: card.x, y: card.y });
+    await page.evaluate(`document.getElementById('library').click()`);
     assert.ok(await page.waitFor(`document.getElementById('directory-flyout') && !document.getElementById('directory-flyout').hidden`), 'hover 目录卡滑出侧拉');
     const flyout = await page.evaluate(`(() => { const f=document.getElementById('directory-flyout'); const r=f.getBoundingClientRect();
       return { left: r.left, rows: [...f.querySelectorAll('.directory-flyout-row strong')].map(el=>el.textContent),
@@ -67,12 +67,12 @@ test('directory card hover flyout switches directories; console directory rows d
     await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 600 });
 
     // ── ② 控制台目录拖拽排序 ──
-    await page.evaluate(`document.getElementById('overview').click()`);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.admin-directory-list [data-dir-id]').length===3`), '控制台列出三个目录');
-    assert.equal(await page.evaluate(`document.querySelector('.admin-directory-list [data-dir-id]').draggable`), true, '目录行可拖');
+    await page.evaluate(`document.getElementById('library').click()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('.directory-flyout-list [data-dir-id]').length===3`), '控制台列出三个目录');
+    assert.equal(await page.evaluate(`document.querySelector('.directory-flyout-list [data-dir-id]').draggable`), true, '目录行可拖');
     // 把第三行（Gapasea）拖到第一行上半截 → 顺序 d3,d1,d2。
     await page.evaluate(`(() => {
-      const list = document.querySelector('.admin-directory-list');
+      const list = document.querySelector('.directory-flyout-list');
       const rows = [...list.querySelectorAll('[data-dir-id]')];
       const dt = new DataTransfer();
       rows[2].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
@@ -82,15 +82,15 @@ test('directory card hover flyout switches directories; console directory rows d
       rows[2].dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
     })()`);
     assert.ok(await page.waitFor(`true`));
-    assert.ok(await page.waitFor(`document.querySelectorAll('.admin-directory-list [data-dir-id]')[0]?.dataset.dirId==='d3'`), '松手后界面是新顺序');
+    assert.ok(await page.waitFor(`document.querySelectorAll('.directory-flyout-list [data-dir-id]')[0]?.dataset.dirId==='d3'`), '松手后界面是新顺序');
     await page.evaluate(`new Promise(done => setTimeout(done, 300))`);
     assert.deepEqual(orderPuts, [['d3', 'd1', 'd2']], '按新顺序 PUT /api/directories/order 一次');
-    assert.equal(await page.evaluate(`[...document.querySelectorAll('.admin-directory-list [data-dir-id]')].map(r=>r.dataset.dirId).join()`), 'd3,d1,d2', '重拉快照后顺序不回弹');
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('.directory-flyout-list [data-dir-id]')].map(r=>r.dataset.dirId).join()`), 'd3,d1,d2', '重拉快照后顺序不回弹');
     await page.screenshot('console-reordered');
     // 重载页面：顺序来自服务端，侧拉也照这个顺序。
     await page.navigate('/air?dir=d1');
     assert.ok(await page.waitFor(`document.getElementById('directory-name').textContent==='MultiCC 主仓'`));
-    await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: card.x, y: card.y });
+    await page.evaluate(`document.getElementById('library').click()`);
     assert.ok(await page.waitFor(`document.getElementById('directory-flyout') && !document.getElementById('directory-flyout').hidden`));
     assert.equal(await page.evaluate(`[...document.querySelectorAll('#directory-flyout .directory-flyout-row')].map(r=>r.dataset.dirId).join()`), 'd3,d1,d2', '重载后侧拉顺序来自服务端');
   });

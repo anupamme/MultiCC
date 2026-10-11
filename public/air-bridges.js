@@ -361,7 +361,7 @@
 <div class="air-bridges">
   <section class="admin-panel">
     <div class="admin-panel-head">
-      <div><span class="eyebrow">BRIDGES</span><h3>${t('airBridgesTitle')}</h3></div>
+      <div><span class="eyebrow">${t('airAdminPanelBridges')}</span><h3>${t('airBridgesTitle')}</h3></div>
     </div>
     <p class="air-bridges-intro">${t('airBridgesIntro')}</p>
   </section>${wechatBlock()}${feishuBlock()}${TOKEN_PLATFORMS.map(tokenBlock).join('')}

@@ -108,7 +108,7 @@
     // 计数徽标还是旧页那个 id：#tg-graph-count-pill 由 loadTaskGraph 自己写。
     const pill = make('span', '', 'air-taskgraph-pill');
     pill.id = 'tg-graph-count-pill';
-    title.append(make('span', 'TASKGRAPH', 'eyebrow'), make('h3', t('airTaskGraph')), pill);
+    title.append(make('span', t('airAdminPanelTaskgraph'), 'eyebrow'), make('h3', t('airTaskGraph')), pill);
     head.append(title);
     panel.append(head, make('p', t('airTaskgraphDesc'), 'air-taskgraph-desc'));
 

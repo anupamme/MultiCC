@@ -215,7 +215,7 @@
     const panel = make('section', null, 'admin-panel');
     const head = make('div', null, 'admin-panel-head');
     const title = make('div');
-    title.append(make('span', 'SKILLS', 'eyebrow'), make('h3', t('airSkillsyncStatusTitle')));
+    title.append(make('span', t('airAdminSkillSync'), 'eyebrow'), make('h3', t('airSkillsyncStatusTitle')));
     const summary = make('span', '', 'admin-panel-note');
     summary.id = 'air-skillsync-summary';
     head.append(title, summary);
@@ -258,7 +258,7 @@
     const panel = make('section', null, 'admin-panel');
     const head = make('div', null, 'admin-panel-head');
     const title = make('div');
-    title.append(make('span', 'PROVIDERS', 'eyebrow'), make('h3', t('airSkillsyncProviders')));
+    title.append(make('span', t('airAdminPanelProvider'), 'eyebrow'), make('h3', t('airSkillsyncProviders')));
     head.append(title);
     const list = make('div', null, 'air-skillsync-providers');
     list.id = 'air-skillsync-providers';
@@ -270,7 +270,7 @@
     const panel = make('section', null, 'admin-panel');
     const head = make('div', null, 'admin-panel-head');
     const title = make('div');
-    title.append(make('span', 'SHARED', 'eyebrow'), make('h3', t('airSkillsyncSharedTitle')));
+    title.append(make('span', t('airAdminGroupStorage'), 'eyebrow'), make('h3', t('airSkillsyncSharedTitle')));
     const count = make('span', '', 'admin-panel-note');
     count.id = 'air-skillsync-list-count';
     head.append(title, count);

@@ -199,11 +199,17 @@
   }
 
   window.MultiCCAirSettings = {
-    directory(onSaved) {
+    directory(onSaved, { example = false } = {}) {
       dialog(t('airTaskSettingsAddDirectory'), form => {
         const name = field(form, t('airTaskSettingsName')), path = field(form, t('airTaskSettingsAbsolutePath')); name.required = path.required = true;
         name.maxLength = 100; path.placeholder = '/Users/you/projects/example';
         attachFolderPicker(path, name);
+        if (example) {
+          name.value = t('airExampleProject');
+          void request('/api/fs/list', undefined, 'GET').then(result => {
+            if (result.base && !path.value) path.value = result.base.replace(/\/$/, '') + '/MultiCC-Example';
+          }).catch(() => { path.placeholder = t('airTaskSettingsAbsolutePath'); });
+        }
         const create = node('input'); create.type = 'checkbox'; create.checked = true;
         const createLabel = node('label', t('airTaskSettingsCreateIfMissing')); createLabel.prepend(create);
         form.append(createLabel);

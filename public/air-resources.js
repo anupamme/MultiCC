@@ -302,7 +302,7 @@
     const card = make('section', null, 'admin-panel');
     const head = make('div', null, 'admin-panel-head');
     const heading = make('div');
-    heading.append(make('span', 'SKILLS', 'eyebrow'), make('h3', t('airResourcesSkillsTitle')));
+    heading.append(make('span', t('airAdminSkillSync'), 'eyebrow'), make('h3', t('airResourcesSkillsTitle')));
     const count = make('span', '', 'air-resources-count');
     count.id = 'air-resources-skills-count';
     head.append(heading, count);
@@ -328,7 +328,7 @@
     const card = make('section', null, 'admin-panel');
     const head = make('div', null, 'admin-panel-head');
     const heading = make('div');
-    heading.append(make('span', 'HISTORY', 'eyebrow'), make('h3', t('airResourcesHistoryTitle')));
+    heading.append(make('span', t('airAdminRunHistory'), 'eyebrow'), make('h3', t('airResourcesHistoryTitle')));
     const count = make('span', '', 'air-resources-count');
     count.id = 'air-resources-history-count';
     head.append(heading, count);

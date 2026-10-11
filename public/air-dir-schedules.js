@@ -77,7 +77,7 @@
     const head = node('header', null, 'dir-schedule-head');
     const heading = node('div');
     const title = node('h2', null, '');
-    heading.append(node('span', 'SCHEDULED TASKS', 'eyebrow'), title);
+    heading.append(node('span', t('airScheduledTasks'), 'eyebrow'), title);
     const close = node('button', '×', null);
     close.type = 'button';
     close.id = 'dir-schedule-close';

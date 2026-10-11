@@ -43,24 +43,13 @@ const airJs = read('public/air.js');
 const airHtml = read('public/air.html');
 const airSecrets = read('public/air-secrets.js');
 
-test('Air surfaces the vault first, and its page header is not the raw mode key', () => {
+test('Air keeps the vault in data and security, and its header is not the raw mode key', () => {
   assertContains(airAdmin, /^\s{4}secrets: \[t\('airAdminPanelSecrets'\)/m,
     'the vault panel must be registered in legacyPanels');
-  assertContains(airAdmin, /\['airAdminGroupFeatured', \['secrets', 'docs', 'memory', 'taskgraph', 'workspaces'\]\]/,
-    'the vault must be the first card of the settings center\'s first group');
-  // 控制台那一格钉在页头工具栏上（不用滚到工具格才找得到）。从前它住在控制台浮层的
-  // #console-head 里；控制台改成主区域里的一页之后，页头那排工具就是唯一常驻的地方
-  // —— #task-tools 在每一页都渲染，被藏起来的只是 #task-layout 那一块正文。
-  const taskTools = airHtml.indexOf('id="task-tools"');
-  const consoleSecrets = airHtml.indexOf('id="console-secrets"');
-  assert.ok(consoleSecrets > 0, 'air.html must render the header vault entry');
-  assert.ok(consoleSecrets > taskTools, 'the entry must sit inside the header toolbar #task-tools');
-  assert.ok(!airHtml.includes('id="console-panel"'),
-    'the console is a page in <main> now, not the slide-over panel this entry used to live in');
-  assertContains(airHtml, /id="console-secrets"[^>]*data-air-view="secrets"/,
-    'air.js wires [data-air-view] → setMode, so the button needs the attribute to do anything');
-  assert.ok(airAdmin.indexOf("['secrets', '🔐',") < 0,
-    'the vault card must no longer sit in the console tools grid (it moved to the top bar)');
+  assertContains(airAdmin, /\['airSettingsData', \['secrets', 'storage'\]\]/,
+    'the vault remains reachable in Settings → Data and security');
+  assert.ok(!airHtml.includes('id="console-secrets"'), 'the console no longer duplicates the vault entry');
+  assertContains(airHtml, /id="side-more"[^>]*data-air-view="settings"/, 'the sidebar opens Settings');
   // 页头文案来自 air.js 的 adminHeadings：漏了这一条，页头会把 mode 原样显示
   // （「secrets」），设置中心的标题却是「敏感信息」。
   assertContains(airJs, /^\s{6}secrets: \[/m,

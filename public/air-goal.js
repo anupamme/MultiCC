@@ -136,7 +136,7 @@
     panel.append(style());
     const head = make('div', null, 'admin-panel-head');
     const title = make('div');
-    title.append(make('span', 'GOAL', 'eyebrow'), make('h3', t('airGoalTitle')));
+    title.append(make('span', t('airAdminPanelGoal'), 'eyebrow'), make('h3', t('airGoalTitle')));
     head.append(title);
     panel.append(head, make('p', t('airGoalIntro'), 'air-goal-intro'));
 

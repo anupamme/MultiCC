@@ -28,7 +28,7 @@
     workspaces: [t('airAdminPanelWorkspaces'), t('airAdminPanelWorkspacesDesc'), 'WORKSPACES'],
     // aux 不是 legacy iframe 页(manage 那边配置在弹窗里,没有 view 可嵌)——
     // 这条只为设置中心的卡片和 modes 集合提供元数据,渲染走下面的 renderAux。
-    aux: ['AI Assistant', t('airAdminPanelAuxDesc'), 'AUX'],
+    aux: [t('airAdminAux'), t('airAdminPanelAuxDesc'), 'AUX'],
     voice: [t('airAdminPanelVoice'), t('airAdminPanelVoiceDesc'), 'VOICE'],
     goal: [t('airAdminPanelGoal'), t('airAdminPanelGoalDesc'), 'GOAL'],
     provider: [t('airAdminPanelProvider'), t('airAdminPanelProviderDesc'), 'PROVIDERS'],
@@ -40,32 +40,28 @@
     skillsync: [t('airAdminPanelSkillsync'), t('airAdminPanelSkillsyncDesc'), 'SKILLS'],
     storage: [t('airAdminPanelStorage'), t('airAdminPanelStorageDesc'), 'STORAGE'],
   };
-  // 分组标题原来既当显示文案、又当 renderSettings 里拼 className 的比较值（'重要功能'）。
-  // 现在这里存 i18n key：显示文案由 t() 查，className 判定也改比这个 key。
+  // Configuration has one home; documents and graphs live in sidebar resources.
   const settingGroups = [
-    ['airAdminGroupFeatured', ['secrets', 'docs', 'memory', 'taskgraph', 'workspaces']],
-    ['airAdminGroupAi', ['provider', 'aux', 'goal', 'voice', 'global']],
-    ['airAdminGroupConnect', ['push', 'tunnel', 'bridges']],
-    ['airAdminGroupStorage', ['resources', 'skillsync', 'storage']],
+    ['airSettingsModels', ['provider', 'aux', 'goal', 'voice']],
+    ['airSettingsMobile', ['push', 'tunnel', 'bridges']],
+    ['airSettingsComputer', ['global']],
+    ['airSettingsData', ['secrets', 'storage']],
+    ['airSettingsAdvanced', ['workspaces', 'resources', 'skillsync']],
   ];
-  // 原生面板注册表：mode → 模块名 + 返回目标。这批原来都是嵌旧 manage 页的 iframe，
-  // 一格一个文件搬成原生 DOM（同 provider / tunnel / secrets）。
-  // 表格而不是十个各自成篇的 renderX：它们的差别只有「回哪去」，工具条形状一样
-  // （返回 + 刷新），内容全在各自的模块里 —— 十份复制粘贴只会让下一格漏改一处。
-  // 模块没挂上（旧页面、缓存半套静态资源）时的兜底见 renderModuleMissing：不再退回
-  // 那个 iframe，理由写在那儿。
+  let settingsCategory = 'airSettingsModels';
+  // Native page modules. Return navigation belongs to the Air shell history.
   const nativePanels = {
-    memory: { module: 'MultiCCAirMemory', back: 'overview' },
-    taskgraph: { module: 'MultiCCAirTaskgraph', back: 'overview' },
-    voice: { module: 'MultiCCAirVoice', back: 'settings' },
-    goal: { module: 'MultiCCAirGoal', back: 'settings' },
-    global: { module: 'MultiCCAirGlobal', back: 'settings' },
-    push: { module: 'MultiCCAirPush', back: 'settings' },
-    bridges: { module: 'MultiCCAirBridges', back: 'settings' },
-    resources: { module: 'MultiCCAirResources', back: 'settings' },
-    skillsync: { module: 'MultiCCAirSkillsync', back: 'settings' },
-    storage: { module: 'MultiCCAirStorage', back: 'settings' },
-    workspaces: { module: 'MultiCCAirWorkspaces', back: 'settings' },
+    memory: { module: 'MultiCCAirMemory' },
+    taskgraph: { module: 'MultiCCAirTaskgraph' },
+    voice: { module: 'MultiCCAirVoice' },
+    goal: { module: 'MultiCCAirGoal' },
+    global: { module: 'MultiCCAirGlobal' },
+    push: { module: 'MultiCCAirPush' },
+    bridges: { module: 'MultiCCAirBridges' },
+    resources: { module: 'MultiCCAirResources' },
+    skillsync: { module: 'MultiCCAirSkillsync' },
+    storage: { module: 'MultiCCAirStorage' },
+    workspaces: { module: 'MultiCCAirWorkspaces' },
   };
   let activeMode = null;
   let currentContext = null;
@@ -76,7 +72,7 @@
   // 的词走不到任务板语料。注意它换的不是上面那条状态口径 —— 列表默认仍是「进行中与
   // 待处理」，搜索另有一份 searchFilter()（见下）。
   // view 是顶上展开了哪一格过滤项（running/waiting/error/today/all），null = 都收着。
-  const consoleFilter = { query: '', status: 'open', dir: 'all', fullText: true, view: null, page: 1, sort: 'message' };
+  const consoleFilter = { query: '', status: 'open', dir: 'all', fullText: true, view: 'all', page: 1, sort: 'message' };
   const TASK_PAGE_SIZE = 20;
   // 其余四个统计格仍是短清单；「全部任务」单独按每页 20 条翻页。
   const TASK_LIST_LIMIT = 60;
@@ -391,44 +387,16 @@
     return Number(task.updatedAt || 0) >= midnight.getTime();
   }
 
-  // 统计卡的小字放不下时不截成省略号，而是来回滚动（跑马灯）把整句露出来：
-  // 这行字往往是唯一说明「这个数字数的是什么」的地方，砍掉后半句就没意义了。
-  // 放不放得下只能量出来 —— 卡宽跟着视口和列数变，所以挂 ResizeObserver，每次
-  // 卡片尺寸变了重新量一次；放得下就撤掉动画，保持静止。
-  const marqueeObserver = typeof ResizeObserver === 'function'
-    ? new ResizeObserver(entries => { for (const entry of entries) fitMarquee(entry.target); })
-    : null;
-  function fitMarquee(box) {
-    // 控制台每次重画都换一批新卡，旧卡摘下来后就别再盯着了。
-    if (!box.isConnected) { marqueeObserver?.unobserve(box); return; }
-    const text = box.firstElementChild;
-    if (!text) return;
-    // 滚动时文字两侧各多 6px 内边距（给渐隐遮罩留位置）：量的是不含它的净宽，
-    // 否则每量一次就多算 12px。
-    const padding = box.classList.contains('marquee') ? 12 : 0;
-    const overflow = Math.ceil(text.scrollWidth - padding - box.clientWidth);
-    const scrolling = box.clientWidth > 0 && overflow > 1;
-    box.classList.toggle('marquee', scrolling);
-    if (!scrolling) return;
-    // 终点把那 12px 内边距算回去，最后一个字才能完整露出来。
-    box.style.setProperty('--marquee-shift', `-${overflow + 12}px`);
-    // 速度恒定（约 30px/s），外加两头各停一会儿，长句不会滚得飞快。
-    box.style.setProperty('--marquee-duration', `${Math.max(4, overflow / 30 + 2.5).toFixed(1)}s`);
-  }
-
   function statCard(label, value, detail, tone, onClick) {
     const card = make(onClick ? 'button' : 'article', null, `admin-stat ${tone || ''}`);
     if (onClick) { card.type = 'button'; card.onclick = onClick; }
-    const small = make('small', null, 'admin-stat-detail');
-    small.title = detail;
-    small.append(make('span', detail, 'admin-stat-detail-text'));
-    card.append(make('span', label), make('strong', String(value)), small);
-    if (marqueeObserver) marqueeObserver.observe(small);
+    card.title = detail;
+    card.append(make('span', label), make('strong', String(value)));
     return card;
   }
 
   function renderOverview(context) {
-    const { data, scheduleTasks, setMode, navigate } = context;
+    const { data, setMode, navigate } = context;
     const tasks = data?.tasks || [];
     const directories = data?.directories || [];
     const active = tasks.filter(task => task.status !== 'done' && task.status !== 'archived');
@@ -439,21 +407,14 @@
     const failed = urgent.filter(task => taskStatus(task) === 'error');
     const waitingMe = urgent.filter(task => taskStatus(task) !== 'error');
     const finished = tasks.filter(task => doneToday(task)).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    const enabledSchedules = (scheduleTasks || []).filter(task => task.enabled);
     const running = runningDirectories(data);
     // The overview is 控制台's own page; `#admin-content` is the fallback for any
     // host that renders it without that page (it used to be the only host).
     const panel = el('console-content');
-    setActions([
-      action(t('airAdminBrowseDirectories'), () => setMode('library'), '', panelIcon('▦')),
-      action(t('airAdminNewTask'), () => { setMode('tasks'); setTimeout(() => el('create')?.click(), 0); }, 'primary', keepsGlyph('＋')),
-    ]);
+    setActions();
 
     const content = panel || el('admin-content');
-    // 大字只放「能点开看清单」的五个过滤项：进行中 / 等我回复 / 异常 / 今日完成 / 全部。
-    // 目录数、定时任务数是背景信息，不是要处理的东西 —— 降成下面那行小字。
-    // 点一格，统计带和工作目录之间就展开那一格的清单（有最大高度，自己滚）；再点
-    // 同一格收起。默认什么都不展开：控制台第一眼是数字，不是一堵清单墙。
+    // Compact filters accompany the complete task list below the attention cards.
     const stats = make('div', null, 'admin-stats console-filter-tabs');
     const tiles = [
       ['running', t('airAdminTileRunning'), executing.length, running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
@@ -465,33 +426,13 @@
     const tileButtons = new Map();
     for (const [view, label, count, detail, tone] of tiles) {
       const card = statCard(label, count, detail, tone, () => {
-        consoleFilter.view = consoleFilter.view === view ? null : view;
+        consoleFilter.view = view;
         paintDrawer();
       });
       card.dataset.view = view;
       tileButtons.set(view, card);
       stats.append(card);
     }
-    const meta = make('div', null, 'console-overview-meta');
-    meta.append(
-      action(t('airAdminMetaDirectories', { n: directories.length }), () => setMode('library'), 'console-meta-link'),
-      make('span', '·'),
-      action(t('airAdminMetaSchedules', { n: enabledSchedules.length, total: (scheduleTasks || []).length }), () => setMode('schedules'), 'console-meta-link'),
-    );
-
-    const assistant = action('', () => setMode('aux'), 'admin-assistant-card');
-    assistant.id = 'console-ai-assistant';
-    assistant.append(
-      make('span', '✦', 'admin-assistant-mark'),
-      make('span', null, 'admin-assistant-copy'),
-      make('span', t('airAdminOpenConfig'), 'admin-assistant-action'),
-    );
-    assistant.querySelector('.admin-assistant-copy').append(
-      make('span', 'AI ASSISTANT', 'eyebrow'),
-      make('strong', t('airAdminAssistantTagline')),
-      make('small', t('airAdminAssistantDesc')),
-    );
-
     // 展开区：四格共用一个面板，换格只换标题和清单。「全部」多一排搜索与筛选 ——
     // 它就是原来目录下面那张「全部任务」，搬上来之后底下不再重复一份。
     const drawer = make('section', null, 'admin-panel console-filter-panel');
@@ -499,11 +440,11 @@
     const drawerHead = make('div', null, 'admin-panel-head');
     drawerHead.append(make('div'));
     const drawerTitle = make('h3');
-    drawerHead.firstChild.append(make('span', 'ACROSS ALL WORKSPACES', 'eyebrow'), drawerTitle);
+    drawerHead.firstChild.append(make('span', t('airAllProjects'), 'eyebrow'), drawerTitle);
     const drawerNote = make('span', '', 'admin-panel-note');
     drawerNote.id = 'console-task-note';
     const drawerMeta = make('div', null, 'admin-panel-meta');
-    drawerMeta.append(drawerNote, action(t('airAdminCollapse'), () => { consoleFilter.view = null; paintDrawer(); }, 'console-filter-close'));
+    drawerMeta.append(drawerNote);
     const sortSwitch = make('div', null, 'task-sort-switch console-task-sort');
     sortSwitch.id = 'console-task-sort';
     sortSwitch.setAttribute('role', 'group');
@@ -679,55 +620,27 @@
     dirPick.onchange = () => { consoleFilter.dir = dirPick.value; consoleFilter.page = 1; paintTaskList(); };
     paintDrawer();
 
-    const workspacePanel = make('section', null, 'admin-panel admin-directory-panel');
-    const workspaceHead = make('div', null, 'admin-panel-head');
-    workspaceHead.append(make('div'));
-    workspaceHead.firstChild.append(make('span', 'WORK DIRECTORIES', 'eyebrow'), make('h3', t('airAdminWorkDirectories')));
-    workspaceHead.append(action(t('airAdminDirectoryLibrary'), () => setMode('library')));
-    const workspaceList = make('div', null, 'admin-directory-list');
-    for (const directory of directories) {
-      const directoryTasks = tasks.filter(task => task.dirId === directory.id);
-      const unfinished = directoryTasks.filter(task => !['done', 'archived'].includes(task.status));
-      const executingCount = unfinished.filter(isRunning).length;
-      const row = action('', () => navigate(directory.id), 'admin-directory-row');
-      row.dataset.dirId = directory.id;
-      // 任务对应的目录也要带圈：一个「有活在跑」的目录不该等到点进去才发现。
-      applyRing(row, running.has(directory.id), directory.id);
-      const copy = make('span');
-      copy.append(make('strong', directory.name || directory.id), make('small', directory.path || ''));
-      const counts = make('span', null, 'admin-directory-counts');
-      counts.append(make('b', t('airAdminNInProgress', { n: unfinished.length })), make('small', executingCount ? t('airAdminNExecuting', { n: executingCount }) : t('airAdminNTaskCount', { n: directoryTasks.length })));
-      row.append(make('span', '▣', 'admin-directory-mark'), copy, counts, make('span', '›', 'admin-directory-arrow'));
-      workspaceList.append(row);
+    const attention = make('section', null, 'console-priority');
+    const attentionHead = make('div', null, 'admin-panel-head');
+    attentionHead.append(make('h2', t('airNeedsYou')), action(t('airRecentAll'), () => setMode('attention')));
+    const cards = make('div', null, 'console-priority-grid');
+    for (const task of urgent.slice(0, 4)) {
+      const error = taskStatus(task) === 'error';
+      const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
+      card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
+        make('p', t(error ? 'airFailureHint' : 'airWaitingHint')),
+        make('small', context.directoryName(task.dirId)),
+        action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)));
+      cards.append(card);
     }
-    if (!directories.length) workspaceList.append(make('p', t('airAdminNoDirectories'), 'admin-empty'));
-    // 拖着换顺序，顺序存服务端（air-directory-nav.js）。
-    window.MultiCCAirDirectoryNav?.sortable(workspaceList, context);
-    workspacePanel.append(workspaceHead, workspaceList);
+    if (!urgent.length) cards.append(make('p', t('airNothingNeedsYou'), 'admin-empty'));
+    attention.append(attentionHead, cards);
+    const runningPanel = make('section', null, 'admin-panel console-running');
+    runningPanel.append(make('h3', t('airAdminTileRunning')));
+    for (const task of executing.slice(0, 5)) runningPanel.append(openRow(task));
+    if (!executing.length) runningPanel.append(make('p', t('airAdminNoRunningTasks'), 'admin-empty'));
+    content.replaceChildren(attention, runningPanel, stats, drawer);
 
-    const tools = make('section', null, 'admin-panel');
-    const toolHead = make('div', null, 'admin-panel-head');
-    toolHead.append(make('div'));
-    toolHead.firstChild.append(make('span', 'SYSTEM TOOLS', 'eyebrow'), make('h3', t('airAdminServicesAndSettings')));
-    const toolGrid = make('div', null, 'admin-tool-grid');
-    // 保险箱不在这张格子里：它在控制台那一页的页头工具栏上（air.html 的
-    // #console-secrets），跟这一页的其它动作并列常驻，不用滚到工具格才找得到。
-    const shortcuts = [
-      ['docs', '▤', t('airAdminPanelDocs'), t('airAdminPanelDocsDesc')],
-      ['memory', '◇', t('airAdminPanelMemory'), t('airAdminMemoryShortDesc')],
-      ['taskgraph', '⛓', t('airAdminPanelTaskgraph'), t('airAdminTaskgraphShortDesc')],
-      ['settings', '⚙', t('airAdminSettingsCenter'), t('airAdminSettingsShortDesc')],
-      ['schedules', '◴', t('airAdminAutoRun'), t('airAdminAutoRunDesc')],
-    ];
-    for (const [mode, icon, title, detail] of shortcuts) {
-      const button = action('', () => setMode(mode), 'admin-tool-card');
-      button.append(make('span', icon, 'admin-tool-icon'), make('strong', title), make('small', detail));
-      toolGrid.append(button);
-    }
-    tools.append(toolHead, toolGrid);
-    // 顺序：过滤项（大字）→ 背景计数（小字）→ 展开的清单 → 工作目录 → AI 助手 → 工具。
-    // 清单夹在过滤项和目录之间，点哪格就在它正下方长出来，不用滚到底去找。
-    content.replaceChildren(stats, meta, drawer, workspacePanel, assistant, tools);
   }
 
   // 「谁在等我」的整页：控制台那一格只放最近更新的几条，完整清单在这里。它和控制台
@@ -735,7 +648,6 @@
   // 「谁在前面」排成两个样子。
   function renderAttention(context) {
     setActions([
-      action(t('airAdminBackToConsole'), () => context.setMode('overview'), '', panelIcon('←')),
       // 数据在外壳那份 /api/air 快照里，所以这一页没有自己的接口可打，刷新只能
       // 请外壳去取。取完外壳会自己重画当前模式，但走的是「模式没变就跳过」那条
       // 早退路径 —— 这里再强制重画一次，否则按钮按下去什么都不动。
@@ -745,7 +657,7 @@
     const panel = make('section', null, 'admin-panel console-attention-page');
     const head = make('div', null, 'admin-panel-head');
     head.append(make('div'));
-    head.firstChild.append(make('span', 'ACROSS ALL WORKSPACES', 'eyebrow'), make('h3', t('airAdminWhoNeedsMe')));
+    head.firstChild.append(make('span', t('airAllProjects'), 'eyebrow'), make('h3', t('airAdminWhoNeedsMe')));
     head.append(make('span', urgent.length ? t('airAdminAttentionPageNote', { n: urgent.length }) : t('airAdminNothingPending'), 'admin-panel-note'));
     const list = make('div', null, 'admin-recent-list');
     // 这一页本身就是完整清单，点走一条不用收掉任何浮层 —— 直接把 navigate 交给
@@ -948,7 +860,7 @@
 
   function renderDocs(context) {
     setActions([
-      action('服务路由', () => { window.location.href = '/service-routes.html'; }),
+      action(t('airServiceRoutes'), () => { window.location.href = '/service-routes.html'; }),
       action(t('airAdminRefresh'), () => loadDocs(), '', keepsGlyph('↻')),
       action(t('airAdminRegisterService'), () => el('service-dialog').showModal(), 'primary', keepsGlyph('＋')),
     ]);
@@ -977,13 +889,12 @@
 
   function renderAux(context) {
     setActions([
-      action(t('airAdminBackToSettings'), () => context.setMode('settings'), '', panelIcon('←')),
       action(t('airAdminRefresh'), () => loadAuxView(true), '', keepsGlyph('↻')),
     ]);
     const statusPanel = make('section', null, 'admin-panel');
     const statusHead = make('div', null, 'admin-panel-head');
     statusHead.append(make('div'));
-    statusHead.firstChild.append(make('span', 'AUX QUEUE', 'eyebrow'), make('h3', t('airAdminRunStatus')));
+    statusHead.firstChild.append(make('span', t('airAdminRunStatus'), 'eyebrow'), make('h3', t('airAdminRunStatus')));
     const statusBody = make('div', null, 'air-aux-status');
     statusBody.id = 'air-aux-status';
     statusPanel.append(statusHead, statusBody);
@@ -991,7 +902,7 @@
     const formPanel = make('section', null, 'admin-panel');
     const formHead = make('div', null, 'admin-panel-head');
     formHead.append(make('div'));
-    formHead.firstChild.append(make('span', 'MODEL', 'eyebrow'), make('h3', t('airAdminModelSettings')));
+    formHead.firstChild.append(make('span', t('airAdminModelSettings'), 'eyebrow'), make('h3', t('airAdminModelSettings')));
     formHead.append(make('span', t('airAdminModelNote'), 'admin-panel-note'));
     const form = make('div', null, 'air-aux-form');
     form.id = 'air-aux-form';
@@ -1000,7 +911,7 @@
     const recPanel = make('section', null, 'admin-panel');
     const recHead = make('div', null, 'admin-panel-head');
     recHead.append(make('div'));
-    recHead.firstChild.append(make('span', 'HISTORY', 'eyebrow'), make('h3', t('airAdminRunHistory')));
+    recHead.firstChild.append(make('span', t('airAdminRunHistory'), 'eyebrow'), make('h3', t('airAdminRunHistory')));
     const recNote = make('span', '', 'admin-panel-note');
     recNote.id = 'air-aux-records-note';
     recHead.append(recNote);
@@ -1267,25 +1178,42 @@
   function renderSettings(context) {
     setActions();
     const content = el('admin-content');
+    if (settingGroups.some(([key]) => key === history.state?.airSettingsCategory)) settingsCategory = history.state.airSettingsCategory;
+    const layout = make('div', null, 'air-settings-layout');
+    const categories = make('nav', null, 'air-settings-categories');
+    categories.setAttribute('aria-label', t('airSettingsCenter'));
     const groups = make('div', null, 'air-settings-groups');
+    const icons = { provider: '✦', aux: '◎', goal: '◇', voice: '♪', push: '◔', tunnel: '⌁', bridges: '⇄', global: '⚙', secrets: '♧', storage: '⇧', workspaces: '▣', resources: '⬢', skillsync: '⇅' };
     for (const [title, modes] of settingGroups) {
-      const section = make('section', null, `admin-panel air-settings-group${title === 'airAdminGroupFeatured' ? ' air-settings-feature-group' : ''}`);
+      const tab = action(t(title), () => {
+        settingsCategory = title;
+        history.replaceState({ ...history.state, airSettingsCategory: title }, '');
+        root.MultiCCAirMore.park();
+        renderSettings(context);
+        el('admin-content').querySelector(`[data-category="${title}"]`).focus();
+      });
+      tab.dataset.category = title;
+      tab.setAttribute('aria-current', title === settingsCategory ? 'page' : 'false');
+      categories.append(tab);
+      const section = make('section', null, 'admin-panel air-settings-group');
+      section.hidden = title !== settingsCategory;
       section.append(make('h3', t(title)));
       const grid = make('div', null, 'air-settings-grid');
       for (const mode of modes) {
-        const [name, description, eyebrow] = legacyPanels[mode];
+        const [name, description] = legacyPanels[mode];
         const card = action('', () => context.setMode(mode), 'air-setting-card');
-        // 卡片是设置中心里唯一说得清「这张卡进哪一格」的东西：文案会随语言变、eyebrow
-        // 又会重复，只有 mode 是稳定的。给一个 data-air-card 让测试（和任何想在页面上
-        // 认一认的代码）能按格名点到它，不必去猜卡片上的字。
         card.dataset.airCard = mode;
-        card.append(make('span', eyebrow, 'eyebrow'), make('strong', name), make('small', description), make('em', t('airAdminEnterSettings')));
+        const copy = make('span', null, 'air-setting-copy');
+        copy.append(make('strong', name), make('small', description));
+        card.append(make('span', icons[mode], 'air-setting-icon'), copy, make('span', '›'));
         grid.append(card);
       }
       section.append(grid);
+      if (title === 'airSettingsComputer') root.MultiCCAirMore.mount(section);
       groups.append(section);
     }
-    content.replaceChildren(groups);
+    layout.append(categories, groups);
+    content.replaceChildren(layout);
   }
 
   // 面板模块没挂上时的兜底（旧页面、缓存了半套静态资源）：说一句「刷新页面重试」，
@@ -1306,8 +1234,6 @@
     const panel = root[spec.module];
     if (!panel) return renderModuleMissing();
     setActions([
-      action(spec.back === 'overview' ? t('airAdminBackToConsole') : t('airAdminBackToSettings'),
-        () => context.setMode(spec.back), '', panelIcon('←')),
       action(t('airAdminRefresh'), () => panel.refresh?.(), '', keepsGlyph('↻')),
     ]);
     panel.render(el('admin-content'), context);
@@ -1316,7 +1242,6 @@
   function renderProvider(context) {
     const provider = root.MultiCCAirProvider;
     setActions([
-      action(t('airAdminBackToSettings'), () => context.setMode('settings'), '', panelIcon('←')),
       action(t('airAdminAdvancedAccounts'), () => provider?.toggleAdvanced(), '', panelIcon('⋯')),
       action(t('airAdminRefresh'), () => provider?.refresh(), '', keepsGlyph('↻')),
       action(t('airAdminAddProvider'), () => provider?.openEditor(), 'primary', keepsGlyph('＋')),
@@ -1330,7 +1255,6 @@
   // Provider / Tunnel 一样是原生页，不嵌旧 manage 页。面板本体在 air-secrets.js。
   function renderSecrets(context) {
     setActions([
-      action(t('airAdminBackToSettings'), () => context.setMode('settings'), '', panelIcon('←')),
       action(t('airAdminRefresh'), () => root.MultiCCAirSecrets?.refresh(), '', keepsGlyph('↻')),
     ]);
     const panel = root.MultiCCAirSecrets;
@@ -1341,7 +1265,6 @@
 
   function renderTunnel(context) {
     setActions([
-      action(t('airAdminBackToSettings'), () => context.setMode('settings'), '', panelIcon('←')),
       action(t('airAdminRefreshStatus'), () => root.MultiCCAirTunnel?.refresh(), '', keepsGlyph('↻')),
     ]);
     const tunnel = root.MultiCCAirTunnel;
@@ -1354,11 +1277,13 @@
   function render(mode, context, force = false) {
     currentContext = context;
     if (mode === 'overview') {
+      root.MultiCCAirMore?.park();
       activeMode = mode;
       renderOverview(context);
       return;
     }
     if (!force && activeMode === mode) return;
+    root.MultiCCAirMore?.park();
     activeMode = mode;
     if (mode === 'attention') return renderAttention(context);
     if (mode === 'docs') return renderDocs(context);
@@ -1370,7 +1295,7 @@
     if (nativePanels[mode]) return renderNative(mode, context);
     // 认不出的 mode：旧 manage 页已经删了，没有「先嵌回去」这条退路。工具条先回到
     // 设置中心（否则留着上一格的按钮，点下去动的是另一格），正文说一句刷新重试。
-    setActions([action(t('airAdminBackToSettings'), () => context.setMode('settings'), '', panelIcon('←'))]);
+    setActions();
     renderModuleMissing();
   }
 
@@ -1404,6 +1329,7 @@
     render,
     // The shell's console badge shows the same set the panel's first section does.
     urgentTasks,
+    showAllTasks: () => { consoleFilter.view = 'all'; consoleFilter.status = 'all'; consoleFilter.query = ''; consoleFilter.dir = 'all'; },
     refresh: context => render(activeMode || 'overview', context, true),
     bindServiceDialog,
     // 状态与「在不在跑」的唯一判定，侧栏（air.js）和控制台共用这一份，所以一条

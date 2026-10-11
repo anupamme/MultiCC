@@ -168,7 +168,6 @@
   // 离开 aux 设置页时重查一次：在那儿保存过之后，这张卡应该当场消失，而不是
   // 等下次刷新。跳过只记在本机 —— 跳过的是「这张卡」，不是「这个配置」。
   let auxConfigured = null;
-  let setupDismissed = stored('air:setup-dismissed', false);
   async function refreshAuxConfigured() {
     let config = null;
     try {
@@ -199,8 +198,8 @@
     } catch (_) { /* 取不到命令就留空，不打断引导 */ }
   }
   function renderSetupCard() {
-    const card = $('setup-card');
-    if (card) card.hidden = !(data && auxConfigured === false && !setupDismissed);
+    window.MultiCCAirOnboarding?.render({ data, auxConfigured, setMode,
+      example: () => window.MultiCCAirSettings.directory(async directory => { await refresh(); navigate(directory.id); }, { example: true }) });
   }
   function rememberTask(id) {
     if (!id) return;
@@ -458,6 +457,7 @@
   // 一份，晚的是「什么时候写」。
   function navigate(dir, task = null, options = {}) {
     saveDraft();
+    if (['aux', 'provider'].includes(mode)) void refreshAuxConfigured();
     // 换台不另写一条历史。从「已经开着对话」再去看另一个任务，只是浮层里换了个人；
     // 要是每换一次都 push，来回对照三个任务之后后退键得按三下才回到目录 —— 而
     // 那三下每一次都只是同一件事。所以只有「从没有对话 → 打开一个任务」才是新
@@ -480,8 +480,7 @@
     closeDetails();
     if (task && options.remember !== false) rememberTask(task);
     closeOverlays();
-    if (options.replace || wasTask) history.replaceState(state, '', routeUrl());
-    else history.pushState(state, '', routeUrl());
+    window.MultiCCAirNavigation.write(routeUrl(), state, options.replace || wasTask);
     closeNav();
     render();
     void window.MultiCCAirTaskEntry?.open({ taskId, api, notice });
@@ -490,13 +489,13 @@
     saveDraft();
     // 从 AI Assistant 设置页离开时重查配置：刚在那儿保存过的话，首启配置卡
     // 会在这次渲染里自己消失。
-    if (mode === 'aux' && next !== 'aux') void refreshAuxConfigured();
+    if (['aux', 'provider'].includes(mode) && next !== mode) void refreshAuxConfigured();
     mode = next;
     taskId = null;
     entry = null;
     closeDetails();
     closeOverlays();
-    history.pushState({}, '', routeUrl(next));
+    window.MultiCCAirNavigation.write(routeUrl(next));
     closeNav();
     render();
     if (next === 'library') requestAnimationFrame(() => $('directory-search').focus());
@@ -725,7 +724,7 @@
     const branch = status.branch || t('airGitCurrentBranch');
     const dialog = node('dialog', null, 'push-repo-dialog');
     const form = node('form');
-    form.append(node('span', 'GIT PUSH', 'eyebrow'), node('h2', t('airGitPushTitle')));
+    form.append(node('span', t('airGitPushTitle'), 'eyebrow'), node('h2', t('airGitPushTitle')));
     form.append(node('p', t('airGitPushBody', { branch, ahead, upstream: status.upstream })));
     const error = node('p', '', 'push-repo-error');
     error.setAttribute('role', 'alert');
@@ -1802,16 +1801,17 @@
     const busy = runningDirectories();
     applyRing(document.querySelector('.space-card'), busy.has(directoryId), directoryId);
     renderHeader(dir);
+    window.MultiCCAirNavigation.render({ mode, taskId, setMode });
     renderDirectories();
     renderDirectoryOverview();
     // Worktree 面板、目录侧拉/拖排：模块自管 DOM，这里只递上下文。
     window.MultiCCAirWorktrees?.render({ data, directoryId, api, notice, refresh });
-    window.MultiCCAirDirectoryNav?.render({ data, directoryId, api, notice, refresh, navigate });
+    window.MultiCCAirDirectoryNav?.render({ data, directoryId, api, notice, refresh, navigate, setMode });
     const adminMode = adminModes.has(mode);
     // 控制台是主区域里的一页（adminModes 的一员），但它这一页讲的就是任务本身，
     // 所以侧栏那份「手上的任务」照旧留着 —— 目录首页有它，它也该有。
     const consoleMode = mode === 'overview';
-    $('task-sidebar').hidden = adminMode && !consoleMode;
+    $('task-sidebar').hidden = false;
     $('directory-library').hidden = mode !== 'library';
     // 每一页只有一块正文：控制台有自己那一块，就不该再让 #admin-center 也站着。
     $('admin-center').hidden = !adminMode || consoleMode;
@@ -1819,12 +1819,11 @@
     $('schedule-center').hidden = mode !== 'schedules';
     $('task-layout').hidden = mode === 'library' || mode === 'schedules' || adminMode;
     // Page actions ride in the header (see air.html): one heading band per view.
-    $('add-directory').hidden = !consoleMode && mode !== 'library';
+    $('add-directory').hidden = mode !== 'library';
     $('schedule-create').hidden = mode !== 'schedules';
     $('admin-actions').hidden = !adminMode;
-    // 保险箱常驻在控制台那一页的工具栏上（见 air.html 的 #console-secrets）。
-    $('console-secrets').hidden = !consoleMode;
     if (adminMode) window.MultiCCAirAdmin?.render(mode, adminContext());
+    $('refresh').hidden = adminMode && !['overview', 'settings'].includes(mode);
 
     // 原来挂在「跨目录活动」上的那条常驻信号，现在挂在控制台入口上：不进那一页
     // 也知道别的目录有事在等我。
@@ -2016,7 +2015,7 @@
     const dialog = node('dialog', null, 'move-task-dialog');
     const form = node('form');
     form.method = 'dialog';
-    form.append(node('span', 'MOVE TASK', 'eyebrow'), node('h2', t('airMoveTitle', { title: entry.task?.title || taskId })));
+    form.append(node('span', t('airMoveToOtherDir'), 'eyebrow'), node('h2', t('airMoveTitle', { title: entry.task?.title || taskId })));
     form.append(node('p', t('airMoveHint')));
     const list = node('div', null, 'move-task-targets');
     let chosen = null;
@@ -2070,7 +2069,7 @@
     const currentTitle = String(task.title || '').trim();
     const dialog = node('dialog', null, 'rename-task-dialog');
     const form = node('form');
-    form.append(node('span', 'TASK TITLE', 'eyebrow'), node('h2', t('airTitleDialogTitle')));
+    form.append(node('span', t('airTitleDialogTitle'), 'eyebrow'), node('h2', t('airTitleDialogTitle')));
     form.append(node('p', t('airTitleDialogHint')));
     const label = node('label', t('airTitleField'));
     const input = node('input');
@@ -2623,9 +2622,9 @@
   }
 
   window.MultiCCAirAdmin?.bindServiceDialog(adminContext());
-  // The sidebar card is the current directory, so it opens that directory's own
-  // task page — the full directory library stays on ⌘K and 控制台 › 浏览工作目录.
-  $('library').onclick = () => (directoryId ? navigate(directoryId) : setMode('library'));
+  // The project card opens the switcher; project management lives there too.
+  $('library').onclick = () => window.MultiCCAirDirectoryNav.toggle();
+  window.addEventListener('multicc-open-settings', () => setMode('settings'));
   $('overview').onclick = () => setMode('overview');
   // 换页只管翻页：页码状态在 air-task-pager.js 里，翻完让 air.js 重画一次列表。
   window.MultiCCAirTaskPager?.bind(renderDirectoryOverview);
@@ -2748,15 +2747,6 @@
     else { renderPins(); renderSidebarTasks(); }
   });
   $('add-directory').onclick = () => window.MultiCCAirSettings.directory(async directory => { await refresh(); navigate(directory.id); });
-  // 首启配置卡的两个入口各自直达对应设置页；跳过只藏卡，配置状态仍以下一次
-  // 查询为准（换浏览器/换设备时该出现的还会出现）。
-  $('setup-provider').onclick = () => setMode('provider');
-  $('setup-aux').onclick = () => setMode('aux');
-  $('setup-dismiss').onclick = () => {
-    setupDismissed = true;
-    try { localStorage.setItem('air:setup-dismissed', 'true'); } catch (_) {}
-    renderSetupCard();
-  };
   void refreshAuxConfigured();
   $('quick-task-form').onsubmit = submitQuickTask;
   $('quick-task-attach').onclick = () => $('quick-task-file-input').click();
@@ -2905,6 +2895,7 @@
   });
   window.addEventListener('popstate', () => {
     saveDraft();
+    if (['aux', 'provider'].includes(mode)) void refreshAuxConfigured();
     const params = readRouteParams();
     taskId = params.get('task');
     directoryId = params.get('dir');
@@ -2913,6 +2904,7 @@
     closeDetails();
     closePalette();
     render();
+    window.MultiCCAirNavigation.restore();
     void window.MultiCCAirTaskEntry?.open({ taskId, api, notice });
     if (mode === 'schedules' || mode === 'overview') void window.MultiCCAirSchedules?.refresh().then(render);
   });

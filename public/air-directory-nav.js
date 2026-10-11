@@ -1,16 +1,6 @@
 'use strict';
-// 目录的两件「秒切」小事，放在一起是因为它们读的是同一份目录清单：
-//
-//   · 拖拽排序：控制台「工作目录」那一栏的行可以拖着换顺序。顺序存在服务端
-//     （PUT /api/directories/order —— directories.json 本身就是有序数组，服务端
-//     按新顺序重排登记表），所以换设备、换浏览器、⌘K、目录库看到的都是同一个顺序。
-//     松手那一刻先就地改快照里的顺序（界面不回弹），再写服务端，失败就提示并重拉。
-//   · 左上角目录卡 hover 侧拉：鼠标停在侧栏那张目录卡上，旁边滑出全部目录的清单，
-//     点一下就切过去，不用先开 ⌘K 或目录库。只在有真悬停的指针上启用（触屏没有
-//     hover，一碰就会和「点卡片进目录首页」打架）。
-//
-// 为什么是独立文件：air.js 贴着行数闸门（scripts/check-source-line-budget.js），
-// 这里跟 air-directory-mode.js 一样，只让 air.js 在 render 里递一份上下文进来。
+// Searchable project switcher. Drag order is shared with the server, palette
+// and library; choosing a project uses the shell navigation and keeps recents.
 (function initAirDirectoryNav(root) {
   if (!root || !root.document) return;
   const document = root.document;
@@ -87,8 +77,7 @@
     list.addEventListener('drop', event => { if (dragging) event.preventDefault(); });
   }
 
-  // ── 左上角目录卡的 hover 侧拉 ──
-  const canHover = () => !root.matchMedia || root.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  // Click, keyboard and touch share one project menu.
   let flyout = null;
   let hideTimer = null;
   let boundCard = null;
@@ -97,8 +86,8 @@
     clearTimeout(hideTimer);
     hideTimer = null;
     if (flyout) flyout.hidden = true;
+    document.getElementById('library')?.setAttribute('aria-expanded', 'false');
   }
-  const scheduleHide = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hideFlyout, 180); };
 
   function ensureFlyout() {
     if (flyout) return flyout;
@@ -106,8 +95,7 @@
     flyout.id = 'directory-flyout';
     flyout.hidden = true;
     flyout.setAttribute('aria-label', translate('airDirSwitchHeading'));
-    flyout.addEventListener('mouseenter', () => clearTimeout(hideTimer));
-    flyout.addEventListener('mouseleave', scheduleHide);
+
     document.body.append(flyout);
     return flyout;
   }
@@ -115,8 +103,7 @@
   function paintFlyout(card) {
     const context = ctx;
     const directories = context?.data?.directories || [];
-    // 只有一个目录时没什么可切的，别凭空弹一层。
-    if (directories.length < 2) return false;
+
     const panel = ensureFlyout();
     const list = node('div', null, 'directory-flyout-list');
     for (const directory of directories) {
@@ -130,17 +117,34 @@
       row.append(node('strong', directory.name || directory.id), node('small', directory.path || ''));
       row.onclick = () => {
         hideFlyout();
-        if (directory.id !== context.directoryId) context.navigate?.(directory.id);
+        context.navigate?.(directory.id);
       };
       list.append(row);
     }
-    // 侧拉里也能拖着排：和控制台那一栏写的是同一份服务端顺序。
+    // Preserve the shared server-side project order.
     sortable(list, context);
-    panel.replaceChildren(node('span', translate('airDirSwitchHeading'), 'directory-flyout-title'), list);
+    const search = node('input');
+    search.type = 'search'; search.placeholder = translate('airProjectSearch');
+    search.setAttribute('aria-label', translate('airProjectSearch'));
+    const empty = node('p', translate('airAdminNoDirectories'), 'admin-empty'); empty.hidden = directories.length > 0;
+    search.oninput = () => {
+      const query = search.value.trim().toLowerCase();
+      for (const row of list.children) row.hidden = !row.textContent.toLowerCase().includes(query);
+      empty.hidden = [...list.children].some(row => !row.hidden);
+    };
+    const all = node('button', translate('airAllProjects'), 'directory-flyout-action'); all.type = 'button';
+    all.onclick = () => { hideFlyout(); context.setMode('overview'); };
+    const manage = node('button', translate('airManageProjects'), 'directory-flyout-action'); manage.type = 'button';
+    manage.onclick = () => { hideFlyout(); context.setMode('library'); };
+    const add = node('button', '+ ' + translate('airAddDirectory'), 'directory-flyout-action'); add.type = 'button';
+    add.onclick = () => { hideFlyout(); document.getElementById('add-directory').click(); };
+    panel.replaceChildren(node('span', translate('airDirSwitchHeading'), 'directory-flyout-title'), search, all, list, empty, manage, add);
     const box = card.getBoundingClientRect();
-    panel.style.left = `${Math.round(box.right + 8)}px`;
-    panel.style.top = `${Math.round(box.top)}px`;
-    panel.style.maxHeight = `${Math.max(160, Math.round(root.innerHeight - box.top - 16))}px`;
+    const narrow = root.innerWidth <= 760;
+    panel.style.left = `${narrow ? 12 : Math.min(box.right + 8, root.innerWidth - 332)}px`;
+    panel.style.top = `${narrow ? box.bottom + 8 : box.top}px`;
+    panel.style.maxHeight = `${Math.max(100, root.innerHeight - (narrow ? box.bottom + 8 : box.top) - 16)}px`;
+    document.getElementById('library').setAttribute('aria-expanded', 'true');
     panel.hidden = false;
     return true;
   }
@@ -149,15 +153,21 @@
     const card = document.querySelector('#sidebar .space-card') || document.querySelector('.space-card');
     if (!card || card === boundCard) return;
     boundCard = card;
-    card.addEventListener('mouseenter', () => {
-      if (!canHover()) return;
-      clearTimeout(hideTimer);
-      paintFlyout(card);
+    document.addEventListener('click', event => {
+      if (!card.contains(event.target) && !flyout?.contains(event.target)) hideFlyout();
     });
-    card.addEventListener('mouseleave', scheduleHide);
-    // 点卡片本身（进目录首页）或按 Esc 时收起，别挡着新页面。
-    card.addEventListener('click', hideFlyout);
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') hideFlyout(); });
+    document.addEventListener('keydown', event => {
+      if (!flyout || flyout.hidden) return;
+      if (event.key === 'Escape') { event.stopImmediatePropagation(); hideFlyout(); document.getElementById('library').focus(); }
+      if (['ArrowDown', 'ArrowUp'].includes(event.key) && flyout.contains(event.target)) {
+        event.preventDefault();
+        const choices = [...flyout.querySelectorAll('input, button')].filter(el => !el.hidden);
+        const index = choices.indexOf(document.activeElement);
+        choices[(index + (event.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length]?.focus();
+      }
+    }, true);
+    root.addEventListener('resize', hideFlyout);
+    root.addEventListener('popstate', hideFlyout);
   }
 
   // air.js 每次 render 递进来：快照、当前目录、api、notice、refresh、navigate。
@@ -165,8 +175,12 @@
     if (context) ctx = context;
     bindCard();
     // 侧拉开着时快照变了（别处新增/改名/排序）：就地重画，跟着最新清单走。
-    if (flyout && !flyout.hidden && boundCard && !flyout.querySelector('.is-dragging')) paintFlyout(boundCard);
+
   }
 
-  root.MultiCCAirDirectoryNav = { render, sortable, hideFlyout, _applyLocalOrder: applyLocalOrder };
+  root.MultiCCAirDirectoryNav = { render, sortable, hideFlyout,
+    toggle: () => {
+      if (flyout && !flyout.hidden) { hideFlyout(); return; }
+      if (boundCard && paintFlyout(boundCard)) flyout.querySelector('input')?.focus();
+    }, _applyLocalOrder: applyLocalOrder };
 })(typeof window !== 'undefined' ? window : null);

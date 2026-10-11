@@ -528,7 +528,7 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     assert.ok(await page.waitFor(`document.getElementById('delivery-eyebrow').textContent==='MULTICC · 分离暂未生效'`));
     assert.equal(await page.evaluate(`document.querySelector('[data-step="barrier"]').classList.contains('blocked')`), true);
     await page.evaluate(`document.getElementById('details-toggle').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('task-details').innerText.includes('源工作目录仍有写入者')`), true);
+    assert.equal(await page.evaluate(`document.getElementById('task-details').innerText.includes('源项目仍有写入者')`), true);
     await page.evaluate(`document.getElementById('details-close').click()`);
     entry.attribution = successAttribution;
     await reloadConversation();
@@ -1037,8 +1037,8 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview');
     assert.equal(await page.evaluate(`document.getElementById('task-layout').hidden`), true, '任务那块正文让开（不是卸载）');
     assert.equal(await page.evaluate(`document.getElementById('console-center').getBoundingClientRect().right<=innerWidth`), true);
-    assert.equal(await page.evaluate(`document.querySelectorAll('#console-content .admin-directory-row').length`), 2);
-    assert.equal(await page.evaluate(`document.querySelector('#console-content .admin-directory-row').innerText.includes('MultiCC')`), true);
+    assert.equal(await page.evaluate(`document.querySelectorAll('#console-content .admin-directory-row').length`), 0);
+    assert.equal(await page.evaluate(`!!document.querySelector('.console-priority')`), true);
     assert.equal(await page.evaluate(`[...document.querySelectorAll('.air-legacy-frame')].filter(x=>x.offsetParent).length`), 0);
     assert.equal(await page.evaluate(`document.documentElement.scrollWidth<=innerWidth`), true);
     screenshots.push(await page.screenshot('air-console-desktop'));
@@ -1047,15 +1047,13 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     assert.equal(await page.evaluate(`document.getElementById('air-doc-summary').textContent.includes('2 条登记')`), true);
     assert.equal(await page.evaluate(`document.querySelectorAll('.air-legacy-frame').length`), 0);
     await page.evaluate(`document.querySelector('[data-air-view="settings"]').click()`);
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置中心' && document.querySelectorAll('.air-setting-card').length===16`));
-    // 保险箱排在第一格：它管的不是某一组功能里的开关，而是子进程的 spawn 环境
-    // （条目按同名环境变量注入），所以跟「重要功能」并列，且在最前。
-    assert.deepEqual(await page.evaluate(`[...document.querySelector('.air-settings-feature-group').querySelectorAll('.air-setting-card strong')].map(el=>el.textContent)`),
-      ['敏感信息', '服务与文档', '记忆图谱', '任务图谱', '工作区'], '重要功能固定在设置中心顶部，保险箱第一格');
-    assert.equal(await page.evaluate(`document.body.innerText.includes('Provider 配置')`), true);
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置' && document.querySelectorAll('.air-setting-card').length===13`));
+    assert.equal(await page.evaluate(`document.querySelectorAll('.air-settings-categories button').length`), 5);
+    assert.equal(await page.evaluate(`document.querySelector('[data-air-card="secrets"]') !== null`), true);
+    assert.equal(await page.evaluate(`document.body.innerText.includes('模型线路')`), true);
     // AI Assistant(aux):设置与运行记录在控制台有原生页,不再只能回 manage 弹窗。
-    await page.evaluate(`[...document.querySelectorAll('.air-setting-card')].find(x=>x.innerText.includes('AI Assistant')).click()`);
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='AI Assistant' && document.querySelectorAll('#air-aux-records .air-aux-item').length===1`));
+    await page.evaluate(`[...document.querySelectorAll('.air-setting-card')].find(x=>x.innerText.includes('AI 助手')).click()`);
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='AI 助手' && document.querySelectorAll('#air-aux-records .air-aux-item').length===1`));
     assert.equal(await page.evaluate(`document.querySelector('#air-aux-status').innerText.includes('137 条')`), true, '状态格显示累计处理数');
     assert.equal(await page.evaluate(`document.querySelectorAll('#air-aux-form select').length`), 3, '协议/Provider/模型三级联动');
     assert.equal(await page.evaluate(`document.querySelector('#air-aux-form select').value`), 'openai');
@@ -1065,9 +1063,9 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     await page.waitFor(`document.querySelectorAll('#air-aux-records .air-aux-item').length===1 && ${JSON.stringify('x')}==='x'`);
     assert.deepEqual(auxPosts.at(-1), { protocol: 'openai', providerId: 'codex-lab', model: 'gpt-5.6-sol' }, '保存提交新模型');
     await page.evaluate(`document.querySelector('[data-air-view="settings"]').click()`);
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置中心'`));
-    await page.evaluate(`[...document.querySelectorAll('.air-setting-card')].find(x=>x.innerText.includes('Provider 配置')).click()`);
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='CLI 与 Provider' && document.querySelectorAll('.air-provider-card').length===3`));
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置'`));
+    await page.evaluate(`[...document.querySelectorAll('.air-setting-card')].find(x=>x.innerText.includes('模型线路')).click()`);
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='模型线路' && document.querySelectorAll('.air-provider-card').length===3`));
     assert.equal(await page.evaluate(`[...document.querySelectorAll('.air-legacy-frame')].filter(x=>x.offsetParent).length`), 0);
     assert.equal(await page.evaluate(`document.querySelectorAll('#air-provider-defaults select').length`), 2);
     assert.equal(await page.evaluate(`document.getElementById('air-provider-count').textContent.includes('3 条线路')`), true);
@@ -1279,7 +1277,7 @@ test('Air task-first console, management views, roles, configuration, artifacts 
       screenshots.push(await page.screenshot('air-console-mobile-' + width));
     }
     await page.navigate('/air?view=provider');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='CLI 与 Provider' && document.querySelectorAll('.air-provider-card').length===3`));
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='模型线路' && document.querySelectorAll('.air-provider-card').length===3`));
     assert.equal(await page.evaluate(`document.documentElement.scrollWidth<=innerWidth`), true);
     assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('air-provider-cards')).gridTemplateColumns.split(' ').length`), 1);
     // 设置类那几页的动作原来铺成页头第二行（↻ 还得靠两条 :has 例外钉在右上角），
@@ -1292,7 +1290,7 @@ test('Air task-first console, management views, roles, configuration, artifacts 
         widths:[...new Set([...t.querySelectorAll('button')].filter(b=>!b.hidden).map(b=>Math.round(b.getBoundingClientRect().width)))]}})()`);
     // 页面自己那几件动作也是「图标 + 名字」：图标说的是这件事是什么性质 ——
     // ← 回去、⋯ 更多连接、↻ 重新读、＋ 新增。
-    assert.deepEqual(settingsTools.rows, ['← 返回设置中心', '⋯ 更多连接方式', '↻ 刷新', '＋ 新增 Provider'], JSON.stringify(settingsTools));
+    assert.deepEqual(settingsTools.rows, ['⋯ 更多连接方式', '↻ 刷新', '＋ 添加线路'], JSON.stringify(settingsTools));
     assert.equal(settingsTools.widths.length, 1, '设置页的工具也铺成一列：' + JSON.stringify(settingsTools));
     assert.ok(settingsTools.h <= 64, JSON.stringify(settingsTools));
     await page.evaluate(`document.querySelector('#admin-actions .primary').click()`);
@@ -1308,10 +1306,10 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     // A saved legacy auto row stays intact, with just one option per product.
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 900, deviceScaleFactor: 1, mobile: true });
     await page.evaluate(`window.MultiCCRunConfig.open({configuration:{cli:'codex',provider:'codex-lab',providerSelection:{mode:'auto',cliSwitch:'failover',protocol:'openai_responses',candidates:[{cli:'codex',providerId:'codex-lab',model:'gpt-5.5'},{cli:'codex-exp',providerId:'codex-backup',model:'gpt-5.6-sol'}]}}},['claude','claude-exp','codex','codex-exp','opencode'],value=>{window.__legacySaved=value})`);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.rc-row-cli').length===2`));
-    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.rc-row-cli')].map(s=>({value:s.value,codex:[...s.options].filter(o=>o.textContent==='Codex').length}))`), [{value:'codex',codex:1},{value:'codex-exp',codex:1}]);
+    assert.ok(await page.waitFor(`document.querySelectorAll('.air-config-dialog[open] .rc-row-cli').length===2`));
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.air-config-dialog[open] .rc-row-cli')].map(s=>({value:s.value,codex:[...s.options].filter(o=>o.textContent==='Codex').length}))`), [{value:'codex',codex:1},{value:'codex-exp',codex:1}]);
     assert.equal(await page.evaluate(`/Agent SDK|App Server|claude -p|codex exec/.test(document.querySelector('.air-config-dialog').innerText)`), false);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.rc-row .rc-issue').length===0`));
+    assert.ok(await page.waitFor(`document.querySelectorAll('.air-config-dialog[open] .rc-row .rc-issue').length===0`));
     assert.ok(await page.evaluate(`document.querySelector('.air-config-footer p').textContent.includes('跨 1 个 CLI')`));
     screenshots.push(await page.screenshot('runtime-config-legacy-pool-mobile'));
     await page.evaluate(`document.querySelector('.air-config-dialog form').requestSubmit()`);
@@ -1320,16 +1318,16 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     // 自动池预设放在池子上方：存预设不保存会话，套用只改草稿，底部保存才交回配置。
     await page.evaluate(`window.confirm=()=>true;window.MultiCCRunConfig.open({configuration:{cli:'codex-exp',provider:'codex-lab',providerSelection:{mode:'auto',cliSwitch:'failover',protocol:'openai_responses',candidates:[{cli:'codex-exp',providerId:'codex-lab',model:'gpt-5.5'},{cli:'codex-exp',providerId:'codex-backup',model:'gpt-5.6-sol'}]}}},['codex-exp'],value=>{window.__presetSaved=value})`);
     assert.ok(await page.waitFor(`document.querySelector('.air-config-dialog[open] .rc-preset-open')`));
-    await page.evaluate(`document.querySelector('.rc-preset-open').click();document.querySelector('.rc-preset-name').value='双线路测试';document.querySelector('.rc-preset-save').click()`);
+    await page.evaluate(`document.querySelector('.air-config-dialog[open] .rc-preset-open').click();document.querySelector('.air-config-dialog[open] .rc-preset-name').value='双线路测试';document.querySelector('.air-config-dialog[open] .rc-preset-save').click()`);
     assert.ok(await page.waitFor(`JSON.parse(localStorage.getItem('multicc.autoProvider.presets.v1')||'[]').some(p=>p.name==='双线路测试')`));
     const presetOnDisk = await page.evaluate(`JSON.parse(localStorage.getItem('multicc.autoProvider.presets.v1')).find(p=>p.name==='双线路测试')`);
     assert.equal(presetOnDisk.candidates.length, 2);
     assert.equal('allowCrossTrust' in presetOnDisk, false, '预设不储存跨信任确认');
     assert.equal('routing' in presetOnDisk, false, '预设不储存 Jev 网关/key');
     assert.equal(await page.evaluate(`window.__presetSaved===undefined`), true, '存预设不能提前提交会话');
-    await page.evaluate(`document.querySelectorAll('.rc-row .rc-remove')[1].click();const s=document.querySelector('.rc-preset');s.value='';s.dispatchEvent(new Event('change'));s.value=JSON.parse(localStorage.getItem('multicc.autoProvider.presets.v1')).find(p=>p.name==='双线路测试').id;s.dispatchEvent(new Event('change'))`);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.rc-row').length===2`));
-    assert.equal(await page.evaluate(`document.querySelector('.rc-preset-bar').getBoundingClientRect().right<=innerWidth`), true);
+    await page.evaluate(`document.querySelectorAll('.air-config-dialog[open] .rc-row .rc-remove')[1].click();const s=document.querySelector('.air-config-dialog[open] .rc-preset');s.value='';s.dispatchEvent(new Event('change'));s.value=JSON.parse(localStorage.getItem('multicc.autoProvider.presets.v1')).find(p=>p.name==='双线路测试').id;s.dispatchEvent(new Event('change'))`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('.air-config-dialog[open] .rc-row').length===2`));
+    assert.equal(await page.evaluate(`document.querySelector('.air-config-dialog[open] .rc-preset-bar').getBoundingClientRect().right<=innerWidth`), true);
     await page.evaluate(`document.querySelector('.air-config-dialog form').requestSubmit()`);
     assert.ok(await page.waitFor(`window.__presetSaved`));
     assert.equal(await page.evaluate(`window.__presetSaved.providerSelection.candidates.length`), 2);

@@ -154,7 +154,7 @@
     const intro = make('section', null, 'admin-panel');
     const introHead = make('div', null, 'admin-panel-head');
     const introTitle = make('div');
-    introTitle.append(make('span', 'SECRETS', 'eyebrow'), make('h3', t('secretsAddTitle')));
+    introTitle.append(make('span', t('airAdminPanelSecrets'), 'eyebrow'), make('h3', t('secretsAddTitle')));
     introHead.append(introTitle, make('span', t('secretsVaultHint'), 'admin-panel-note'));
 
     const nameInput = make('input');
@@ -196,7 +196,7 @@
     const vault = make('section', null, 'admin-panel');
     const vaultHead = make('div', null, 'admin-panel-head');
     const vaultTitle = make('div');
-    vaultTitle.append(make('span', 'VAULT', 'eyebrow'), make('h3', t('secretsVaultTitle')));
+    vaultTitle.append(make('span', t('secretsVaultTitle'), 'eyebrow'), make('h3', t('secretsVaultTitle')));
     const count = make('span', '', 'air-secret-count');
     count.id = 'air-secret-count';
     vaultHead.append(vaultTitle, count);

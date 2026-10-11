@@ -386,8 +386,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // Desc，4 键）、任务设置的文件夹浏览（airTaskSettingsBrowseFolders 等 6 键）、
     // 队列重试回执（queueRetrying）与桌面 agent 平台提示（rsErrPlatform）。
     // 净 +29 键 −5 键（Esc/输入监控退役），生成器实测 8892/565523，按真实高水位抬一格。
-    maxLines: 8892,
-    maxBytes: 565523,
+    // Air navigation: localized project/settings labels and the three-step guide.
+    maxLines: 8950,
+    maxBytes: 568203,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

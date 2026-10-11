@@ -67,19 +67,8 @@ test('the Air vault panel is native: metadata-only list, per-name reveal, real w
     //       spawn 环境，所以跟这一页的其它动作并列排在页头，不用滚到工具格 ─────
     await page.navigate('/air?dir=d1&view=overview');
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`), '控制台那一页打开');
-    const topBar = await page.evaluate(`(() => {
-      const tools = document.getElementById('task-tools');
-      const button = document.getElementById('console-secrets');
-      if (!button) return null;
-      const b = button.getBoundingClientRect();
-      return { inTools: tools.contains(button), text: button.textContent.replace(/\\s+/g,''), visible: button.checkVisibility() };
-    })()`);
-    assert.deepEqual(topBar, { inTools: true, text: '🔐敏感信息', visible: true }, '保险箱入口钉在页头工具栏上');
-    // 这一颗现在就是控制台那一片唯一的入口 —— 工具格里不该再留一张同样的卡。
-    assert.equal(await page.evaluate(`[...document.querySelectorAll('.admin-tool-card')].some(card => card.textContent.includes('敏感信息'))`), false,
-      '工具格里不再重复一张保险箱卡');
-    await page.screenshot('00-console-topbar');
-    await page.evaluate(`document.getElementById('console-secrets').click()`);
+    assert.equal(await page.evaluate(`document.getElementById('console-secrets')`), null, '设置项不再重复在控制台页头');
+    await page.evaluate(`document.getElementById('side-more').click(); document.querySelector('[data-category="airSettingsData"]').click(); document.querySelector('[data-air-card="secrets"]').click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='敏感信息'`), '那颗一键到保险箱整页');
     assert.equal(await page.evaluate(`document.getElementById('console-center').hidden`), true, '换页时控制台那一页让开');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'secrets');
@@ -91,19 +80,18 @@ test('the Air vault panel is native: metadata-only list, per-name reveal, real w
 
     // ── ① 从设置中心第一格进去：原生面板，不嵌旧 manage 页 ────────────────
     await page.navigate('/air?dir=d1&view=settings');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置中心'`), '先落在设置中心');
-    assert.equal(await page.evaluate(`document.querySelector('.air-settings-feature-group .air-setting-card strong').textContent`), '敏感信息',
-      '保险箱是设置中心第一组的第一格');
-    await page.evaluate(`document.querySelector('.air-settings-feature-group .air-setting-card').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='设置'`), '先落在设置中心');
+    await page.evaluate(`document.querySelector('[data-category="airSettingsData"]').click()`);
+    await page.evaluate(`document.querySelector('[data-air-card="secrets"]').click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='敏感信息'`), '点进去落在保险箱页');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), 'MultiCC Air › 设置中心',
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), '设置 / 敏感信息',
       '面包屑说的是设置中心这一类（页头别再露出 secrets 这个 mode 名）');
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .air-legacy-frame').length`), 0, '原生面板里没有旧 manage 的 iframe');
     assert.equal(page.requests.some(r => r.path === '/manage.html'), false, 'iframe 的 src 会真的发出去 —— 没这条请求才算真没嵌');
     // 图标是一个单独的 span，textContent 拼起来没有空格 —— 比的是「哪几个动作」，
     // 所以按去空白后的文本断，别把排版细节写进断言。
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-actions button')].map(b => b.textContent.replace(/\\s+/g,''))`),
-      ['←返回设置中心', '↻刷新'], '工具条是面板自己的（返回设置中心 / 刷新），不是旧页面的');
+      ['↻刷新'], '工具条是面板自己的（返回设置中心 / 刷新），不是旧页面的');
     await page.screenshot('01-vault-native-desktop');
 
     // ── ② 列表只拿元数据：值既不在响应里，也不在 DOM 里 ───────────────────
