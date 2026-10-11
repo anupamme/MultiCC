@@ -1730,16 +1730,23 @@ func writeJSON(_ fd: Int32, _ obj: [String: Any]) {
 // MARK: - RFB streaming server (「🖥 屏幕」流畅模式)
 //
 // A second unix socket (agentDir/rfb.sock) speaks a minimal RFB 3.8 server so
-// the browser can run the stock noVNC client: Raw encoding only, security
-// type None — the peer is authenticated by the MultiCC server (same-site WS +
+// the browser can run the stock noVNC client, security type None — the peer is authenticated by the MultiCC server (same-site WS +
 // ticket, exactly like /ws/chat) and checked with getpeereid here, so no TCP
 // port is opened. Frames come from an SCStream that renders each
-// CMSampleBuffer into a BGRA bitmap at logical/RFB_DIV resolution (full-res
-// Raw is multi-MB per frame; a 2026-10-04 trace measured 247KB for ONE cursor
-// move at 1470-wide row bands — unusable off-LAN), and the diff both finds
-// dirty rows and narrows their column extent to 32px blocks, served on the
-// client's FramebufferUpdateRequests (natural backpressure: no request, no
-// bytes). Pointer coordinates map RFB px → CGEvent points by RFB_DIV. Input
+// CMSampleBuffer into a BGRA bitmap at logical resolution, and the diff both
+// finds dirty rows and narrows their column extent to 32px blocks, served on
+// the client's FramebufferUpdateRequests (natural backpressure: no request, no
+// bytes). Encoding follows what each client announced in SetEncodings:
+//   - Tight clients (noVNC) are switched to full logical resolution with a
+//     DesktopSize update and get JPEG for large changes, solid fills, and
+//     zlib for small ones; every 64px tile sent as JPEG is re-sent lossless
+//     once IT has been still for 300ms (a spinner elsewhere must not keep
+//     the whole screen blurry), so text ends up sharp. Cursor pseudo-encoding lets
+//     the viewer draw the pointer locally while it is driving.
+//   - Clients that announce nothing (the Flutter App) keep Raw at
+//     logical/RFB_DIV — full-res Raw is multi-MB per frame (a 2026-10-04
+//     trace measured 247KB for ONE cursor move at 1470-wide bands).
+// Pointer coordinates map RFB px → CGEvent points by the client's divisor. Input
 // (PointerEvent/KeyEvent) is routed through handle() so every existing guard
 // applies unchanged: single lease, Esc halt, lock-screen refusal, protected
 // apps, terminal typing consent. Below macOS 14 (or builds without
@@ -1747,11 +1754,8 @@ func writeJSON(_ fd: Int32, _ obj: [String: Any]) {
 // back to JPEG polling.
 
 #if canImport(ScreenCaptureKit) && compiler(>=5.9)
-
-// RFB framebuffer runs at 1/RFB_DIV of logical resolution (bandwidth tier);
-// pointer coords scale back up by the same factor. 2 keeps text readable on
-// phones while cutting bytes 4x; 1 restores pixel-perfect.
-let RFB_DIV = 2
+import zlib
+import ImageIO
 
 // Coalescing must cover EVERY accumulated change, including nested bands.
 // Bounding-union (not the incoming band's bottom edge) avoids leaving pixels
@@ -1767,6 +1771,17 @@ func mergeRfbDirtyRects(_ dirty: [CGRect], full: CGRect) -> [CGRect] {
   let area = merged.reduce(CGFloat(0)) { $0 + $1.width * $1.height }
   return merged.count > 64 || area > full.width * full.height * 0.7 ? [full] : merged
 }
+
+// Raw-only clients get 1/RFB_DIV of logical resolution (bandwidth tier: 2
+// keeps text readable on phones while cutting bytes 4x). Tight clients run at
+// divisor 1. Pointer coords scale back up by the client's own divisor.
+let RFB_DIV = 2
+let RFB_ENC_RAW: Int32 = 0
+let RFB_ENC_TIGHT: Int32 = 7
+let RFB_PSEUDO_DESKTOP_SIZE: Int32 = -223
+let RFB_PSEUDO_CURSOR: Int32 = -239
+let RFB_PSEUDO_QUALITY0: Int32 = -32    // ...-23 = JPEG quality level 0...9
+let RFB_TILE = 64                       // lossless-refinement granularity, client px
 
 extension Data {
   mutating func appendBE(_ v: UInt16) { append(UInt8(v >> 8)); append(UInt8(v & 0xFF)) }
@@ -1823,6 +1838,20 @@ final class RfbClient: NSObject {
   var lastMoveAt = Date.distantPast
   var lastMovePos = CGPoint.zero
   var mods: Set<String> = []
+  // negotiated state, guarded by RfbScreen's lock
+  var div = RFB_DIV            // client framebuffer = logical / div
+  var swapRB = false           // SetPixelFormat asked for RGBX (noVNC) instead of our BGRX
+  var tight = false
+  var cursorEnc = false
+  var desktopSize = false
+  var quality = 6              // Tight JPEG level 0...9 (noVNC default 6); -1 = lossless only
+  var pendingResize = false
+  var tileCols = 0             // RFB_TILE grid over the client framebuffer (Tight clients)
+  var lossyTile: [Bool] = []   // last sent as JPEG, owes a lossless re-send
+  var tileTouched: [Double] = []   // last change or JPEG send (timeIntervalSinceReferenceDate)
+  var lastPointerAt = Date.distantPast
+  var cursorKey = 0            // shape last sent with the cursor pseudo-encoding (0 = none)
+  var zlib: AnyObject?         // Tight zlib stream 0 (RfbZlib), lives as long as the connection
   init(_ fd: Int32) { self.fd = fd }
   func wake() { cond.lock(); cond.broadcast(); cond.unlock() }
   var isClosed: Bool { cond.lock(); defer { cond.unlock() }; return closed }
@@ -1847,16 +1876,140 @@ final class RfbClient: NSObject {
   }
 }
 
+/// One persistent deflate stream (Tight stream 0). Each rect ends with
+/// Z_SYNC_FLUSH so the client's inflator stays in lockstep and keeps the
+/// dictionary across rects (noVNC inflates with expected-length reads).
+@available(macOS 14.0, *)
+final class RfbZlib {
+  private let strm = UnsafeMutablePointer<z_stream>.allocate(capacity: 1)
+  private var ok = false
+  init(level: Int32) {
+    strm.initialize(to: z_stream())
+    ok = deflateInit_(strm, level, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK
+  }
+  deinit {
+    if ok { deflateEnd(strm) }
+    strm.deinitialize(count: 1)
+    strm.deallocate()
+  }
+  func compress(_ input: [UInt8]) -> Data? {
+    guard ok else { return nil }
+    var src = input
+    var out = Data()
+    var buf = [UInt8](repeating: 0, count: 65536)
+    let good = src.withUnsafeMutableBufferPointer { inp -> Bool in
+      strm.pointee.next_in = inp.baseAddress
+      strm.pointee.avail_in = uInt(inp.count)
+      repeat {
+        let r: Int32 = buf.withUnsafeMutableBufferPointer { o in
+          strm.pointee.next_out = o.baseAddress
+          strm.pointee.avail_out = uInt(o.count)
+          return deflate(strm, Z_SYNC_FLUSH)
+        }
+        if r != Z_OK && r != Z_BUF_ERROR { return false }
+        out.append(contentsOf: buf[0..<(buf.count - Int(strm.pointee.avail_out))])
+      } while strm.pointee.avail_out == 0
+      return true
+    }
+    if !good { ok = false }   // a broken stream cannot be resumed; the caller drops the client
+    return good ? out : nil
+  }
+}
+
+@available(macOS 14.0, *)
+func rfbRectHeader(_ x: Int, _ y: Int, _ w: Int, _ h: Int, _ enc: Int32) -> Data {
+  var d = Data(capacity: 12)
+  d.appendBE(UInt16(x)); d.appendBE(UInt16(y)); d.appendBE(UInt16(w)); d.appendBE(UInt16(h))
+  d.appendBE(UInt32(bitPattern: enc))
+  return d
+}
+
+/// Tight "compact length": 7 bits per byte, at most 3 bytes.
+@available(macOS 14.0, *)
+func tightLength(_ n: Int) -> Data {
+  var d = Data([UInt8(n & 0x7F)])
+  if n > 0x7F {
+    d[0] |= 0x80; d.append(UInt8((n >> 7) & 0x7F))
+    if n > 0x3FFF { d[1] |= 0x80; d.append(UInt8((n >> 14) & 0xFF)) }
+  }
+  return d
+}
+
+@available(macOS 14.0, *)
+func rfbJpeg(_ bgra: [UInt8], _ w: Int, _ h: Int, quality: Double) -> Data? {
+  let out = NSMutableData()
+  let info = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue)
+  guard let provider = CGDataProvider(data: Data(bgra) as CFData),
+        let img = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info, provider: provider,
+                          decode: nil, shouldInterpolate: false, intent: .defaultIntent),
+        let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+  CGImageDestinationAddImage(dest, img, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+  return CGImageDestinationFinalize(dest) ? out as Data : nil
+}
+
+// Tight JPEG quality per noVNC level 0...9.
+let RFB_JPEG_QUALITY: [Double] = [0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.72, 0.8, 0.88, 0.95]
+
+/// Current system cursor as a Cursor pseudo-encoding rect (BGRX pixels +
+/// 1-bit mask, hotspot in x/y), at 1x point size: browsers draw cursor images
+/// unscaled, so this matches what the user sees on the Mac.
+@available(macOS 14.0, *)
+func rfbCursorShape() -> (key: Int, rect: Data)? {
+  let cur = NSCursor.currentSystem ?? NSCursor.arrow
+  let img = cur.image
+  let w = Int(img.size.width.rounded(.up)), h = Int(img.size.height.rounded(.up))
+  guard w > 0, h > 0, w <= 128, h <= 128 else { return nil }
+  var box = CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))
+  let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+  guard let cg = img.cgImage(forProposedRect: &box, context: nil, hints: nil),
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return nil }
+  ctx.draw(cg, in: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)))
+  guard let base = ctx.data else { return nil }
+  let p = base.bindMemory(to: UInt8.self, capacity: w * h * 4)
+  let maskRow = (w + 7) / 8
+  var pixels = [UInt8](repeating: 0, count: w * h * 4)
+  var mask = [UInt8](repeating: 0, count: maskRow * h)
+  for y in 0..<h {
+    for x in 0..<w {
+      let i = (y * w + x) * 4
+      let a = Int(p[i + 3])
+      guard a >= 128 else { continue }   // RFB cursors have a 1-bit mask: soft shadow is dropped
+      for k in 0..<3 { pixels[i + k] = UInt8(min(255, Int(p[i + k]) * 255 / a)) }   // un-premultiply BGR
+      mask[y * maskRow + x / 8] |= UInt8(0x80 >> (x % 8))
+    }
+  }
+  let hx = min(w - 1, max(0, Int(cur.hotSpot.x))), hy = min(h - 1, max(0, Int(cur.hotSpot.y)))
+  var hasher = Hasher()
+  hasher.combine(pixels); hasher.combine(mask); hasher.combine(hx); hasher.combine(hy)
+  var rect = rfbRectHeader(hx, hy, w, h, RFB_PSEUDO_CURSOR)
+  rect.append(contentsOf: pixels); rect.append(contentsOf: mask)
+  return (key: hasher.finalize() | 2, rect: rect)   // | 2: never 0 (none) or 1 (blank)
+}
+
 @available(macOS 14.0, *)
 final class RfbScreen: NSObject, SCStreamOutput {
   static let shared = RfbScreen()
+  // 1x1 fully transparent cursor: the viewer shows no local pointer while
+  // the real one is baked into the frames.
+  static let blankCursor: (key: Int, rect: Data) = {
+    var d = rfbRectHeader(0, 0, 1, 1, RFB_PSEUDO_CURSOR)
+    d.append(contentsOf: [0, 0, 0, 0, 0])
+    return (key: 1, rect: d)
+  }()
   private let lock = NSLock()
   private var stream: SCStream?
+  private var config: SCStreamConfiguration?
   private let ciCtx = CIContext()
   private var clients: [RfbClient] = []
   private var w = 0, h = 0
   private var fb = [UInt8]()   // BGRA, w*h*4, logical resolution
   private(set) var hasFrame = false
+  private var cursorHidden = false            // stream currently excludes the pointer
+  private var cursorCheckAt = Date.distantPast
+  private var shape = RfbScreen.blankCursor   // cached system cursor, refreshed ≤10Hz
+  private var shapeAt = Date.distantPast
 
   var size: (w: Int, h: Int)? { lock.lock(); defer { lock.unlock() }; return w > 0 ? (w, h) : nil }
 
@@ -1873,9 +2026,9 @@ final class RfbScreen: NSObject, SCStreamOutput {
     }
     let cfg = SCStreamConfiguration()
     cfg.showsCursor = true
-    cfg.width = max(1, Int(display.width) / RFB_DIV)   // bandwidth tier, see RFB_DIV
-    cfg.height = max(1, Int(display.height) / RFB_DIV)
-    cfg.minimumFrameInterval = CMTime(value: 1, timescale: 15)
+    cfg.width = max(1, Int(display.width))   // logical points: 1px = 1pt
+    cfg.height = max(1, Int(display.height))
+    cfg.minimumFrameInterval = CMTime(value: 1, timescale: 30)
     cfg.queueDepth = 3
     let s = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: cfg, delegate: nil)
     do { try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: DispatchQueue(label: "multicc.rfb.frames")) }
@@ -1885,12 +2038,15 @@ final class RfbScreen: NSObject, SCStreamOutput {
     s.startCapture { e in if let e { startErr = e.localizedDescription }; sem2.signal() }
     if sem2.wait(timeout: .now() + 5) == .timedOut { return "startCapture timed out" }
     if let startErr { return "startCapture: \(startErr)" }
-    lock.lock(); stream = s; w = max(1, Int(display.width) / RFB_DIV); h = max(1, Int(display.height) / RFB_DIV); lock.unlock()
+    lock.lock()
+    stream = s; config = cfg; cursorHidden = false
+    w = max(1, Int(display.width)); h = max(1, Int(display.height))
+    lock.unlock()
     return nil
   }
 
   private func releaseCapture() {
-    lock.lock(); let s = stream; stream = nil; lock.unlock()
+    lock.lock(); let s = stream; stream = nil; config = nil; lock.unlock()
     guard let s else { return }
     let sem = DispatchSemaphore(value: 0)
     s.stopCapture { _ in sem.signal() }
@@ -1909,6 +2065,35 @@ final class RfbScreen: NSObject, SCStreamOutput {
 
   func markFull(_ c: RfbClient) {
     lock.lock(); c.needsFull = true; lock.unlock()
+  }
+
+  /// SetPixelFormat: we only ever emit 32bpp true colour; honour the R/B order.
+  func setPixelFormat(_ c: RfbClient, _ pf: Data) {
+    let b = [UInt8](pf)   // 3 padding + PIXEL_FORMAT
+    guard b.count >= 16, b[3] == 32, b[6] != 0, b[5] == 0 else { return }
+    lock.lock(); c.swapRB = b[13] == 0 && b[15] == 16; lock.unlock()
+  }
+
+  func setEncodings(_ c: RfbClient, _ encs: [Int32]) {
+    lock.lock(); defer { lock.unlock() }
+    c.tight = encs.contains(RFB_ENC_TIGHT)
+    c.cursorEnc = encs.contains(RFB_PSEUDO_CURSOR)
+    c.desktopSize = encs.contains(RFB_PSEUDO_DESKTOP_SIZE)
+    if let q = encs.first(where: { $0 >= RFB_PSEUDO_QUALITY0 && $0 <= RFB_PSEUDO_QUALITY0 + 9 }) {
+      c.quality = Int(q - RFB_PSEUDO_QUALITY0)
+    } else { c.quality = -1 }
+    // Level 6 regardless of the client's compress hint: ~10% smaller than
+    // noVNC's default 2 on UI frames and cheap on any Mac that has SCK.
+    if c.tight && c.zlib == nil { c.zlib = RfbZlib(level: 6) }   // never reset: the client inflator is persistent
+    if c.tight && c.desktopSize && c.div != 1 { c.pendingResize = true }
+    c.cursorKey = 0
+  }
+
+  /// Records viewer pointer activity; returns the client's divisor for coordinate mapping.
+  func notePointer(_ c: RfbClient) -> Int {
+    lock.lock(); defer { lock.unlock() }
+    c.lastPointerAt = Date()
+    return c.div
   }
 
   func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -1934,67 +2119,289 @@ final class RfbScreen: NSObject, SCStreamOutput {
     } else {
       // Row diff, but each band also narrows to the changed COLUMNS (32px
       // block granularity): a cursor move otherwise ships a full-width band
-      // (1470x22 ≈ 130KB) where ~40px actually changed.
+      // (1470x22 ≈ 130KB) where ~40px actually changed. memcmp, not slice
+      // ==: this runs over the full logical-res frame up to 30 times/s.
       let rowBytes = pw * 4
       let blk = 32   // px granularity of the column bounds
-      var y = 0
-      while y < ph {
-        let r = y * rowBytes..<(y + 1) * rowBytes
-        if next[r] != fb[r] {
-          let y0 = y
-          var bx0 = pw, bx1 = 0
-          repeat {
-            var b = 0
-            while b < pw {
-              let s = (y * rowBytes + b * 4)..<(y * rowBytes + min(pw, b + blk) * 4)
-              if next[s] != fb[s] { bx0 = min(bx0, b); bx1 = max(bx1, min(pw, b + blk)) }
-              b += blk
-            }
-            y += 1
-          } while y < ph && next[(y * rowBytes)..<((y + 1) * rowBytes)] != fb[(y * rowBytes)..<((y + 1) * rowBytes)]
-          bands.append(CGRect(x: CGFloat(bx0), y: CGFloat(y0), width: CGFloat(bx1 - bx0), height: CGFloat(y - y0)))
-        } else { y += 1 }
+      next.withUnsafeBytes { nb in
+        fb.withUnsafeBytes { ob in
+          let n = nb.baseAddress!, o = ob.baseAddress!
+          func rowDiffers(_ y: Int) -> Bool { memcmp(n + y * rowBytes, o + y * rowBytes, rowBytes) != 0 }
+          var y = 0
+          while y < ph {
+            guard rowDiffers(y) else { y += 1; continue }
+            let y0 = y
+            var bx0 = pw, bx1 = 0
+            repeat {
+              var b = 0
+              while b < pw {
+                let off = y * rowBytes + b * 4, len = (min(pw, b + blk) - b) * 4
+                if memcmp(n + off, o + off, len) != 0 { bx0 = min(bx0, b); bx1 = max(bx1, min(pw, b + blk)) }
+                b += blk
+              }
+              y += 1
+            } while y < ph && rowDiffers(y)
+            bands.append(CGRect(x: CGFloat(bx0), y: CGFloat(y0), width: CGFloat(bx1 - bx0), height: CGFloat(y - y0)))
+          }
+        }
       }
       if !bands.isEmpty { fb = next; hasFrame = true }
     }
     if bands.isEmpty { return }
     let full = CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))
+    let now = Date().timeIntervalSinceReferenceDate
     for c in clients where !c.needsFull {
       c.dirty = mergeRfbDirtyRects(c.dirty + bands, full: full)
+      if c.div == 1 { for b in bands { touchTiles(c, b, now, lossy: nil) } }
     }
     for c in clients { c.wake() }
   }
 
-  /// Drains the client's dirty bands (or the full screen) as raw rects.
-  func takeRects(_ c: RfbClient) -> [(rect: CGRect, data: Data)]? {
+  /// Marks the RFB_TILE tiles under `r` (client px) as changed at `now`;
+  /// `lossy` also sets/clears their owed-lossless flag. Caller holds the lock.
+  private func touchTiles(_ c: RfbClient, _ r: CGRect, _ now: Double, lossy: Bool?) {
+    guard c.tileCols > 0 else { return }
+    let rows = c.lossyTile.count / c.tileCols
+    let x0 = max(0, Int(r.minX) / RFB_TILE), x1 = min(c.tileCols - 1, (Int(r.maxX) - 1) / RFB_TILE)
+    let y0 = max(0, Int(r.minY) / RFB_TILE), y1 = min(rows - 1, (Int(r.maxY) - 1) / RFB_TILE)
+    guard x0 <= x1, y0 <= y1 else { return }
+    for ty in y0...y1 {
+      for tx in x0...x1 {
+        c.tileTouched[ty * c.tileCols + tx] = now
+        if let lossy { c.lossyTile[ty * c.tileCols + tx] = lossy }
+      }
+    }
+  }
+
+  /// JPEG tiles untouched for 300ms, as row runs, cleared from the owed set.
+  /// Caller holds the lock.
+  private func takeRefineRects(_ c: RfbClient, cw: Int, ch: Int) -> [CGRect] {
+    guard c.tight, c.tileCols > 0 else { return [] }
+    let now = Date().timeIntervalSinceReferenceDate
+    let rows = c.lossyTile.count / c.tileCols
+    var out: [CGRect] = []
+    for ty in 0..<rows {
+      var tx = 0
+      while tx < c.tileCols {
+        let i = ty * c.tileCols + tx
+        guard c.lossyTile[i], now - c.tileTouched[i] >= 0.3 else { tx += 1; continue }
+        let start = tx
+        while tx < c.tileCols && c.lossyTile[ty * c.tileCols + tx] && now - c.tileTouched[ty * c.tileCols + tx] >= 0.3 {
+          c.lossyTile[ty * c.tileCols + tx] = false
+          tx += 1
+        }
+        let x = start * RFB_TILE, y = ty * RFB_TILE
+        out.append(CGRect(x: x, y: y, width: min(cw, tx * RFB_TILE) - x, height: min(ch, y + RFB_TILE) - y))
+      }
+    }
+    // Stack identical spans of adjacent rows into one rect.
+    var merged: [CGRect] = []
+    for r in out {
+      if let i = merged.lastIndex(where: { $0.minX == r.minX && $0.width == r.width && $0.maxY == r.minY }) {
+        merged[i] = merged[i].union(r)
+      } else { merged.append(r) }
+    }
+    return merged
+  }
+
+  /// Pointer drawn by the viewer (cursor pseudo-encoding) while EVERY viewer
+  /// is actively driving with a cursor-capable client: it then tracks their
+  /// own mouse with zero latency and stops producing dirty rects. Anyone just
+  /// watching (view-only, the Raw App, or idle for 10s) keeps it baked into
+  /// the frames, so AI- or locally-driven pointer motion stays visible.
+  private func syncCursorMode() {
+    lock.lock()
+    let now = Date()
+    guard now.timeIntervalSince(cursorCheckAt) >= 0.1, let s = stream, let cfg = config else { lock.unlock(); return }
+    cursorCheckAt = now
+    let hide = !clients.isEmpty && clients.allSatisfy { $0.cursorEnc && now.timeIntervalSince($0.lastPointerAt) < 10 }
+    let changed = hide != cursorHidden
+    if changed { cursorHidden = hide; cfg.showsCursor = !hide }
+    lock.unlock()
+    if changed {
+      s.updateConfiguration(cfg) { e in if let e { log("rfb: cursor mode: \(e.localizedDescription)") } }
+    }
+  }
+
+  private func cursorUpdate(_ c: RfbClient) -> Data? {
+    lock.lock()
+    let wanted = c.cursorEnc, hidden = cursorHidden, stale = Date().timeIntervalSince(shapeAt) >= 0.1
+    if hidden && stale { shapeAt = Date() }
+    lock.unlock()
+    guard wanted else { return nil }
+    var next = RfbScreen.blankCursor
+    if hidden {
+      if stale, let s = rfbCursorShape() { lock.lock(); shape = s; lock.unlock() }
+      lock.lock(); next = shape; lock.unlock()
+      if next.key == RfbScreen.blankCursor.key { next = rfbCursorShape() ?? next }
+    }
     lock.lock(); defer { lock.unlock() }
-    guard w > 0, h > 0, fb.count == w * h * 4 else { return nil }
-    if let size = c.framebufferSize, size.w != w || size.h != h {
-      // This minimal server doesn't negotiate DesktopSize. Reconnect rather
-      // than patching new-resolution pixels into the old client framebuffer.
-      c.shutdown(); return nil
+    if next.key == c.cursorKey { return nil }
+    c.cursorKey = next.key
+    return next.rect
+  }
+
+  /// Copies one client-px rect out of the logical framebuffer (2x2 box
+  /// average for divisor 2). Caller holds the lock.
+  private func pixels(_ x: Int, _ y: Int, _ rw: Int, _ rh: Int, div: Int) -> [UInt8] {
+    if div == 1 {
+      var d = [UInt8](repeating: 0, count: rw * rh * 4)
+      for line in 0..<rh {
+        let src = ((y + line) * w + x) * 4
+        d.replaceSubrange((line * rw * 4)..<((line + 1) * rw * 4), with: fb[src..<(src + rw * 4)])
+      }
+      return d
     }
-    let full = CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))
-    var rects: [CGRect]
+    var d = [UInt8](repeating: 0, count: rw * rh * 4)
+    fb.withUnsafeBufferPointer { (src: UnsafeBufferPointer<UInt8>) -> Void in
+      for cy in 0..<rh {
+        for cx in 0..<rw {
+          let sx = (x + cx) * div, sy = (y + cy) * div
+          let sx2 = min(w - 1, sx + div - 1), sy2 = min(h - 1, sy + div - 1)
+          let a = (sy * w + sx) * 4, b = (sy * w + sx2) * 4, c = (sy2 * w + sx) * 4, e = (sy2 * w + sx2) * 4
+          let o = (cy * rw + cx) * 4
+          for k in 0..<4 {
+            var sum = Int(src[a + k]) + Int(src[b + k])
+            sum += Int(src[c + k]) + Int(src[e + k])
+            d[o + k] = UInt8((sum + 2) / 4)
+          }
+        }
+      }
+    }
+    return d
+  }
+
+  /// Next FramebufferUpdate body for this client as encoded rectangles
+  /// (12-byte header + payload each), or nil when there is nothing to send.
+  func takeUpdate(_ c: RfbClient) -> [Data]? {
+    syncCursorMode()
+    var out: [Data] = []
+    if let cur = cursorUpdate(c) { out.append(cur) }
+    lock.lock()
+    guard w > 0, h > 0, fb.count == w * h * 4 else { lock.unlock(); return out.isEmpty ? nil : out }
+    let targetDiv = c.pendingResize ? 1 : c.div
+    let cw = w / targetDiv, ch = h / targetDiv
+    if let size = c.framebufferSize, c.pendingResize || size.w != cw || size.h != ch {
+      guard c.desktopSize else {
+        // No DesktopSize support: reconnect rather than patching
+        // new-resolution pixels into the old client framebuffer.
+        lock.unlock(); c.shutdown(); return nil
+      }
+      c.pendingResize = false
+      c.div = targetDiv; c.framebufferSize = (cw, ch)
+      c.needsFull = true; c.dirty = []
+      c.tileCols = 0   // re-gridded below on the next update
+      lock.unlock()
+      out.append(rfbRectHeader(0, 0, cw, ch, RFB_PSEUDO_DESKTOP_SIZE))
+      return out
+    }
+    let div = c.div
+    if c.tight && c.tileCols == 0 {
+      c.tileCols = (cw + RFB_TILE - 1) / RFB_TILE
+      let tiles = c.tileCols * ((ch + RFB_TILE - 1) / RFB_TILE)
+      c.lossyTile = [Bool](repeating: false, count: tiles)
+      c.tileTouched = [Double](repeating: 0, count: tiles)
+    }
+    let fullC = CGRect(x: 0, y: 0, width: CGFloat(cw), height: CGFloat(ch))
+    var rects: [CGRect] = []
     if c.needsFull {
-      rects = [full]
-    } else if c.dirty.isEmpty {
-      return nil
-    } else {
-      rects = mergeRfbDirtyRects(c.dirty, full: full)
+      rects = [fullC]
+    } else if !c.dirty.isEmpty {
+      // logical-px dirty bands → client px, rounded outwards
+      rects = mergeRfbDirtyRects(c.dirty, full: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))).map { r in
+        let x0 = Int(r.minX) / div, y0 = Int(r.minY) / div
+        let x1 = min(cw, (Int(r.maxX) + div - 1) / div), y1 = min(ch, (Int(r.maxY) + div - 1) / div)
+        return CGRect(x: CGFloat(x0), y: CGFloat(y0), width: CGFloat(max(0, x1 - x0)), height: CGFloat(max(0, y1 - y0)))
+      }
     }
+    // Lossless re-sends ride along with ordinary updates, so constant small
+    // changes elsewhere never starve them.
+    let refine = c.needsFull ? [] : takeRefineRects(c, cw: cw, ch: ch)
+    if rects.isEmpty && refine.isEmpty { lock.unlock(); return out.isEmpty ? nil : out }
     c.needsFull = false
     c.dirty = []
-    var out: [(CGRect, Data)] = []
-    for r in rects {
+    var jobs: [(x: Int, y: Int, w: Int, h: Int, px: [UInt8], lossless: Bool)] = []
+    for (r, lossless) in rects.map({ ($0, false) }) + refine.map({ ($0, true) }) {
       let x = max(0, Int(r.minX)), y = max(0, Int(r.minY))
-      let rw = min(w - x, Int(r.width)), rh = min(h - y, Int(r.height))
+      let rw = min(cw - x, Int(r.width)), rh = min(ch - y, Int(r.height))
       guard rw > 0, rh > 0 else { continue }
-      var d = Data(capacity: rw * rh * 4)
-      for line in y..<(y + rh) { d.append(contentsOf: fb[(line * w + x) * 4..<((line * w + x) + rw) * 4]) }
-      out.append((CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(rw), height: CGFloat(rh)), d))
+      jobs.append((x, y, rw, rh, pixels(x, y, rw, rh, div: div), lossless))
+    }
+    let tight = c.tight, swapRB = c.swapRB, quality = c.quality, zlib = c.zlib as? RfbZlib
+    lock.unlock()
+    // Encode outside the lock: JPEG/deflate must not stall the capture callback.
+    var sentLossy: [CGRect] = []
+    for j in jobs {
+      if !tight {
+        var px = j.px
+        if swapRB { var i = 0; while i < px.count { px.swapAt(i, i + 2); i += 4 } }
+        var d = rfbRectHeader(j.x, j.y, j.w, j.h, RFB_ENC_RAW)
+        d.append(contentsOf: px)
+        out.append(d)
+        continue
+      }
+      guard let zlib, let enc = encodeTight((j.x, j.y, j.w, j.h, j.px), zlib: zlib,
+                                            jpegQuality: j.lossless ? -1 : quality, lossy: &sentLossy) else {
+        c.shutdown(); return nil
+      }
+      out.append(contentsOf: enc)
+    }
+    if !sentLossy.isEmpty {
+      let now = Date().timeIntervalSinceReferenceDate
+      lock.lock(); for r in sentLossy { touchTiles(c, r, now, lossy: true) }; lock.unlock()
     }
     return out.isEmpty ? nil : out
+  }
+
+  /// Tight rects for one region: solid → fill, large → JPEG (recorded in
+  /// `lossy` for the later lossless pass), otherwise zlib-compressed RGB.
+  /// Tight caps rect width at 2048, so wider regions are tiled.
+  private func encodeTight(_ j: (x: Int, y: Int, w: Int, h: Int, px: [UInt8]), zlib: RfbZlib,
+                           jpegQuality: Int, lossy: inout [CGRect]) -> [Data]? {
+    var out: [Data] = []
+    let useJpeg = jpegQuality >= 0 && j.w * j.h >= 16384
+    // zlib rects are cut into strips so one compact length (≤4MB) always fits.
+    let maxRows = useJpeg ? j.h : max(1, 262144 / min(j.w, 2048))
+    var tx = 0
+    while tx < j.w {
+      let tw = min(2048, j.w - tx)
+      var ty = 0
+      while ty < j.h {
+        let th = min(maxRows, j.h - ty)
+        var px = [UInt8](repeating: 0, count: tw * th * 4)
+        for line in 0..<th {
+          let src = ((ty + line) * j.w + tx) * 4
+          px.replaceSubrange((line * tw * 4)..<((line + 1) * tw * 4), with: j.px[src..<(src + tw * 4)])
+        }
+        var d = rfbRectHeader(j.x + tx, j.y + ty, tw, th, RFB_ENC_TIGHT)
+        let solid: Bool = px.withUnsafeBytes { raw in
+          let p = raw.bindMemory(to: UInt32.self)
+          let first = p[0] & 0x00FF_FFFF
+          for i in 1..<p.count where p[i] & 0x00FF_FFFF != first { return false }
+          return true
+        }
+        if solid {
+          d.append(0x80); d.append(contentsOf: [px[2], px[1], px[0]])           // fill: TPIXEL is R,G,B
+        } else if useJpeg, let jpeg = rfbJpeg(px, tw, th, quality: RFB_JPEG_QUALITY[min(9, jpegQuality)]) {
+          d.append(0x90); d.append(tightLength(jpeg.count)); d.append(jpeg)
+          lossy.append(CGRect(x: j.x + tx, y: j.y + ty, width: tw, height: th))
+        } else {
+          var rgb = [UInt8](repeating: 0, count: tw * th * 3)
+          var i = 0, o = 0
+          while i < px.count { rgb[o] = px[i + 2]; rgb[o + 1] = px[i + 1]; rgb[o + 2] = px[i]; i += 4; o += 3 }
+          d.append(0x00)                                                        // basic, stream 0, copy filter
+          if rgb.count < 12 { d.append(contentsOf: rgb) }
+          else {
+            guard let z = zlib.compress(rgb) else { return nil }
+            d.append(tightLength(z.count)); d.append(z)
+          }
+        }
+        out.append(d)
+        ty += th
+      }
+      tx += tw
+    }
+    return out
   }
 }
 
@@ -2063,8 +2470,9 @@ func rfbKey(_ c: RfbClient, down: Bool, keysym: UInt32) {
 
 @available(macOS 14.0, *)
 func rfbPointer(_ c: RfbClient, mask: Int, x rfbX: Int, y rfbY: Int) {
-  // RFB framebuffer px → logical points (framebuffer runs at 1/RFB_DIV)
-  let x = rfbX * RFB_DIV, y = rfbY * RFB_DIV
+  // RFB framebuffer px → logical points (this client's framebuffer runs at 1/div)
+  let div = RfbScreen.shared.notePointer(c)
+  let x = rfbX * div, y = rfbY * div
   let p = CGPoint(x: CGFloat(x), y: CGFloat(y))
   let prev = c.lastMask
   c.lastMask = mask
@@ -2107,7 +2515,7 @@ func rfbSender(_ c: RfbClient) {
     // HAS been served, a still screen must not kill the connection — answer
     // the pending incremental request with an empty update (n=0 keepalive):
     // SCStream only emits on change, so idle requests would otherwise time out.
-    var rects = RfbScreen.shared.takeRects(c)
+    var rects = RfbScreen.shared.takeUpdate(c)
     var waitedMs = 0
     while rects == nil && !c.isClosed {
       if Date().timeIntervalSince(c.connectedAt) > 10 && !c.servedAny { c.shutdown(); return }
@@ -2116,17 +2524,12 @@ func rfbSender(_ c: RfbClient) {
         c.shutdown(); return
       }
       usleep(20_000); waitedMs += 20
-      rects = RfbScreen.shared.takeRects(c)
+      rects = RfbScreen.shared.takeUpdate(c)
     }
     if c.isClosed { return }
     var msg = Data([0, 0])
     msg.appendBE(UInt16(rects!.count))
-    for (r, d) in rects! {
-      msg.appendBE(UInt16(Int(r.minX))); msg.appendBE(UInt16(Int(r.minY)))
-      msg.appendBE(UInt16(Int(r.width))); msg.appendBE(UInt16(Int(r.height)))
-      msg.appendBE(UInt32(0))   // Raw
-      msg.append(d)
-    }
+    for r in rects! { msg.append(r) }   // already encoded: header + payload
     if !writeAll(c.fd, msg) { c.shutdown(); return }
     c.didServeUpdate()
   }
@@ -2152,7 +2555,10 @@ func rfbSession(_ fd: Int32) {
         readFully(fd, 12) != nil,
         writeAll(fd, Data([1, 1])), readFully(fd, 1)?.first == 1,   // security: None
         writeAll(fd, Data([0, 0, 0, 0])), readFully(fd, 1) != nil,  // SecurityResult ok + ClientInit
-        let size = RfbScreen.shared.size else { return }
+        let logical = RfbScreen.shared.size else { return }
+  // Every client starts at the Raw tier; Tight+DesktopSize clients are
+  // switched to full resolution right after their SetEncodings arrives.
+  let size = (w: max(1, logical.w / RFB_DIV), h: max(1, logical.h / RFB_DIV))
   client.framebufferSize = size
   var si = Data()
   si.appendBE(UInt16(size.w)); si.appendBE(UInt16(size.h))
@@ -2169,11 +2575,17 @@ func rfbSession(_ fd: Int32) {
   reader: while true {
     guard let head = readFully(fd, 1) else { break }
     switch head[0] {
-    case 0: guard readFully(fd, 19) != nil else { break reader }        // SetPixelFormat: keep canonical
-    case 2:                                                                 // SetEncodings: Raw is all we send
+    case 0:                                                                 // SetPixelFormat: R/B order only
+      guard let pf = readFully(fd, 19) else { break reader }
+      RfbScreen.shared.setPixelFormat(client, pf)
+    case 2:                                                                 // SetEncodings
       guard let b = readFully(fd, 3) else { break reader }
       let n = Int(b[1]) << 8 | Int(b[2])
-      guard n >= 0, n <= 4096, readFully(fd, n * 4) != nil else { break reader }
+      guard n >= 0, n <= 4096, let list = readFully(fd, n * 4) else { break reader }
+      let e = [UInt8](list)
+      RfbScreen.shared.setEncodings(client, (0..<n).map { i in
+        Int32(bitPattern: UInt32(e[i * 4]) << 24 | UInt32(e[i * 4 + 1]) << 16 | UInt32(e[i * 4 + 2]) << 8 | UInt32(e[i * 4 + 3]))
+      })
     case 3:
       guard let b = readFully(fd, 9) else { break reader }
       if b[0] == 0 { RfbScreen.shared.markFull(client) }

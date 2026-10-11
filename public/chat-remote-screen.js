@@ -555,8 +555,9 @@
   }
 
   // RFB 模式下帧循环不跑，X-Screen-Width 头拿不到；轻点走 HTTP input，其
-  // 坐标域是屏幕逻辑点——Agent 只对 RFB PointerEvent 自动乘 RFB_DIV，直
-  // 接用 canvas 的 framebuffer 尺寸会差 RFB_DIV 倍（点到偏左上的位置）。
+  // 坐标域是屏幕逻辑点——Agent 只对 RFB PointerEvent 按该连接的倍率换算。
+  // noVNC 现在会被 DesktopSize 升到全分辨率（canvas 宽=逻辑宽），但握手到
+  // 升档之间、或旧 Agent 下 framebuffer 仍是半分辨率，所以照旧以探到的逻辑宽为准。
   // 连上流畅模式后探一次（HEAD 走同一 GET handler，只收响应头不收图）。
   let sizeProbe = null;
   function ensureScreenSize() {
