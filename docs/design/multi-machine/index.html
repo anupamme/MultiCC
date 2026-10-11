@@ -55,7 +55,7 @@
         <li>离线电脑：状态页 + 唤醒 / 连接诊断</li>
         <li>配对码加电脑（共用流程）</li>
       </ul>
-      <a class="btn primary go" href="a-switcher.html">打开原型 A →</a>
+      <a class="btn primary go" href="a-switcher.html">打开原型 A →</a><a class="btn go" href="a-tech-design.html" style="margin-top:6px">方案 A 技术设计 →</a>
     </div>
     <div class="opt-card" style="--c:var(--m2)">
       <div style="font-size:12px;color:var(--muted)">方案 B</div>
@@ -117,7 +117,7 @@
   <section class="card">
     <h2>三套共用的底座（无论选哪套都要先做）</h2>
     <div class="road">
-      <div><b>① 配对</b>配对码 / 扫码 / 地址+令牌。配对码 5 分钟内有效且只能用一次；双方交换一枚只属于这对电脑的令牌，存进敏感信息保险箱。<br><small>复用：ACCESS_TOKEN、ws-ticket、保险箱</small></div>
+      <div><b>① 配对</b>配对码 / 扫码 / 地址+令牌。配对码 5 分钟内有效且只能用一次；双方交换一枚只属于这对电脑、可单独吊销的令牌，存在服务端 0600 文件里（不进保险箱：保险箱会注入 CLI 环境变量）。<br><small>复用：ws-ticket、共享工作区的 SSRF 防护</small></div>
       <div><b>② 电脑表</b>每台电脑的名称、颜色、地址、令牌引用、上次在线时间。地址按每位用户自己的外网/内网入口填写，代码里不写死任何域名。<br><small>复用：外网穿透配置</small></div>
       <div><b>③ 摘要接口</b>每台电脑暴露一个只读的轻量摘要（在线、版本、负载、电源、进行中/等待/异常计数），供切换器、信号条、舰队卡片读取。<br><small>不复用 /api/air 全量快照</small></div>
       <div><b>④ 远程屏幕跨机</b>「🖥 屏幕」链接由目标电脑签发，前端只负责跳转。Windows/Linux 的 agent 未就绪时如实显示「不支持」。<br><small>复用：desktop-agent 协议</small></div>

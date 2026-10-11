@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 A · 电脑切换器 — 技术设计</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 28px 90px; }
+  h1 { font-size: 28px; margin: 4px 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 10px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+  h3 { font-size: 15px; margin: 20px 0 6px; }
+  p, li { font-size: 14px; }
+  code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--panel-soft); border: 1px solid var(--hairline); border-radius: 5px; padding: 0 4px; }
+  pre { background: #1d2a3d; color: #dfe9f6; padding: 12px 14px; border-radius: 12px; font-size: 12.5px; line-height: 1.55; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; margin: 8px 0; }
+  th, td { border-bottom: 1px solid var(--hairline); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel-soft); color: var(--muted); font-size: 12px; }
+  .decision { border-left: 4px solid var(--accent); background: var(--blue-soft); padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .risk { border-left: 4px solid var(--amber); background: #fff8ee; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .found { border-left: 4px solid var(--green); background: #eefaf4; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .toc { columns: 2; font-size: 13.5px; }
+  .toc a { display: block; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="proto-bar"><b>方案 A · 技术设计</b><span class="tag">基于 v2.4.3 代码调研 · 2026-10-11</span><span class="sp"></span><a href="a-switcher.html">交互原型 A</a><a href="index.html">← 返回对比</a></div>
+<div class="wrap">
+  <div class="muted" style="font-size:12px">MultiCC 多电脑统一管理 · 第一阶段</div>
+  <h1>方案 A「电脑切换器」技术设计</h1>
+  <p>前提（来自你的回复）：电脑之间<b>平等</b>，没有主控；电脑之间<b>可能走内网，也可能走外网地址</b>；<b>敏感信息不同步</b>；<b>跨电脑迁移任务暂不做</b>。</p>
+  <div class="toc">
+    <a href="#tldr">0. 一句话结论</a><a href="#found">1. 调研发现：现成可复用的东西</a><a href="#topo">2. 关键决策：浏览器怎么到另一台电脑</a>
+    <a href="#pair">3. 配对与凭证</a><a href="#proxy">4. 代理层（HTTP + WebSocket）</a><a href="#summary">5. 在线状态与摘要</a>
+    <a href="#web">6. Web 前端改动</a><a href="#app">7. App 改动</a><a href="#edge">8. 边界情况</a>
+    <a href="#security">9. 安全清单</a><a href="#plan">10. 实施分期与文件清单</a><a href="#q">11. 还需要你确认的</a>
+  </div>
+
+  <h2 id="tldr">0. 一句话结论</h2>
+  <div class="decision"><b>你打开的那台电脑当「中转站」</b>：浏览器 / App 永远只连当前这台电脑；切到别的电脑时，所有 API 和 WebSocket 请求由当前电脑的服务端<b>转发</b>过去。
+    界面还是当前这台的 Air，数据换成那台的。这样无论手机在不在内网、那台电脑有没有外网地址，只要<b>两台电脑之间</b>能连通就能用。</div>
+
+  <h2 id="found">1. 调研发现：现成可复用的东西</h2>
+  <div class="found"><b>「跨实例共享工作区」（external fleets）几乎就是 A 方案的缩小版。</b>
+    <code>src/fleet-sharing.js</code> + <code>src/routes/fleet-sharing.js</code>：B 把一个工作区分享出来，A 导入后，A 的服务端把 <code>/api/external-fleets/&lt;id&gt;/remote/*</code> 转发到 B；
+    前端 <code>public/auth-client.js</code> 发现地址里有 <code>?external=&lt;id&gt;</code>，就把整页所有 <code>/api/*</code> 请求改写到这个代理前缀。Air 的其余代码一行不用改。</div>
+  <table>
+    <tr><th>现成能力</th><th>位置</th><th>A 方案怎么用</th></tr>
+    <tr><td>整页 API 改写（<code>?external=</code>）</td><td><code>public/auth-client.js</code> <code>externalProxyInput</code></td><td>照着加 <code>?machine=&lt;id&gt;</code>，改写到 <code>/api/peers/&lt;id&gt;/remote/*</code></td></tr>
+    <tr><td>服务端转发 + SSRF 防护（允许内网、拦 link-local/云元数据）</td><td><code>src/fleet-sharing.js</code> <code>assertSafeRemoteTarget</code> / <code>requestExternalRaw</code></td><td>抽出来复用；内网地址必须放行</td></tr>
+    <tr><td>带 WebSocket upgrade 的反向代理</td><td><code>src/service-routes.js</code>（<code>/services/&lt;名称&gt;/</code>）</td><td>WS 转发直接复用这套</td></tr>
+    <tr><td>鉴权中间件的插槽</td><td><code>src/routes/auth.js:270</code> <code>authorizeScopedRequest</code></td><td>在这里加「对端凭证」校验</td></tr>
+    <tr><td>WS 一次性票据</td><td><code>src/auth-security.js</code> <code>issueWsTicket/consumeWsTicket</code></td><td>中转站先替浏览器向对方换票，再连上游</td></tr>
+    <tr><td>版本与协议握手</td><td><code>/api/server-info</code>（<code>APP_CONNECTION_PROTOCOL</code>）</td><td>判断两台电脑版本是否兼容</td></tr>
+    <tr><td>局域网广播 <code>_multicc._tcp</code></td><td><code>src/lan-discovery.js</code>（服务端只广播）、App <code>lan_discovery_service.dart</code>（能扫描）</td><td>「添加电脑」里列出局域网里发现的 MultiCC</td></tr>
+    <tr><td>App 服务器历史（地址 + 令牌）</td><td><code>app/lib/services/settings_service.dart</code> <code>rememberServer</code></td><td>App 侧切换器的数据形状参考</td></tr>
+  </table>
+  <div class="risk"><b>共享工作区的 WS 不能照抄。</b>它的 WebSocket 是浏览器拿到票据后<b>直连 B</b>（<code>auth-client.js</code> 把 URL host 换成 <code>wsOrigin</code>）。
+    手机经隧道连 A、B 只在内网时连不上；https 页面连 <code>ws://192.168.x.x</code> 也会被浏览器当混合内容拦掉。A 方案必须让 WS 也走中转站。</div>
+
+  <h2 id="topo">2. 关键决策：浏览器怎么到另一台电脑</h2>
+  <table>
+    <tr><th>做法</th><th>手机在外网 + B 只在内网</th><th>https 页 → http 内网</th><th>要不要登录 B</th><th>版本不一致</th><th>结论</th></tr>
+    <tr><td>① 直接跳转到 B 的地址</td><td>✕ 连不上</td><td>—</td><td>每台都要登录一次</td><td>无问题（用 B 自己的前端）</td><td>只作为「在它自己的页面打开」的备选</td></tr>
+    <tr><td>② 浏览器跨域直连 B 的 API</td><td>✕ 连不上</td><td>✕ 被拦</td><td>要把 B 的令牌交给浏览器</td><td>有</td><td>否决</td></tr>
+    <tr><td><b>③ 当前电脑服务端中转</b></td><td>✓ A 走内网连 B</td><td>✓ 浏览器只连 A</td><td>不用，A 持有对 B 的凭证</td><td>有，可检测提示</td><td><b>采用</b></td></tr>
+  </table>
+  <p>地址选择在<b>服务端</b>做：每台对端电脑可登记多个候选地址（内网 IP、外网穿透地址），中转站按「内网优先、外网兜底」探测并记住最近一次能通的那个。所以你说的「可以内网也可以外网」两种情况都覆盖，而且跟手机此刻在哪无关。</p>
+  <p>代价：多一跳延迟（局域网内 &lt;5ms，可忽略；两边都走外网时会翻倍）；当前这台电脑关机，就切不到别的电脑（换一台电脑打开即可，平等的好处）。</p>
+
+  <h2 id="pair">3. 配对与凭证</h2>
+  <h3>3.1 流程（双向、平等）</h3>
+  <pre>B（要被加入的电脑）                         A（你正在用的电脑）
+更多与系统 › 电脑管理 › 「允许被添加」
+  → 生成配对码 K7Q-4M2（5 分钟、一次性）
+                                           添加电脑：填 B 的地址（或从局域网发现里点选）+ 配对码
+                                           A 服务端 → POST B /api/peers/pair
+                                             { code, 自我介绍(名称/版本/机器指纹),
+                                               给 B 用的凭证 credForB, A 的候选地址 }
+  校验配对码 → 保存 A（credForB 只存哈希的对照）
+  → 生成给 A 用的凭证 credForA，回传
+  → 尝试按 A 的候选地址回连 A，成功=双向
+                                           保存 B（credForA 存原文，用于发请求）
+两边的电脑列表里都出现对方 ✓</pre>
+  <ul>
+    <li>B 回连不上 A（比如 A 是没开穿透的笔记本）也能配对成功，只是标成<b>单向</b>：在 A 上能切到 B，在 B 上看到 A 显示「对方可访问你，你访问不到对方」。</li>
+    <li>配对码只在 B 上显示，必须本人在 B 前（或通过远程屏幕）才能拿到，防止陌生人用地址就把电脑加走。</li>
+    <li>高级选项：直接填 B 的地址 + <code>ACCESS_TOKEN</code>，A 用它调 B 的配对接口完成同样的交换，之后<b>不保存</b> ACCESS_TOKEN，只保存交换来的对端凭证。</li>
+    <li>前提：B 必须监听在非 loopback 地址并配置了 <code>ACCESS_TOKEN</code>，也就是开了局域网模式或外网穿透（与 <code>lan-discovery.js</code> 的资格判断一致）。不满足时，「允许被添加」按钮直接说明缺什么。</li>
+  </ul>
+  <h3>3.2 凭证存哪</h3>
+  <div class="decision">新文件 <code>~/.multicc/peers.json</code>（0600，<code>atomicWriteJson</code>），和共享工作区的 external 状态同一种存法。
+    <b>不放进敏感信息保险箱</b>：保险箱条目会作为同名环境变量注入每个 CLI 子进程，等于让 AI 拿到另一台电脑的完全控制权。（上一版原型里写的「存进保险箱」是错的，已改正。）</div>
+  <ul>
+    <li>别人拿来访问我的凭证：只存 <code>scrypt</code> 哈希 + 盐（同 <code>passwordHash</code>），校验用定时安全比较。</li>
+    <li>我拿去访问别人的凭证：存原文（必须能发出去），文件权限 0600；接口返回给前端时一律打码。</li>
+    <li>每对电脑一枚凭证，任一侧「移除电脑」即吊销自己那一半，并尽力通知对方删除另一半。</li>
+    <li>按规则要在运行时写入清单里登记这个新的 <code>~/.multicc</code> 写入点（否则 CI deterministic 会红）。</li>
+  </ul>
+  <h3>3.3 对端凭证的权限</h3>
+  <p>平等 + 同一个主人，所以对端凭证等同于<b>已登录的远程管理员</b>（和你在手机上登录一样），但<b>永远不是「本机请求」</b>：<code>isLocalRequest</code> 看的是 TCP 对端地址，中转来的请求天然是外部请求。
+    因此锁屏解锁密码、关盖运行这类「请在这台 Mac 上操作」的接口（<code>host-power.js</code> / <code>host-write.js</code>）会照常拒绝。这正是想要的效果，界面上提示「请在那台电脑上设置」即可。</p>
+
+  <h2 id="proxy">4. 代理层（HTTP + WebSocket）</h2>
+  <pre>浏览器  ──/api/peers/mini/remote/api/sessions──▶  A 服务端
+          (A 的 cookie 鉴权)                        │ 1. 校验浏览器是 A 的已登录用户
+                                                    │ 2. 剥掉 Cookie / X-Access-Token / 转发头
+                                                    │ 3. 加 X-Multicc-Peer: &lt;credForA&gt;
+                                                    ▼
+                                             B 服务端 /api/sessions
+                                             auth.js 插槽认出对端凭证 → 放行（非本机）</pre>
+  <ul>
+    <li><b>路径白名单</b>：只转发 <code>/api/*</code>、<code>/ws/*</code>、<code>/artifacts/*</code>。B 上的 <code>/api/peers/*</code>（配对和对端管理）<b>不转发</b>，避免 A 借道去改 B 的电脑列表，也避免 A→B→C 链式跳转。</li>
+    <li><b>WebSocket</b>：浏览器向 A 要一张绑定 <code>/api/peers/mini/ws/chat</code> 的 A 票据 → A 验票后用对端凭证向 B 的 <code>/api/auth/ws-ticket</code> 换一张 B 票据 → 连 B 的 <code>/ws/chat?ticket=…</code> → 双向 pipe。
+      B 侧 WS 鉴权（<code>src/ws/connection-router.js</code>）<b>完全不用改</b>。upgrade 转发复用 <code>service-routes.js</code> 的实现。</li>
+    <li><b>大小与超时</b>：沿用共享工作区的上限（请求体 10MB、普通请求 10s 超时）；上传/下载走流式 pipe，不进内存；WS 无总时长限制。</li>
+    <li><b>可观测</b>：每次转发带 <code>x-correlation-id</code>，响应头回带 <code>X-Multicc-Upstream-Request-Id</code>（同共享工作区），日志只记电脑 id、路径、状态码和耗时，不记 body。</li>
+  </ul>
+
+  <h2 id="summary">5. 在线状态与摘要</h2>
+  <div class="risk">不能让切换器去拉 <code>/api/air</code>：App 每 4 秒全量拉一次快照本来就是已知的流量热点，再乘以电脑数量会更糟。</div>
+  <ul>
+    <li>每台电脑新增 <code>GET /api/peers/self/summary</code>，返回几百字节：名称、系统、版本、协议号、在跑/等你/异常计数、电源、CLI 列表、是否支持远程屏幕。计数取自任务板 runState（唯一状态源）。</li>
+    <li>中转站后台每 15 秒轮询各对端的摘要（失败后退避到 60 秒），缓存在内存里。浏览器只拉 <code>GET /api/peers</code>（本机缓存），切换器、「其它电脑」信号条、离线页都读它。</li>
+    <li>状态机：<code>online</code> / <code>offline</code>（连不上，带上次在线时间）/ <code>unauthorized</code>（凭证被对方吊销，提示重新配对）/ <code>incompatible</code>（协议号不同）。</li>
+    <li>对端从离线变在线、或有新的「等你回复」时，复用现有通知通道（Web Push / Bark）提醒一次，按电脑做冷却。</li>
+  </ul>
+
+  <h2 id="web">6. Web 前端改动</h2>
+  <ul>
+    <li><b>auth-client.js</b>：加 <code>?machine=&lt;id&gt;</code>，与 <code>?external=</code> 同样改写 <code>/api/*</code>；<code>multiccWsUrl</code> 改成连中转站自己的 <code>/api/peers/&lt;id&gt;/ws/*</code>。两者互斥。</li>
+    <li><b>切换 = 整页跳转</b>到 <code>/air?machine=mini</code>（回本机就去掉参数）。Air 内存里各种缓存（任务板、目录、Provider）不需要逐个失效，最不容易出错；代价是切换时有一次刷新，约 1 秒。</li>
+    <li><b>参数传递</b>：Air 内部所有导航，以及对话 iframe（<code>chat.html?air=1&amp;task=…</code>）都要带上 <code>machine</code>。在 auth-client 里统一兜底：同源导航与 iframe src 缺 <code>machine</code> 时自动补上，另外放一份到 sessionStorage 作为后备。</li>
+    <li><b>链接改写</b>：对方聊天里出现的 <code>/artifacts/…</code>、本地文件链接、<code>#rs=control</code> 远程屏幕链接，都指向那台电脑。点击拦截层（<code>chat-local-links.js</code> / <code>chat-remote-links.js</code>）在 machine 模式下把它们改到代理前缀。</li>
+    <li><b>界面</b>（按原型 A）：侧栏顶部切换器、页顶 4px 机器色条、面包屑首段、控制台「其它电脑」信号条、离线页、添加电脑三步对话框、「更多与系统 › 电脑管理」。新面板按 Air 面板登记的老规矩做（四件套 + air.html 顺序 + 断点），文案全部走 i18n。</li>
+    <li><b>版本差异</b>：前端是当前电脑的，API 是对方的。协议号相同但版本不同时，页头给一条可关闭的提示；协议号不同就不让切，引导「在它自己的页面打开」（直接跳 B 的外网地址，需要在那边登录）。</li>
+  </ul>
+
+  <h2 id="app">7. App 改动（第二步）</h2>
+  <ul>
+    <li>REST 请求是 <code>buildHttpUrl</code> 字符串拼接，把服务器地址设成 <code>https://A/api/peers/mini/remote</code> 就能直接复用。</li>
+    <li>需要改三处：<code>ws_ticket_service.dart</code> 目前<b>明确拒绝带路径的地址</b>（第 83 行），票据接口也写死成 <code>/api/auth/ws-ticket</code>，要放开为「允许受信的前缀」并保持 <code>issuedPath</code> 校验；<code>connection_probe_service.dart</code> 两处 <code>resolve('/…')</code> 和 <code>download_ticket_service.dart</code> 一处 <code>replace(path:)</code> 会丢前缀，要改成拼接。</li>
+    <li>侧栏顶部加同款切换器，数据读 <code>/api/peers</code>。它不是「换服务器」，而是在当前服务器内切换数据源，所以不碰已保存的服务器历史和推送注册。</li>
+    <li>按记忆里的规矩：动 WsTicketClient 时测试桩必须回带 path，否则会静默无限重连。</li>
+  </ul>
+
+  <h2 id="edge">8. 边界情况</h2>
+  <table>
+    <tr><th>情况</th><th>处理</th></tr>
+    <tr><td>正在看 B 的任务时 B 掉线</td><td>WS 断开后显示「Mac mini 失联，任务在那边继续跑」，按现有重连退避；恢复后由 B 的 replay 补齐消息（B 本来就支持）。</td></tr>
+    <tr><td>中转站 A 自己重启</td><td>和现在一样，前端时间闸门重连；B 上的任务不受影响。</td></tr>
+    <tr><td>在 B 上点「重启服务 / 升级」</td><td>请求转发给 B，只影响 B。确认框里写明是哪台电脑。</td></tr>
+    <tr><td>本地图片 / 下载</td><td><code>/api/download</code> 在 /api 下，自动转发，读的是 B 的文件；预览不经过 A 的磁盘。</td></tr>
+    <tr><td>远程屏幕</td><td>B 是 macOS 且装了 Agent 才有；JPEG 轮询和 RFB 都走 /api 与 /ws，经过中转。中转会多一跳带宽，流畅模式下需要实测。</td></tr>
+    <tr><td>两台电脑都配了对方，又都配了 C</td><td>各自列表独立，不做传递发现（防止链式越权）；以后可以加「把 C 也介绍给 B」。</td></tr>
+    <tr><td>同一台电脑被加了两次（换了地址）</td><td>用对方返回的机器指纹去重，合并为一条、地址并入候选列表。</td></tr>
+    <tr><td>App / Web 正在 B 的页面，A 把 B 移除</td><td>下一次请求返回 404 <code>PEER_NOT_FOUND</code>，前端回到本机并提示。</td></tr>
+  </table>
+
+  <h2 id="security">9. 安全清单</h2>
+  <ul>
+    <li>中转站必须剥掉客户端发来的 <code>X-Multicc-Peer</code>、<code>Cookie</code>、<code>X-Access-Token</code>、<code>Authorization</code>、<code>Forwarded/X-Forwarded-*</code>，防伪造、防把 A 的凭证泄给 B。</li>
+    <li>对端地址只来自配对时登记的列表；每次请求都过 <code>assertSafeRemoteTarget</code>（防 DNS 重绑定），并禁止重定向跟随。</li>
+    <li>B 端校验对端凭证用定时安全比较；配对码限速（每 IP 每分钟 5 次），5 次错误作废当前码。</li>
+    <li>对端凭证永不出现在前端响应、日志、聊天、托管上下文和环境变量里；<code>/api/peers</code> 只返回打码后的元数据。</li>
+    <li>B 的「电脑管理」里列出谁能访问自己、上次访问时间，可一键吊销。</li>
+  </ul>
+
+  <h2 id="plan">10. 实施分期与文件清单</h2>
+  <table>
+    <tr><th>步骤</th><th>内容</th><th>主要文件</th><th>验证</th></tr>
+    <tr><td>A1 服务端底座</td><td>peers 存储、配对码、配对接口、对端凭证鉴权、自身摘要、轮询缓存</td><td>新 <code>src/peers/</code>（store/pairing/poller）、新 <code>src/routes/peers.js</code>、<code>src/routes/auth.js</code> 插槽、<code>server.js</code> 挂载、运行时写入清单</td><td>单测 + isolated HTTP：两个隔离实例互相配对、吊销、单向</td></tr>
+    <tr><td>A2 代理层</td><td>HTTP 转发 + WS 换票转发 + 路径白名单 + 头剥离</td><td>从 <code>fleet-sharing.js</code> 抽 SSRF/转发公共件到 <code>src/network/</code>；复用 <code>service-routes.js</code> 的 upgrade</td><td>isolated：经 A 读 B 的会话、发消息、WS 收流、上传下载</td></tr>
+    <tr><td>A3 Web 切换器</td><td>auth-client 的 machine 模式、链接改写、切换器 / 色条 / 信号条 / 离线页 / 添加对话框 / 电脑管理面板、i18n</td><td><code>public/auth-client.js</code>、新 <code>public/air-machines.js</code>、<code>air.html</code>、<code>air.css</code>、<code>i18n-catalog.js</code>、<code>chat-local-links.js</code>、<code>chat-remote-links.js</code></td><td>CDP harness 截图 + 两实例真机走一遍</td></tr>
+    <tr><td>A4 App</td><td>WS 前缀支持、三处 URL 修正、侧栏切换器</td><td><code>ws_ticket_service.dart</code>、<code>connection_probe_service.dart</code>、<code>download_ticket_service.dart</code>、<code>air_sidebar.dart</code></td><td>flutter test（注意 FakeAsync 与票据桩的坑）+ 模拟器实拍</td></tr>
+  </table>
+  <p class="muted">粗估：A1+A2 约 4–5 天，A3 约 3–4 天，A4 约 2–3 天。A1–A3 完成后，Web 端就能完整使用；A4 可以晚一个版本。改服务端代码后需要你手动重启服务才生效，我不会自动重启。</p>
+
+  <h2 id="q">11. 还需要你确认的</h2>
+  <ol>
+    <li><b>切换是整页刷新</b>（约 1 秒，最稳），还是要求无刷新切换（要逐个清理 Air 内存缓存，工作量 +2 天，回归风险更高）？我建议先整页刷新。</li>
+    <li><b>先做 Web（A1–A3），App 晚一步</b>可以吗？</li>
+    <li>你现在实际有几台电脑、分别什么系统？Windows / Linux 上能跑 MultiCC 服务，但没有远程屏幕（desktop agent 还没做），切换器里会如实显示「不支持屏幕」。</li>
+  </ol>
+</div>
+</body>
+</html>
