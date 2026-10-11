@@ -29,6 +29,7 @@
 <div class="wrap">
   <div class="muted" style="font-size:12px">MultiCC 多电脑统一管理 · 第一阶段</div>
   <h1>方案 A「电脑切换器」技术设计</h1>
+  <div class="risk"><b>注意：</b>本稿是「服务端中转」版。第二轮调研对比了「客户端直连」，推荐改为直连为主，见 <a href="a-direct-research.html">客户端直连 vs 服务端中转</a>。本稿保留作兜底方案参考。</div>
   <p>前提（来自你的回复）：电脑之间<b>平等</b>，没有主控；电脑之间<b>可能走内网，也可能走外网地址</b>；<b>敏感信息不同步</b>；<b>跨电脑迁移任务暂不做</b>。</p>
   <div class="toc">
     <a href="#tldr">0. 一句话结论</a><a href="#found">1. 调研发现：现成可复用的东西</a><a href="#topo">2. 关键决策：浏览器怎么到另一台电脑</a>
