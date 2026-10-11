@@ -24,6 +24,7 @@
     "appId": "io.github.lsjwzh.multicc",
     "productName": "MultiCC",
     "asar": true,
+    "afterPack": "after-pack.js",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -37,29 +38,14 @@
     ],
     "extraResources": [
       {
-        "from": ".staging/resources/app-server",
-        "to": "app-server",
+        "from": ".staging/resources",
+        "to": ".",
         "filter": [
-          "**/*"
+          "app-server/**/*",
+          "runtime/**/*",
+          "launcher/**/*",
+          "bundle-manifest.json"
         ]
-      },
-      {
-        "from": ".staging/resources/runtime",
-        "to": "runtime",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": ".staging/resources/launcher",
-        "to": "launcher",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": ".staging/resources/bundle-manifest.json",
-        "to": "bundle-manifest.json"
       }
     ],
     "mac": {

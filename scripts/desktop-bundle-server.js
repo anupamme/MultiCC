@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { verifyServerDependencies } = require('./desktop-verify-resources');
 
 const OPTIONAL_AT_RUNTIME = ['sherpa-onnx-node'];
 const PUBLIC_EXCLUDE = [/^multicc\.apk(\..*)?$/];
@@ -189,8 +190,8 @@ function stageServer({ repoRoot, out, install = true, npmEnv = {}, logger = cons
     'plugins/bridges/wechat-ilink.js', ...MACOS_AGENT_FILES,
     ...POWERD_FILES,
     'skills/multicc-artifact/references/registration-rule.md',
-    // Storage needs no compiled addon (src/sqlite/driver.js uses the SQLite
-    // that ships inside Node), so express is the only hard module to prove.
+    // A quick file sentinel; verifyServerDependencies below checks every
+    // declared production dependency and rejects build-checkout fallbacks.
     ...(install ? [path.join('node_modules', 'express')] : [])]) {
     if (!fs.existsSync(path.join(out, must))) throw new Error(`staged copy is missing ${must}`);
   }
@@ -198,6 +199,7 @@ function stageServer({ repoRoot, out, install = true, npmEnv = {}, logger = cons
   for (const name of OPTIONAL_AT_RUNTIME) {
     if (staged.dependencies[name]) throw new Error(`${name} must be optional in the staged manifest`);
   }
+  if (install) verifyServerDependencies(out);
 
   // better-sqlite3 is not ours any more: the server stores its state in the
   // SQLite that ships inside Node (src/sqlite/driver.js). It still lands in the

@@ -562,10 +562,9 @@ function sanityGate({ bundleDir, resourcesDir, platform, arch, install, runtime,
   logger.log('[standalone-bundle] sanity gate passed');
 }
 
-// The one check that proves the bundle will actually boot: make the runtime that
-// ships next to it open a SQLite database. Every other check (file lists, pinned
-// versions, staged manifests) can pass while storage still fails on the target
-// machine, and storage is what the server cannot start without.
+// Prove the bundled runtime can open a SQLite database. This checks storage,
+// not server startup or dependency completeness; desktop packages also run
+// desktop-verify-resources.js after electron-builder copies their resources.
 // Cross-arch builds on a host that cannot execute the target runtime (Linux
 // arm64 building x64) skip instead of failing — CI runs those natively.
 function verifyRuntimeSqlite({
