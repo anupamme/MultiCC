@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案 A · 客户端直连 vs 服务端中转 — 调研</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 32px 28px 90px; }
+  h1 { font-size: 28px; margin: 4px 0 6px; }
+  h2 { font-size: 19px; margin: 34px 0 10px; padding-top: 8px; border-top: 1px solid var(--hairline); }
+  h3 { font-size: 15px; margin: 20px 0 6px; }
+  p, li { font-size: 14px; }
+  code { font: 12.5px ui-monospace, Menlo, monospace; background: var(--panel-soft); border: 1px solid var(--hairline); border-radius: 5px; padding: 0 4px; }
+  pre { background: #1d2a3d; color: #dfe9f6; padding: 12px 14px; border-radius: 12px; font-size: 12.5px; line-height: 1.55; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; margin: 8px 0; }
+  th, td { border-bottom: 1px solid var(--hairline); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--panel-soft); color: var(--muted); font-size: 12px; }
+  .decision { border-left: 4px solid var(--accent); background: var(--blue-soft); padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .risk { border-left: 4px solid var(--amber); background: #fff8ee; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .found { border-left: 4px solid var(--green); background: #eefaf4; padding: 10px 14px; border-radius: 0 12px 12px 0; margin: 10px 0; font-size: 14px; }
+  .g { color: var(--green); font-weight: 600; } .a { color: var(--amber); font-weight: 600; } .r { color: var(--danger); font-weight: 600; }
+  .muted { color: var(--muted); }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .three .card { padding: 14px 16px; }
+  .three .card h3 { margin-top: 0; }
+</style>
+</head>
+<body>
+<div class="proto-bar"><b>方案 A · 客户端直连调研</b><span class="tag">基于 v2.4.3 代码 · 2026-10-11</span><span class="sp"></span><a href="a-tech-design.html">服务端中转版设计</a><a href="index.html">← 返回对比</a></div>
+<div class="wrap">
+  <div class="muted" style="font-size:12px">MultiCC 多电脑统一管理 · 第一阶段 · 第二轮调研</div>
+  <h1>客户端直连，还是服务端中转？</h1>
+  <p>两种做法的根本区别在两件事：<b>谁去连谁</b>，以及<b>另一台电脑的凭证放在哪</b>。</p>
+  <pre>服务端中转：  手机/浏览器 ──▶ 电脑 A ──▶ 电脑 B        凭证在 A 的服务端；只要求 A 能连到 B
+客户端直连：  手机/浏览器 ──▶ 电脑 B（直接）           凭证在客户端；要求客户端此刻能连到 B</pre>
+
+  <h2>0. 结论</h2>
+  <div class="decision">
+    <b>直连在 App 上是最自然的做法，在浏览器上是最难的做法。</b><br>
+    · <b>App</b>：没有跨域、混合内容、浏览器权限这些限制；而且 App 的「单服务器」假设集中在一个对象上，改造面可控。<b>推荐 App 直连，并作为主力客户端。</b><br>
+    · <b>浏览器</b>：同页无刷新直连会同时撞上四道墙（下文第 2 节）。可行的直连方式是<b>「切换 = 跳到那台电脑自己的 Air 页面」</b>，用一次性登录票据免去重复登录。体验是「切换时刷新一次页面」，不算完全无感，但不需要中转。<br>
+    · 唯一必须接受的代价：<b>客户端此刻必须能连到那台电脑</b>。手机在外网时，每台电脑都得有自己的外网地址（隧道）；只在内网的电脑，在外面就看不到。
+  </div>
+
+  <h2>1. App（Flutter）直连：调研结果</h2>
+  <div class="found"><b>平台限制对 App 不成立。</b>App 用的是 Dart 自己的网络栈，不受浏览器的跨域、混合内容、Local Network Access 限制；
+    App 现在已经能连 <code>http://192.168.x.x</code>（局域网发现填的就是这种地址，<code>Info.plist</code> 已声明 <code>_multicc._tcp</code> 和本地网络权限）。</div>
+  <table>
+    <tr><th>项</th><th>现状（代码证据）</th><th>直连要做的</th></tr>
+    <tr><td>单服务器假设</td><td>42 个文件、<b>211 处</b>请求都通过 <code>SettingsService.buildHttpUrl</code> 拼地址，令牌也从同一个对象取；共 90 个文件依赖它</td><td>它就是唯一的切换点：引入「当前电脑」上下文，切换时整体换掉 host + token，通知各服务重载。<b>不需要改 211 处调用。</b></td></tr>
+    <tr><td>多服务器凭证</td><td><code>settings_service.dart</code> 已有「服务器历史」（地址 + 令牌，按 host 去重）</td><td>升级为「电脑列表」：名称、颜色、多个候选地址（内网 / 外网）、令牌</td></tr>
+    <tr><td>实时连接</td><td><code>WsTicketClient</code> 每次连接都向当前 host 换一张一次性票据</td><td><b>不用改</b>：直连时 host 本来就是那台电脑的根地址（中转方案反而要改这里）</td></tr>
+    <tr><td>推送</td><td><span class="r">切换服务器时会从旧服务器注销推送</span>（<code>fcm_service.dart:168-174</code>）</td><td>改成<b>向所有已加入的电脑同时注册</b>推送，并在通知里带上电脑 id，点开时自动切到那台。这是「无感」最关键的一处。</td></tr>
+    <tr><td>其它电脑的状态</td><td>无</td><td>App 在前台时每 15–30 秒直接拉各台电脑的轻量摘要；后台靠推送</td></tr>
+    <tr><td>内网 / 外网地址</td><td><code>connection_probe_service.dart</code> 已能探测地址</td><td>每台电脑存多个候选地址，按「内网优先、外网兜底」探测，记住最近一次能通的那个</td></tr>
+  </table>
+  <p>体验：点切换器 → 约 0.5 秒换完（与现在换服务器一样会重新拉数据，但不用重新登录、不丢推送）。任何电脑上的「等你回复」都会推送到手机，点开就落在那台电脑的那个任务上。</p>
+
+  <h2>2. 浏览器直连：四道墙</h2>
+  <p>「同一个 Air 页面里无刷新切到另一台电脑」，要求浏览器从 A 的页面直接请求 B 的接口：</p>
+  <table>
+    <tr><th>墙</th><th>现状 / 事实</th><th>能不能翻</th></tr>
+    <tr><td>① 跨域（CORS）</td><td>服务端<b>完全没有</b> CORS 头（全仓搜不到 <code>Access-Control-Allow</code>）；前端 <code>api-client.js</code> 默认拒绝跨域请求</td><td class="a">能，但要给每台电脑的所有接口加 CORS，并精确限定允许的来源</td></tr>
+    <tr><td>② 登录态</td><td>登录 Cookie 是 <code>SameSite=Lax</code>、按域名隔离（<code>auth.js:71</code>），A 页面带不上 B 的 Cookie；第三方 Cookie 正在被浏览器淘汰</td><td class="a">只能把每台电脑的令牌存在 A 页面的本地存储里，用请求头发出去。<b>任何一台电脑的页面出现 XSS，所有电脑的令牌一起泄露</b></td></tr>
+    <tr><td>③ 混合内容</td><td>A 页面经隧道是 https，B 在内网是 http</td><td class="a">Chrome 对「写明内网 IP」的 http 请求有豁免，但要用户授权（见 ④）；<b>Safari（含 iPhone 上所有浏览器）没有这个豁免</b>，直接拦截</td></tr>
+    <tr><td>④ 本地网络访问权限</td><td>Chrome 142（2025-10）起，公网页面访问内网地址会弹「查找并连接到本地网络上的任何设备」的授权框；据第三方资料，WebSocket 从 Chrome 147 起也受限；iframe 里的页面还要父页面委派权限</td><td class="a">能，但每个浏览器首次都要授权；对话页是 iframe，需要额外委派</td></tr>
+  </table>
+  <div class="risk">四道墙都翻过去之后，还剩<b>版本差异</b>：前端是 A 的、接口是 B 的，两台版本不同就可能出错（中转方案也有这个问题）。所以浏览器的「同页无刷新直连」<b>投入大、坑多、还不稳</b>，不建议做。</div>
+
+  <h3>浏览器的可行直连：跳到那台电脑自己的页面</h3>
+  <pre>你在 A 的 Air 里点「切到 Mac mini」
+  → 浏览器跳到  https://mini 的地址/air?login_ticket=一次性票据
+  → Mac mini 验票、种下自己的 Cookie、抹掉地址栏里的票据（复用现有 ?token= 引导兑换流程）
+  → 你看到的是 Mac mini 自己的 Air：自己的前端、自己的接口，没有跨域、没有版本差异</pre>
+  <ul>
+    <li><b>一次性登录票据从哪来</b>：客户端（App 或浏览器）配对时拿到每台电脑的令牌，用它向那台电脑换一张 60 秒、只能用一次的登录票据。浏览器里不长期保存令牌，只在切换的那一刻用。</li>
+    <li><b>切换器和「其它电脑」状态条</b>：每台电脑的 Air 都要显示别的电脑的状态，需要一个<b>只读、只返回计数的</b>摘要接口开放跨域。只开这一个接口，风险可控。</li>
+    <li><b>电脑列表怎么同步</b>：列表本身（名称、颜色、地址，不含令牌）保存在每台电脑上并互相同步，这样无论从哪台电脑打开，看到的列表都一样。</li>
+    <li><b>限制</b>：浏览器此刻必须能打开 B 的地址。手机浏览器在外网时，B 必须有外网地址。整页跳转不受混合内容限制（跳过去整页都是 B 的），这道墙只拦跨域请求。</li>
+  </ul>
+
+  <h2>3. 横向对比</h2>
+  <table>
+    <tr><th></th><th>服务端中转</th><th>客户端直连（App）</th><th>客户端直连（浏览器跳转）</th></tr>
+    <tr><td>手机在外网、B 只在内网</td><td class="g">能用（A 替你走内网）</td><td class="r">看不到 B</td><td class="r">看不到 B</td></tr>
+    <tr><td>每台电脑要不要外网地址</td><td class="g">只要你打开的那台有</td><td class="a">在外面想用的那几台都要有</td><td class="a">同左，且要 https</td></tr>
+    <tr><td>你打开的那台电脑关机</td><td class="r">全都切不过去</td><td class="g">互不影响</td><td class="g">互不影响</td></tr>
+    <tr><td>延迟 / 带宽</td><td class="a">多一跳；远程屏幕走两段网络</td><td class="g">最短路径</td><td class="g">最短路径</td></tr>
+    <tr><td>另一台电脑的凭证在哪</td><td>服务端文件（0600）</td><td>App 本地</td><td>浏览器只在切换时短暂使用</td></tr>
+    <tr><td>切换体验</td><td>Web 整页刷新约 1 秒</td><td class="g">约 0.5 秒，最接近无感</td><td class="a">跳页面，约 1–2 秒</td></tr>
+    <tr><td>推送</td><td>A 汇总后再推</td><td class="g">每台电脑直接推给手机</td><td>同现在（各自 Web Push）</td></tr>
+    <tr><td>版本差异</td><td class="a">A 的前端 + B 的接口</td><td class="a">App 版本 vs 各电脑版本（现在已经如此）</td><td class="g">无（用 B 自己的前端）</td></tr>
+    <tr><td>服务端改动</td><td class="r">大：转发层、WS 换票转发、对端凭证鉴权</td><td class="g">小：配对 / 设备令牌、摘要接口</td><td class="g">小：登录票据、摘要接口跨域、列表同步</td></tr>
+    <tr><td>以后做方案 B（统一控制台）</td><td>A 汇总，前端改动大</td><td class="g">App 同时连 N 台、本地聚合，顺理成章</td><td class="r">很难（又回到四道墙）</td></tr>
+  </table>
+
+  <h2>4. 推荐：客户端直连为主</h2>
+  <div class="three">
+    <div class="card"><h3>服务端（各台都一样，约 3 天）</h3>
+      <ul>
+        <li>配对：B 显示配对码 → 客户端用码向 B 换一枚<b>设备令牌</b>（可单独吊销，不用暴露 ACCESS_TOKEN）</li>
+        <li><code>GET /api/machine/summary</code>：只读计数，开放跨域</li>
+        <li><code>POST /api/auth/login-ticket</code>：设备令牌换 60 秒一次性登录票据</li>
+        <li>电脑列表（不含令牌）在各台之间同步</li>
+      </ul></div>
+    <div class="card"><h3>App（主力，约 4–5 天）</h3>
+      <ul>
+        <li><code>SettingsService</code> 加「当前电脑」上下文，一处切换</li>
+        <li>服务器历史升级为电脑列表 + 多候选地址探测</li>
+        <li>推送向所有电脑注册，通知点开自动切机</li>
+        <li>侧栏顶部切换器 + 其它电脑状态</li>
+      </ul></div>
+    <div class="card"><h3>Web（约 3 天）</h3>
+      <ul>
+        <li>侧栏切换器、页顶色条、「其它电脑」状态条（读各台摘要）</li>
+        <li>切换 = 拿登录票据，跳到那台电脑的 Air，带上当前视图</li>
+        <li>连不上的电脑如实显示「当前网络访问不到」，并给出它的地址供排查</li>
+      </ul></div>
+  </div>
+  <p class="muted">总计约 10–11 天，和中转方案相当，但工作量从服务端移到了 App。服务端中转可以先不做；以后真遇到「外网手机要看只在内网的电脑」，再把它作为兜底加回来，两者不冲突。</p>
+
+  <h2>5. 需要你确认的</h2>
+  <ol>
+    <li><b>浏览器里切换电脑时跳页面（刷新一次）可以接受吗？</b>浏览器要做到同页无感，只能靠中转，或者硬翻上面的四道墙。</li>
+    <li><b>手机在外面时，想用的每台电脑都有自己的外网地址吗？</b>如果有电脑只在内网，纯直连在外面就看不到它，要么接受，要么保留中转作兜底。</li>
+    <li><b>主力客户端是 App 还是浏览器？</b>如果是 App，就先做 App + 服务端，Web 跟上。</li>
+  </ol>
+
+  <h2>参考</h2>
+  <ul class="muted">
+    <li><a href="https://developer.chrome.com/blog/local-network-access">Chrome · New permission prompt for Local Network Access</a></li>
+    <li><a href="https://groups.google.com/a/chromium.org/g/blink-dev/c/cwu_RUmBpzY">blink-dev · Intent to Ship: Local network access restrictions</a></li>
+    <li><a href="https://steeleobrienconsulting.com/blog/chrome-local-network-access/">Chrome's Local Network Access: What It Breaks and How to Fix It（WebSocket 自 147 起受限的说法来源，第三方）</a></li>
+  </ul>
+</div>
+</body>
+</html>
