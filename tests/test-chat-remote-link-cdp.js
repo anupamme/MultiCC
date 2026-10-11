@@ -30,10 +30,10 @@ const PAGE = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><base h
 <button id="notify-btn" type="button">通知</button>
 <div id="messages"></div>
 <script>
-  // chat-history-view 渲染出来的 markdown 就是这个形状：纯 <a href>，没有 target。
+  // 与 chat-history-view 渲染后的新窗口目标一致；远控处理仍应打开本页浮层。
   document.getElementById('messages').innerHTML =
-    '<p>需要你上手：<a href="#rs=control">🖥 点这里直接操作屏幕</a></p>'
-    + '<p><a id="cross" href="http://127.0.0.1:3000/chat.html?air=1&task=tsk_a&rs=1">🖥 屏幕</a></p>';
+    '<p>需要你上手：<a href="#rs=control" target="_blank" rel="noopener noreferrer">🖥 点这里直接操作屏幕</a></p>'
+    + '<p><a id="cross" href="http://127.0.0.1:3000/chat.html?air=1&task=tsk_a&rs=1" target="_blank" rel="noopener noreferrer">🖥 屏幕</a></p>';
 </script>
 <script src="/chat-remote-links.js"></script>
 <script src="/chat-remote-screen.js"></script>
@@ -74,6 +74,97 @@ const overlayState = `(() => {
     head: ov ? (ov.querySelector('.rs-head')?.textContent || '') : '',
   };
 })()`;
+
+test('rendered message links open new tabs without replacing the chat iframe', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  const destination = '<script>fetch("/opened?isolated=" + (window.opener === null))</script>';
+  const routes = {
+    '/host': '<iframe id="chat" src="/embedded-chat" style="width:800px;height:600px"></iframe>',
+    '/destination': destination,
+    '/artifacts/report/index.html': destination,
+    '/api/download': destination,
+    '/opened': 'ok',
+    '/embedded-chat': `<!doctype html><base href="/"><div id="messages"></div>
+      <script src="/vendor/dompurify/purify.min.js"></script>
+      <script src="/vendor/marked/marked.min.js"></script>
+      <script src="/safe-markdown.js"></script>
+      <script src="/chat-local-links.js"></script>
+      <script src="/chat-history-view.js"></script>
+      <script>
+        window.sameDocument = 'chat';
+        window.view = MultiCCChatHistoryView.createHistoryView({
+          document, messagesEl: document.getElementById('messages'),
+          safeMarkdown: MultiCCSafeMarkdown,
+          fixupLocalFileLinks: MultiCCChatLocalLinks.fixupLocalFileLinks,
+        });
+        window.bubble = view.createAssistantBubble();
+        window.source = '[artifact](/artifacts/report/index.html)\\n\\n'
+          + '[external](' + location.origin.replace('127.0.0.1', 'localhost') + '/destination)\\n\\n'
+          + '<a href="/destination" target="_self">raw HTML</a>\\n\\n'
+          + '[file](/tmp/report.html)';
+        view.renderCurrentText(bubble, source, { streaming: true });
+      </script>`,
+  };
+  for (const file of ['vendor/dompurify/purify.min.js', 'vendor/marked/marked.min.js',
+    'safe-markdown.js', 'chat-local-links.js', 'chat-history-view.js']) {
+    routes['/' + file] = {
+      body: fs.readFileSync(path.join(publicDir, file)),
+      headers: { 'content-type': 'text/javascript' },
+    };
+  }
+  for (const [key, value] of Object.entries(routes)) {
+    if (typeof value === 'string') routes[key] = {
+      body: value, headers: { 'content-type': 'text/html; charset=utf-8' },
+    };
+  }
+  await withCdpHarness({ routes }, async page => {
+    await page.navigate('/host');
+    assert.ok(await page.waitFor('document.querySelector("iframe").contentDocument.querySelectorAll("a[href]").length === 4'));
+    const hostUrl = await page.evaluate('location.href');
+    // Check live text, its final replacement, and a freshly replayed message.
+    for (const phase of ['streaming', 'final', 'history']) {
+      await page.evaluate(`(() => {
+        const w = document.querySelector('iframe').contentWindow;
+        if (${JSON.stringify(phase)} === 'final') w.view.renderCurrentText(w.bubble, w.source, { final: true });
+        if (${JSON.stringify(phase)} === 'history') {
+          w.view.clearMessages();
+          w.view.commitMessage({ id: 'replay', role: 'assistant', content: w.source });
+        }
+      })()`);
+      const links = await page.evaluate(`Array.from(document.querySelector('iframe').contentDocument.querySelectorAll('a[href]'),
+        a => ({ target: a.target, rel: a.rel, href: a.href }))`);
+      assert.equal(links.length, 4);
+      for (const link of links) {
+        assert.equal(link.target, '_blank', phase);
+        assert.equal(link.rel, 'noopener noreferrer', phase);
+      }
+      assert.match(links[3].href, /\/api\/download\?path=%2Ftmp%2Freport.html$/);
+      for (let index = 0; index < links.length; index++) {
+        const openedBefore = page.requests.filter(r => r.path === '/opened').length;
+        const box = await page.evaluate(`(() => {
+          const f = document.querySelector('iframe'), r = f.getBoundingClientRect();
+          const a = f.contentDocument.querySelectorAll('a[href]')[${index}].getBoundingClientRect();
+          return { x: r.x + f.clientLeft + a.x + a.width / 2, y: r.y + f.clientTop + a.y + a.height / 2 };
+        })()`);
+        await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...box, button: 'left', clickCount: 1 });
+        await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...box, button: 'left', clickCount: 1 });
+        const deadline = Date.now() + 5000;
+        while (page.requests.filter(r => r.path === '/opened').length === openedBefore && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        const opened = page.requests.filter(r => r.path === '/opened');
+        assert.equal(opened.length, openedBefore + 1, `${phase}: link ${index} must open`);
+        assert.equal(opened.at(-1).url, '/opened?isolated=true', 'new tab must have no opener');
+        assert.equal(await page.evaluate('location.href'), hostUrl);
+        assert.equal(await page.evaluate('document.querySelector("iframe").contentWindow.sameDocument'), 'chat');
+        const { targetInfos } = await page.send('Target.getTargets');
+        const popup = targetInfos.find(info => info.type === 'page' && info.url === links[index].href);
+        assert.ok(popup, 'destination must be a separate page target');
+        await page.send('Target.closeTarget', { targetId: popup.targetId });
+      }
+    }
+  });
+});
 
 test('a message link opens the real screen overlay in place instead of leaving the page', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
