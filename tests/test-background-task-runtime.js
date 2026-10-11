@@ -860,6 +860,26 @@ async function test(name, fn) {
     ]);
   });
 
+  await test('Codex 子任务参与存活、重连快照和退出收尾，完成不注入重复结果', () => {
+    const h = makeHarness();
+    const state = { cwd: '/repo', currentToolCalls: [] };
+    const event = { subtype: 'codex_task_started', task_id: 'codex-agent:a', description: '检查代码', kind: 'agent' };
+    h.runtime.handleEvent('s1', state, event);
+    assert.strictEqual(h.runtime.hasProcessBackgroundTasks('s1'), true);
+    assert.strictEqual(h.runtime.listActiveBackgroundTasks('s1')[0].description, '检查代码');
+    assert.strictEqual(h.runtime.listActiveBackgroundTasks('s2').length, 0);
+    h.runtime.handleEvent('s1', state, { ...event, subtype: 'codex_task_done', status: 'completed' });
+    assert.strictEqual(h.runtime.hasLiveBackgroundTasks('s1'), false);
+    h.clock.advance(100);
+    assert.strictEqual(h.injections.length, 0);
+    assert.strictEqual(h.processes.length, 0);
+    h.runtime.handleEvent('s1', state, event);
+    assert.strictEqual(h.runtime.reapSessionShadows('s1'), 1);
+    assert.strictEqual(h.broadcasts.filter(b => b.event.type === 'monitor_done').at(-1).event.status, 'interrupted');
+    assert.strictEqual(h.runtime.reapSessionShadows('s1'), 0);
+    assert.strictEqual(h.runtime.hasProcessBackgroundTasks('s1'), false);
+  });
+
   console.log(`\n${passed} background-task runtime tests passed`);
 })().catch(error => {
   console.error(error.stack || error);

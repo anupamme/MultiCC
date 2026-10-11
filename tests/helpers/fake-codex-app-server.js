@@ -23,11 +23,30 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(m.method===process.env.FAKE_CODEX_REJECT){out({id:m.id,error:{code:-32600,message:process.env.FAKE_CODEX_REJECT_MESSAGE||'fixture request rejected'}});return;}
   if(m.method==='initialize')out({id:m.id,result:{userAgent:'fake/'+(process.env.FAKE_CODEX_VERSION||'0.154.0')+' (test)',codexHome:'/tmp/codex',platformFamily:'unix',platformOs:'linux'}});
   if(m.method==='thread/start'){out({id:m.id,result:{thread:{id:'thread-resident'}}});out({method:'thread/started',params:{thread:{id:'thread-resident'}}});}
-  if(m.method==='thread/resume')out({id:m.id,result:{thread:{id:m.params.threadId}}});
+  if(m.method==='thread/resume'){
+    out({id:m.id,result:{thread:{id:m.params.threadId}}});
+    if(process.env.FAKE_CODEX_CHILD_SCENARIO && m.params.threadId.startsWith('child-')){
+      const threadId=m.params.threadId,isFirst=threadId==='child-1';
+      out({method:'thread/started',params:{thread:{id:threadId,parentThreadId:'thread-resident'}}});
+      out({method:'item/started',params:{threadId,item:{id:'inner',type:'mcpToolCall',tool:'检查代码'}}});
+      setTimeout(()=>out({method:'item/mcpToolCall/progress',params:{threadId,itemId:'inner',message:isFirst?'检查接口文件':'正在运行回归测试'}}),20);
+      setTimeout(()=>{
+        out({method:'item/completed',params:{threadId,item:{id:'inner',type:'mcpToolCall',status:'completed'}}});
+        out({method:'turn/completed',params:{threadId,turn:{id:'child-turn',status:isFirst?'completed':'failed'}}});
+      },isFirst?50:Number(process.env.FAKE_CODEX_CHILD_HOLD_MS||700));
+    }
+  }
   if(m.method==='turn/start'){turn+=1;const id='turn-'+turn;out({id:m.id,result:{turn:{id}}});
+    if(process.env.FAKE_CODEX_CHILD_SCENARIO){
+      for(const childId of ['child-1','child-2']){
+        out({method:'item/started',params:{threadId:m.params.threadId,item:{id:childId,type:'collabAgentToolCall',tool:'spawnAgent',status:'inProgress',senderThreadId:m.params.threadId,receiverThreadIds:[]}}});
+        out({method:'item/completed',params:{threadId:m.params.threadId,item:{id:childId,type:'collabAgentToolCall',tool:'spawnAgent',status:'completed',senderThreadId:m.params.threadId,receiverThreadIds:[childId],prompt:childId==='child-1'?'检查接口':'运行测试',agentsStates:{[childId]:{status:'running'}}}}});
+      }
+      out({method:'turn/completed',params:{threadId:'unrelated-thread',turn:{id:'unrelated-turn',status:'completed'}}});
+    }
     const finish=()=>{out({method:'item/agentMessage/delta',params:{itemId:'a'+turn,delta:'OK'+turn}});
       out({method:'turn/completed',params:{turn:{id,status:'completed'}}});};
-    const hold=Number(process.env.FAKE_CODEX_HOLD_MS||0);
+    const hold=Number(process.env.FAKE_CODEX_HOLD_MS||(process.env.FAKE_CODEX_CHILD_SCENARIO?350:0));
     if(hold)setTimeout(finish,hold);else finish();}
 });
 setInterval(()=>{},1000);

@@ -50,6 +50,52 @@ function collect() {
   return { events, onEvent: (evt) => events.push(evt) };
 }
 
+test('两个子线程独立更新，子线程完成不结束主回合，主回合结束后继续接收后台进度', { timeout: 5000 }, async () => {
+  const background = [];
+  let resolveDone;
+  const done = new Promise(resolve => { resolveDone = resolve; });
+  const fixture = createFixture('child-progress', { FAKE_CODEX_CHILD_SCENARIO: '1' }, {
+    idleMs: 50,
+    onBackgroundEvent: event => {
+      background.push(event);
+      if (event.subtype === 'codex_task_done' && event.task_id === 'codex-agent:child-2') resolveDone(event);
+    },
+  });
+  const { stream } = fixture;
+  try {
+    const sink = collect();
+    const main = await stream.send('child-progress', '并行检查', sink.onEvent);
+    assert.equal(main.result.params.turn.id, 'turn-1');
+    assert.equal(stream.status('child-progress').threadId, 'thread-resident');
+    assert.equal(sink.events.filter(e => e.method === 'turn/completed').length, 1);
+    assert.equal(sink.events.some(e => e.params?.threadId?.startsWith('child-')), false);
+    assert.deepEqual(background.filter(e => e.subtype === 'codex_task_started').map(e => e.task_id),
+      ['codex-agent:child-1', 'codex-agent:child-2']);
+    assert.ok(background.some(e => e.task_id === 'codex-agent:child-1' && e.status === 'completed'));
+    assert.equal(stream.status('child-progress').backgroundActive, true);
+    const second = await done;
+    assert.equal(second.status, 'failed');
+    assert.equal(stream.status('child-progress').backgroundActive, false);
+    const resumes = fixture.requests().filter(r => r.method === 'thread/resume');
+    assert.deepEqual(resumes.map(r => r.params), [
+      { threadId: 'child-1', excludeTurns: true }, { threadId: 'child-2', excludeTurns: true },
+    ]);
+    assert.equal(sink.events.some(e => e.params?.threadId === 'unrelated-thread'), false);
+  } finally { await stream.closeAndWait('child-progress'); }
+});
+
+test('关闭仍有子任务的常驻进程会调用退出收尾', { timeout: 5000 }, async () => {
+  let exits = 0;
+  const fixture = createFixture('child-close', {
+    FAKE_CODEX_CHILD_SCENARIO: '1', FAKE_CODEX_CHILD_HOLD_MS: '10000',
+  }, { onBackgroundEvent() {}, onExit: () => { exits += 1; } });
+  try {
+    await fixture.stream.send('child-close', '并行检查', () => {});
+    assert.equal(fixture.stream.status('child-close').backgroundActive, true);
+  } finally { await fixture.stream.closeAndWait('child-close'); }
+  assert.equal(exits, 1);
+});
+
 for (const method of ['thread/start', 'thread/resume', 'turn/start']) {
   test(`a rejected ${method} exits and releases the host turn`, { timeout: 5000 }, async () => {
     const name = `reject-${method}`;

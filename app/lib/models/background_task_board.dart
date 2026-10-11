@@ -187,9 +187,12 @@ class BackgroundTaskBoard {
     final row = _rowForTask(evt['task_id']?.toString() ?? '');
     if (row == null) return;
     _rows[row.key] = row.copyWith(
-      state: evt['status']?.toString() == 'fail'
+      description: evt['summary']?.toString() ?? row.description,
+      state: ['fail', 'failed', 'error'].contains(evt['status']?.toString())
           ? BackgroundTaskState.fail
-          : BackgroundTaskState.done,
+          : evt['status'] == 'interrupted'
+              ? BackgroundTaskState.stale
+              : BackgroundTaskState.done,
       updatedAt: now,
     );
   }
@@ -218,12 +221,23 @@ class BackgroundTaskBoard {
       for (final t in tasks) {
         if (t is Map) {
           final id = t['task_id']?.toString() ?? t['id']?.toString() ?? '';
-          if (id.isNotEmpty) active.add(id);
+          if (id.isNotEmpty) {
+            active.add(id);
+            if (!_dismissed.contains('t:$id') && _rowForTask(id)?.isSpinning != true) {
+              _upsert(BackgroundTaskRow(
+                key: 't:$id', taskId: id,
+                description: t['description']?.toString()
+                    ?? _rowForTask(id)?.description ?? '后台任务',
+                state: BackgroundTaskState.start,
+                confirmedBg: true, updatedAt: now,
+              ), now: now);
+            }
+          }
         }
       }
     }
     for (final row in _rows.values.toList()) {
-      if (!row.taskId.isEmpty) {
+      if (row.taskId.isNotEmpty) {
         if (active.contains(row.taskId)) {
           if (!row.confirmedBg) {
             _rows[row.key] = row.copyWith(confirmedBg: true, updatedAt: now);

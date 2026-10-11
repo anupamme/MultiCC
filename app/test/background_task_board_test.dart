@@ -13,6 +13,32 @@ void main() {
   setUpAll(() => I18n.init('zh'));
 
   group('BackgroundTaskBoard', () {
+    test('重连快照恢复子任务行，失败和中断分别收尾', () {
+      final board = BackgroundTaskBoard();
+      board.onBackgroundTasksSnapshot({
+        'tasks': [
+          {'task_id': 'codex-agent:a', 'description': '正在运行测试'},
+          {'task_id': 'codex-agent:b', 'description': '正在检查代码'},
+        ],
+      }, now: 1);
+      board.settleAtTurnEnd(now: 2, turnId: 'main');
+      expect(board.rows().where((row) => row.isSpinning), hasLength(2));
+      board.onMonitorDone({
+        'task_id': 'codex-agent:a',
+        'status': 'failed',
+        'summary': '测试失败',
+      }, now: 3);
+      board.onMonitorDone({
+        'task_id': 'codex-agent:b',
+        'status': 'interrupted',
+        'summary': '进程退出',
+      }, now: 3);
+      final rows = {for (final row in board.rows()) row.taskId: row};
+      expect(rows['codex-agent:a']!.state, BackgroundTaskState.fail);
+      expect(rows['codex-agent:a']!.description, '测试失败');
+      expect(rows['codex-agent:b']!.state, BackgroundTaskState.stale);
+    });
+
     test('monitor_started creates a spinning row keyed by task id', () {
       final board = BackgroundTaskBoard();
       board.onMonitorStarted({

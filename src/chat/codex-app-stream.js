@@ -31,8 +31,7 @@ const { releaseResidentRoute, retainResidentRoute } = require('../codex/resident
 //   • There is no in-process interrupt. The app-server's turn/interrupt is not
 //     reachable through the bridge, so cancel() stops the CHILD; the thread
 //     survives on disk and the next turn re-attaches with `--thread-id`.
-//   • Background-task notifications do not exist on the codex protocol (the
-//     codex-exp adapter decodes none), so idle reclaim is unconditional there.
+//   • Codex 子线程通过 bridge 的独立后台事件通道上报，不依赖当前回合。
 //
 // The zcode lane (`streamBackend: 'zcode-app-server'`) rides the same machinery
 // with its own wire protocol: its bridge (zcode-bridge.cjs `--resident`) emits
@@ -114,6 +113,10 @@ const PROTOCOLS = {
     retainsHome: true,
     read(evt) {
       if (!evt || !evt.method) return null;
+      if (evt.method === 'multicc/background') {
+        return { forward: false, taskEvent: evt.params?.event,
+          background: Math.max(0, Number(evt.params?.event?.active) || 0) };
+      }
       const nativeId = evt.method === 'thread/started'
         ? (evt.params?.thread?.id || evt.params?.thread?.sessionId || null) : null;
       return { forward: true, nativeId, done: evt.method === 'turn/completed' };
@@ -159,6 +162,7 @@ function spawnProc(name, s) {
   if (protocol.retainsHome) proc.once('close', retainResidentRoute(s.env?.CODEX_HOME));
   s.spawnedFingerprint = protocol.fingerprint(s.env);
   s.backgroundActive = 0;
+  s.nativeTaskIds = new Set();
   s.lineBuf = '';
   s.stderrTail = '';
   s.jsonlParseErrors = 0;
@@ -208,6 +212,17 @@ function onStdout(name, chunk) {
     }
     const read = PROTOCOLS[s.protocol].read(evt);
     if (!read) continue;
+    if (evt.method === 'multicc/native_session_missing') s.threadId = null;
+    const eventThreadId = evt.params?.threadId || evt.params?.thread?.id;
+    if (s.protocol === 'codex' && evt.method !== 'multicc/background' &&
+        s.threadId && eventThreadId && eventThreadId !== s.threadId) continue;
+    if (read.taskEvent && typeof s.onBackgroundEvent === 'function') {
+      try { s.onBackgroundEvent(read.taskEvent); } catch (_) {}
+    }
+    if (read.taskEvent?.task_id) {
+      if (read.taskEvent.subtype === 'codex_task_done') s.nativeTaskIds.delete(read.taskEvent.task_id);
+      else s.nativeTaskIds.add(read.taskEvent.task_id);
+    }
     if (read.forward) {
       if (s.current) s.current.eventCount += 1;
       if (s.current && typeof s.current.onEvent === 'function') {
@@ -267,6 +282,7 @@ function onExit(name, code, signal, err) {
   s.recycling = false;
   s.spawnedFingerprint = null;
   s.backgroundActive = 0;
+  s.nativeTaskIds?.clear();
   if (wasBusy && cur && typeof cur.reject === 'function') {
     cur.reject(new Error(err
       ? err.message
@@ -406,6 +422,7 @@ function ensure(name, cfg) {
       onExit: cfg.onExit || null,
       onDispose: cfg.onDispose || null,
       beforeSpawn: cfg.beforeSpawn || null,
+      onBackgroundEvent: cfg.onBackgroundEvent || null,
       protocol: protocolOf(cfg.streamBackend),
       proc: null, started: !!cfg.sessionId, busy: false, backgroundActive: 0,
       queue: [], current: null, lineBuf: '', stderrTail: '',
@@ -427,6 +444,7 @@ function ensure(name, cfg) {
     if (cfg.onExit !== undefined) s.onExit = cfg.onExit;
     if (cfg.onDispose !== undefined) s.onDispose = cfg.onDispose;
     if (cfg.beforeSpawn !== undefined) s.beforeSpawn = cfg.beforeSpawn;
+    if (cfg.onBackgroundEvent !== undefined) s.onBackgroundEvent = cfg.onBackgroundEvent;
     if (s.protocol === 'codex' && cfg.sessionId === null && s.threadId) {
       // 宿主确认历史缺失或已归档后，不能继续沿用常驻进程里的旧线程。
       s.threadId = null;
@@ -515,6 +533,11 @@ function close(name) {
   s.proc = null;
   if (cur && typeof cur.reject === 'function') {
     try { cur.reject(new Error('codex app-server session closed')); } catch (_) {}
+  }
+  if (s.backgroundActive > 0 || s.nativeTaskIds?.size > 0) {
+    s.backgroundActive = 0;
+    s.nativeTaskIds?.clear();
+    try { s.onExit?.({ code: null, signal: 'SIGTERM', wasBusy: false }); } catch (_) {}
   }
   try { s.onDispose?.(); } catch (_) {}
   sessions.delete(name);

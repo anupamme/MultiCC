@@ -639,7 +639,7 @@
           liveUi.pushDanmaku('progress', formatProgressHeartbeat(message, host.translate), `turn:${activeProgressTurnId}`);
           break;
         case 'background_tasks':
-          liveUi.reconcileDanmakuTasks?.((message.tasks || []).map(t => t && (t.id || t.task_id)).filter(Boolean));
+          liveUi.reconcileDanmakuTasks?.(message.tasks || []);
           break;
         case 'chat_msg_meta':
           handleCommittedMessage(message);

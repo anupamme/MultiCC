@@ -1483,6 +1483,20 @@ function makeDanmakuUi(extra = {}) {
   return { liveUi, body: ids.get('danmaku-body') };
 }
 
+test('重连快照重建遗漏的 Codex 子任务行，并保留最新描述和跨回合状态', () => {
+  const { liveUi, body } = makeDanmakuUi();
+  liveUi.reconcileDanmakuTasks([
+    { task_id: 'codex-agent:a', description: '检查代码 · 正在运行测试' },
+    { task_id: 'codex-agent:b', description: '检查接口 · 正在读取文件' },
+  ]);
+  assert.equal(body.children.length, 2);
+  liveUi.settleTurnScopedDanmaku();
+  assert.ok(body.children.every(row => row.className === 'dm-row dm-start'));
+  liveUi.pushDanmaku('progress', '检查代码 · 正在汇总结果', 'codex-agent:a');
+  assert.equal(body.children.length, 2);
+  assert.ok(body.children.some(row => row.querySelector('.dm-txt').textContent.includes('正在汇总结果')));
+});
+
 test('danmaku keeps a confirmed background task across turn end, then settles it when it leaves the active set', () => {
   const { liveUi, body } = makeDanmakuUi();
   liveUi.pushDanmaku('start', '子任务 A', 'task-1');
