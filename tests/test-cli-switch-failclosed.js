@@ -224,6 +224,8 @@ async function cleanup() {
       PORT: String(PORT),
       ACCESS_TOKEN: TOKEN,
       MULTICC_DATA_DIR: dataRoot,
+      // The fake CLIs invent native ids that exist in no real store.
+      MULTICC_NATIVE_SESSION_PROBE: '0',
       OPENCODE_CMD: fakeCli,
       CLAUDE_CMD: fakeClaude,
       CODEX_CMD: '/usr/bin/true',

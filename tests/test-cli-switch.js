@@ -345,17 +345,128 @@ test('opencode probe answers from the opencode session table', () => {
     db.exec('CREATE TABLE session (id TEXT PRIMARY KEY)');
     db.prepare('INSERT INTO session (id) VALUES (?)').run('ses_here');
     db.close();
-    const probe = (cli, id, opts = { dbPath }) => nativeSessionExists(cli, { cliSessionId: id }, opts);
-    assert.strictEqual(probe('opencode', 'ses_here'), true);
-    assert.strictEqual(probe('opencode', 'ses_gone'), false);
-    assert.strictEqual(probe('opencode', 'ses_here', { dbPath: path.join(dir, 'missing.db') }), null);
+    const probe = (id, opts = { dbPath }) => nativeSessionExists('opencode', { cliSessionId: id }, opts);
+    assert.strictEqual(probe('ses_here'), true);
+    assert.strictEqual(probe('ses_gone'), false);
+    assert.strictEqual(probe('ses_here', { dbPath: path.join(dir, 'missing.db') }), null);
     fs.writeFileSync(path.join(dir, 'broken.db'), 'not a database');
-    assert.strictEqual(probe('opencode', 'ses_here', { dbPath: path.join(dir, 'broken.db') }), null);
-    assert.strictEqual(probe('codex', 'ses_here'), null, 'CLIs without a probe stay unknown');
+    assert.strictEqual(probe('ses_here', { dbPath: path.join(dir, 'broken.db') }), null);
     assert.strictEqual(nativeSessionExists('opencode', { cliSessionId: null }, { dbPath }), null);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('every file-backed CLI probe finds its own store layout and only reports gone when it read one', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { nativeSessionExists } = require('../src/cli/native-session-exists');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-probe-home-'));
+  const put = (...parts) => {
+    const p = path.join(home, ...parts);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    if (!fs.existsSync(p)) fs.writeFileSync(p, '{}');
+  };
+  const mkdir = (...parts) => fs.mkdirSync(path.join(home, ...parts), { recursive: true });
+  const U = n => 'aaaaaaaa-bbbb-4ccc-8ddd-' + String(n).padStart(12, '0');
+  const check = (cli, state, extra = {}) => nativeSessionExists(cli, state, { homeDir: home, env: {}, ...extra });
+  try {
+    // Nothing installed at all: every probe must say "cannot tell", never "gone".
+    for (const cli of ['claude', 'claude-exp', 'codex', 'codex-exp', 'qoder', 'codebuddy', 'commandcode', 'dsh']) {
+      assert.strictEqual(check(cli, { cliSessionId: U(1) }), null, `${cli} with no store`);
+    }
+
+    // Claude family: ~/.claude, an official-account home and CLAUDE_CONFIG_DIR.
+    put('.claude', 'projects', '-some-slug', U(10) + '.jsonl');
+    put('.multicc', 'official-accounts', 'claude', 'acct1.home', 'projects', '-other', U(11) + '.jsonl');
+    put('custom-cfg', 'projects', '-third', U(12) + '.jsonl');
+    for (const cli of ['claude', 'claude-exp']) {
+      assert.strictEqual(check(cli, { cliSessionId: U(10) }), true);
+      assert.strictEqual(check(cli, { cliSessionId: U(11) }), true, `${cli} account home`);
+      assert.strictEqual(check(cli, { cliSessionId: U(12) }, { env: { CLAUDE_CONFIG_DIR: path.join(home, 'custom-cfg') } }), true);
+      assert.strictEqual(check(cli, { cliSessionId: U(12) }), false, `${cli} unlisted config dir`);
+      assert.strictEqual(check(cli, { cliSessionId: U(99) }), false);
+    }
+    // Plain claude resumes by the stream id; the SDK lane by cliSessionId.
+    assert.strictEqual(check('claude', { streamSessionId: U(10), cliSessionId: U(99) }), true);
+    assert.strictEqual(check('claude', { streamSessionId: U(99), cliSessionId: U(10) }), false);
+    assert.strictEqual(check('claude', { streamSessionId: null, cliSessionId: U(10) }), true);
+    assert.strictEqual(check('claude-exp', { streamSessionId: U(99), cliSessionId: U(10) }), true);
+
+    // Codex family: main home, archived rollouts, per-provider/task/attempt homes.
+    put('.codex', 'sessions', '2026', '10', '11', 'rollout-2026-10-11T00-00-00-' + U(20) + '.jsonl');
+    put('.codex', 'archived_sessions', 'rollout-x-' + U(21) + '.jsonl');
+    put('.multicc', 'codex-homes', 'prov', 'sessions', '2026', 'rollout-y-' + U(22) + '.jsonl');
+    put('.multicc', 'codex-session-homes', 'task-1', 'sessions', 'rollout-z-' + U(23) + '.jsonl');
+    put('.multicc', 'codex-attempt-homes', 'att-1', 'sessions', 'rollout-w-' + U(24) + '.jsonl');
+    for (const cli of ['codex', 'codex-exp']) {
+      for (const n of [20, 21, 22, 23, 24]) assert.strictEqual(check(cli, { cliSessionId: U(n) }), true, `${cli} ${n}`);
+      assert.strictEqual(check(cli, { cliSessionId: U(98) }), false);
+    }
+
+    // Qoder (CN home), CodeBuddy, Command Code and dsh.
+    put('.qoder-cn', 'projects', '-slug', U(30), 'transcript.jsonl');
+    put('.codebuddy', 'projects', 'slug', U(31) + '.jsonl');
+    put('.commandcode', 'projects', 'slug', U(32) + '.jsonl');
+    put('.dsh', 'sessions', '--tmp--', U(33), 'session.v3.jsonl.zstd');
+    for (const [cli, n] of [['qoder', 30], ['codebuddy', 31], ['commandcode', 32], ['dsh', 33]]) {
+      assert.strictEqual(check(cli, { cliSessionId: U(n) }), true, cli);
+      assert.strictEqual(check(cli, { cliSessionId: U(97) }), false, cli);
+    }
+    // A store from another CLI must not vouch for this one.
+    assert.strictEqual(check('codebuddy', { cliSessionId: U(32) }), false);
+
+    // No verified layout => unknown, and path-escaping ids are never trusted.
+    for (const cli of ['zcode', 'kimi', 'gemini', 'grok']) {
+      assert.strictEqual(check(cli, { cliSessionId: U(10) }), null, cli);
+    }
+    for (const bad of ['../x', 'a/b', '..', '\\x00y']) {
+      assert.strictEqual(check('claude-exp', { cliSessionId: bad }), null, bad);
+    }
+
+    // The documented escape hatch turns every probe back into "unknown".
+    assert.strictEqual(check('claude-exp', { cliSessionId: U(99) }, { env: { MULTICC_NATIVE_SESSION_PROBE: '0' } }), null);
+    assert.strictEqual(check('codex', { cliSessionId: U(20) }, { env: { MULTICC_NATIVE_SESSION_PROBE: '0' } }), null);
+
+    // An unreadable store is "cannot tell", not "gone".
+    const throwing = { ...fs, readdirSync() { const e = new Error('denied'); e.code = 'EACCES'; throw e; } };
+    assert.strictEqual(check('claude-exp', { cliSessionId: U(99) }, { fs: throwing }), null);
+    assert.strictEqual(check('codex', { cliSessionId: U(99) }, { fs: throwing }), null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('switch clears both ids when a stream-id lane\'s transcript is gone', () => {
+  const session = {
+    kind: 'chat', cli: 'codex', cliSessionId: 'thread', model: 'gpt',
+    cliStates: {
+      claude: {
+        cliSessionId: 'old-cli-id', streamSessionId: 'old-stream-id', model: 'opus',
+        effort: 'high', provider: 'p', subagent: null, reportedModel: null, updatedAt: 1,
+      },
+    },
+  };
+  const seen = [];
+  const switched = activateCliState(session, 'claude', {
+    nativeSessionExists: (cli, state) => { seen.push([cli, state.streamSessionId, state.cliSessionId]); return false; },
+  });
+  assert.deepStrictEqual(seen, [['claude', 'old-stream-id', 'old-cli-id']]);
+  assert.strictEqual(switched.reused, false);
+  assert.strictEqual(switched.staleNativeSessionId, 'old-stream-id');
+  assert.strictEqual(session.cliSessionId, null);
+  assert.strictEqual(session._streamSessionId, undefined);
+  assert.strictEqual(session.cliStates.claude.streamSessionId, null);
+  assert.strictEqual(session.model, 'opus', 'per-CLI config survives');
+
+  // A stream-id-only state is still probed (it used to be skipped).
+  const streamOnly = { kind: 'chat', cli: 'codex', cliSessionId: 't', cliStates: { claude: { cliSessionId: null, streamSessionId: 's', updatedAt: 1 } } };
+  assert.strictEqual(activateCliState(streamOnly, 'claude', { nativeSessionExists: () => false }).reused, false);
+  // fresh:true never probes; it already discards the target state.
+  let probed = false;
+  activateCliState({ ...session, cli: 'codex' }, 'claude', { fresh: true, nativeSessionExists: () => { probed = true; return false; } });
+  assert.strictEqual(probed, false);
 });
 
 console.log(`\n${passed} passed`);
