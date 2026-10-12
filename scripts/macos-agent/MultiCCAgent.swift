@@ -2583,9 +2583,17 @@ func rfbSession(_ fd: Int32) {
       let n = Int(b[1]) << 8 | Int(b[2])
       guard n >= 0, n <= 4096, let list = readFully(fd, n * 4) else { break reader }
       let e = [UInt8](list)
-      RfbScreen.shared.setEncodings(client, (0..<n).map { i in
-        Int32(bitPattern: UInt32(e[i * 4]) << 24 | UInt32(e[i * 4 + 1]) << 16 | UInt32(e[i * 4 + 2]) << 8 | UInt32(e[i * 4 + 3]))
-      })
+      var encodings: [Int32] = []
+      encodings.reserveCapacity(n)
+      var encodingIndex = 0
+      while encodingIndex < n {
+        let offset = encodingIndex * 4
+        let raw = UInt32(e[offset]) << 24 | UInt32(e[offset + 1]) << 16
+          | UInt32(e[offset + 2]) << 8 | UInt32(e[offset + 3])
+        encodings.append(Int32(bitPattern: raw))
+        encodingIndex += 1
+      }
+      RfbScreen.shared.setEncodings(client, encodings)
     case 3:
       guard let b = readFully(fd, 9) else { break reader }
       if b[0] == 0 { RfbScreen.shared.markFull(client) }
