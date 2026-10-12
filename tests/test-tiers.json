@@ -75,6 +75,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/air_mobile_navigation_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/air_new_task_sheet_test.dart",
       "tier": "flow",
       "lane": "flutter"
@@ -2409,6 +2414,24 @@
       "owner": "npm:test:provider-router",
       "entrypoints": [
         "npm:test:provider-router"
+      ]
+    },
+    {
+      "path": "tests/test-codex-background-native.js",
+      "tier": "flow",
+      "lane": "isolated",
+      "owner": "npm:test:codex-background-native",
+      "entrypoints": [
+        "npm:test:codex-background-native"
+      ]
+    },
+    {
+      "path": "tests/test-codex-background-progress.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
       ]
     },
     {
