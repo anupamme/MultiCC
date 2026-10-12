@@ -82,13 +82,15 @@ function activateCliState(session, targetCli, options = {}) {
   // turn engine then rejects as cli_resume_mismatch.
   let staleNativeSessionId = null;
   let remembered = existing;
-  if (existing && existing.cliSessionId && options.fresh !== true
+  if (existing && (existing.cliSessionId || existing.streamSessionId) && options.fresh !== true
     && typeof options.nativeSessionExists === 'function') {
     let exists = null;
     try { exists = options.nativeSessionExists(targetCli, existing); } catch (_) { exists = null; }
     if (exists === false) {
-      staleNativeSessionId = existing.cliSessionId;
-      remembered = { ...existing, cliSessionId: null };
+      // Both ids go: a lane that resumes by one of them must not quietly fall
+      // back to the other one's (equally unverified) transcript.
+      staleNativeSessionId = existing.streamSessionId || existing.cliSessionId;
+      remembered = { ...existing, cliSessionId: null, streamSessionId: null };
     }
   }
   const state = remembered || {

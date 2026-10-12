@@ -60,6 +60,9 @@ function createHarness(overrides = {}) {
     synchronizeCodexSessionRoute: route => effects.push(`sync:${route.nativeSessionId}`),
     buildHandoffCheckpoint,
     activateCliState,
+    // Fake native ids in these fixtures must never be judged against the real
+    // ~/.codex / ~/.claude of whoever runs the suite.
+    nativeSessionExists: overrides.nativeSessionExists || (() => null),
     rememberActiveCliState,
     ensureCliStates,
     cliStateSummary: stateSummary,
@@ -823,6 +826,23 @@ test('a resumable Codex thread is moved to the planned line before the switch', 
   const sync = h.effects.indexOf('sync:codex-native');
   assert.ok(sync >= 0);
   assert.ok(sync < h.effects.indexOf('mutate:runtime.auto-provider-cli-switch'));
+});
+
+test('a switch to a lane whose native session vanished is not marked as a reused target', () => {
+  const probed = [];
+  const h = createHarness({
+    planAutoCliSwitch: () => ({ cli: 'codex', providerId: 'codex-line', providerName: 'Codex Line' }),
+    nativeSessionExists: (cli, state) => { probed.push([cli, state.cliSessionId]); return false; },
+  });
+  h.session.cliStates.codex = { ...(h.session.cliStates.codex || {}), cliSessionId: 'codex-gone', provider: 'codex-default' };
+  h.session.providerSelection = autoPool();
+  h.runtime.applyPendingConfiguration('s1', {}, 'x');
+  assert.deepEqual(probed, [['codex', 'codex-gone']]);
+  assert.equal(h.session.cli, 'codex');
+  assert.equal(h.session.cliSessionId, null, 'the vanished id is not resumed');
+  assert.equal(h.session.pendingCliHandoff.reusedTarget, false,
+    'reusedTarget=true is what makes the turn engine reject a fresh native session');
+  assert.equal(h.session.pendingCliHandoff.status, 'pending');
 });
 
 test('the lane switch stays out of the way: staged choices, legacy pools, unavailable lanes, planner faults', () => {
