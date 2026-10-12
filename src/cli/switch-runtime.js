@@ -6,6 +6,7 @@ const { selectionKey } = require('../chat/auto-provider-selection-key');
 const cliUpstream = require('./cli-upstream-version');
 const capability = require('./cli-capability');
 const homebrewTakeover = require('./homebrew-takeover');
+const { nativeSessionExists } = require('./native-session-exists');
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -749,8 +750,12 @@ function createCliSwitchRuntime(options) {
     const result = options.activateCliState(session, targetCli, {
       fresh: switchOptions.fresh === true,
       defaults: cliSwitchDefaults(targetCli),
+      nativeSessionExists: options.nativeSessionExists || nativeSessionExists,
       now,
     });
+    if (result.staleNativeSessionId) {
+      console.warn(`[multicc/cli-switch] [${session.id}] ${targetCli} native session ${result.staleNativeSessionId} no longer exists; switching without reuse`);
+    }
     const handoff = {
       id: handoffIdFactory(),
       fromCli,

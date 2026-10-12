@@ -75,7 +75,23 @@ function activateCliState(session, targetCli, options = {}) {
   const existing = session.cliStates[targetCli] && typeof session.cliStates[targetCli] === 'object'
     ? session.cliStates[targetCli]
     : null;
-  const state = existing || {
+  // A remembered native id is only worth reusing if the target CLI still has
+  // that session. `false` is a definite "gone" (e.g. opencode pruned its DB);
+  // anything else (unknown / no probe) keeps the old optimistic behaviour.
+  // Reusing a vanished id makes the CLI silently start a new session, which the
+  // turn engine then rejects as cli_resume_mismatch.
+  let staleNativeSessionId = null;
+  let remembered = existing;
+  if (existing && existing.cliSessionId && options.fresh !== true
+    && typeof options.nativeSessionExists === 'function') {
+    let exists = null;
+    try { exists = options.nativeSessionExists(targetCli, existing); } catch (_) { exists = null; }
+    if (exists === false) {
+      staleNativeSessionId = existing.cliSessionId;
+      remembered = { ...existing, cliSessionId: null };
+    }
+  }
+  const state = remembered || {
     cliSessionId: null,
     streamSessionId: null,
     model: defaults.model || null,
@@ -115,6 +131,7 @@ function activateCliState(session, targetCli, options = {}) {
     fromCli,
     toCli: targetCli,
     reused: !!existing && !!(state.cliSessionId || state.streamSessionId),
+    staleNativeSessionId,
     state: session.cliStates[targetCli],
   };
 }
