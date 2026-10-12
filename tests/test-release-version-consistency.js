@@ -238,13 +238,20 @@ test('core runner covers every selected path and expands declared variants', () 
   //   - tests/test-file-transfer-routes.js 挂 owner npm:test:core（tier 仍 flow），
   //     不改 core.length。
   // 310 + 1 = 311，deterministic 264 + 1 = 265，commands 292 + 1 = 293。
-  assert.equal(core.length, 311, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 311);
+  // 2026-10-12 v2.5.0 发版复核：+1 core deterministic。
+  //   - tests/test-codex-background-progress.js：Codex 原生后台任务进度
+  //     （src/cli-adapters/codex-background-events.cjs + src/chat/native-background-tasks.js）
+  //     与 codex-exp 适配器 collabAgentToolCall 展示的契约——子任务衍生/两路并行/
+  //     嵌套追踪、心跳静默与超时回收、Agent 工具卡片与中文状态。完全 hermetic：
+  //     注入 timer/now/emit，fixture 驱动，不碰网络、端口、真进程。
+  // 311 + 1 = 312，deterministic 265 + 1 = 266，commands 293 + 1 = 294。
+  assert.equal(core.length, 312, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 312);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 265);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 266);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 21,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -254,8 +261,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 293,
-    '289 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 294,
+    '290 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

@@ -223,7 +223,18 @@ test('production wires task board and WebSocket chat to the same session ingress
   );
   assert.match(source,
     /sendSessionMessage:\s*\(\.\.\.args\)\s*=>\s*taskContextHost\.deliverSessionMessage\(\.\.\.args\)/);
+  // Chat WS messages and task-board HTTP sends converge on the same ingress
+  // call. Since the queued-turn refactor, auto-provider/memory admission prep
+  // no longer lives inline in the WS handler; it is centralized in the reusable
+  // prepareQueuedTurn hook wired as beforeDeliver so both entrypoints (and a
+  // post-restart replay of the same queue record) prepare identically.
   assert.match(turnEngine,
-    /const deliver\s*=\s*\(\)\s*=>\s*taskContextHost\.deliverSessionMessage\(sessionName,\s*msg\.text,\s*turnOpts\)/);
-  assert.match(turnEngine, /else await deliver\(\)/);
+    /await taskContextHost\.deliverSessionMessage\(sessionName,\s*msg\.text,\s*turnOpts\)/);
+  assert.doesNotMatch(turnEngine,
+    /const deliver\s*=\s*\(\)\s*=>\s*taskContextHost\.deliverSessionMessage\(sessionName,\s*msg\.text,\s*turnOpts\)/,
+    'admission prep must live in the shared prepareQueuedTurn hook, not inline in the WS handler');
+  assert.match(turnEngine,
+    /prepareQueuedTurn:\s*createQueuedTurnPreparation\(\{/);
+  assert.match(source,
+    /beforeDeliver:\s*async descriptor\s*=>\s*\{\s*await chatTurnEngine\.prepareQueuedTurn\(descriptor\);[\s\S]*?return workspaceAdmission\.beforeDeliver\(descriptor\);?\s*\}/);
 });

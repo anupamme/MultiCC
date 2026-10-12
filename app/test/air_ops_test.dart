@@ -717,16 +717,16 @@ void main() {
       final settings = await _settings();
       final client = MockClient((_) async => _json(const {}));
       final store = AirOpsStore(settings: settings, httpClient: client);
-      store.version = const AirVersionInfo(current: '2.4.3', channel: 'dev', updateAvailable: false);
+      store.version = const AirVersionInfo(current: '2.5.0', channel: 'dev', updateAvailable: false);
       Widget host(String? version) => MaterialApp(home: Scaffold(body: SizedBox(
         width: 252, child: AirVersionRow(store: store, clientVersion: version,
           language: 'zh', onLanguage: () {}),
       )));
       await tester.pumpWidget(host(null));
       final height = tester.getSize(find.byKey(const ValueKey('air-ver-row'))).height;
-      await tester.pumpWidget(host('2.32.1 (152)'));
-      expect(textOf(tester, 'air-ver-current'), '服务端 v2.4.3');
-      expect(textOf(tester, 'air-ver-hint'), 'App 2.32.1 (152)');
+      await tester.pumpWidget(host('2.33.0 (153)'));
+      expect(textOf(tester, 'air-ver-current'), '服务端 v2.5.0');
+      expect(textOf(tester, 'air-ver-hint'), 'App 2.33.0 (153)');
       expect(tester.getSize(find.byKey(const ValueKey('air-ver-row'))).height, height);
       expect(tester.takeException(), isNull);
       await _teardown(tester, store, client);
