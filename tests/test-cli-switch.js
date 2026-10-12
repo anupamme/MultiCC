@@ -289,4 +289,73 @@ test('checkpoint budget retains newest context and renders transcript as quoted 
   assert.doesNotMatch(prompt, /<assistant>/);
 });
 
+function opencodeSwitchSession() {
+  return {
+    kind: 'chat', cli: 'claude-exp', cliSessionId: null, model: 'fable', effort: 'medium',
+    cliStates: {
+      opencode: {
+        cliSessionId: 'ses_gone', streamSessionId: null, model: 'opencodego/x', effort: 'high',
+        provider: null, providerSelection: null, subagent: null, agent: null,
+        reportedModel: null, updatedAt: 1,
+      },
+    },
+  };
+}
+
+test('switch drops a remembered native session the target CLI no longer has', () => {
+  const session = opencodeSwitchSession();
+  const calls = [];
+  const switched = activateCliState(session, 'opencode', {
+    now: 300,
+    nativeSessionExists: (cli, state) => { calls.push([cli, state.cliSessionId]); return false; },
+  });
+  assert.deepStrictEqual(calls, [['opencode', 'ses_gone']]);
+  assert.strictEqual(switched.reused, false);
+  assert.strictEqual(switched.staleNativeSessionId, 'ses_gone');
+  assert.strictEqual(session.cliSessionId, null);
+  assert.strictEqual(session.cliStates.opencode.cliSessionId, null);
+  assert.strictEqual(session.model, 'opencodego/x', 'per-CLI config survives');
+});
+
+test('switch keeps the native session when it exists or existence is unknown', () => {
+  for (const verdict of [true, null, undefined, 'maybe']) {
+    const session = opencodeSwitchSession();
+    const switched = activateCliState(session, 'opencode', { nativeSessionExists: () => verdict });
+    assert.strictEqual(switched.reused, true, `verdict ${verdict}`);
+    assert.strictEqual(switched.staleNativeSessionId, null);
+    assert.strictEqual(session.cliSessionId, 'ses_gone');
+  }
+  const throwing = opencodeSwitchSession();
+  assert.strictEqual(activateCliState(throwing, 'opencode', {
+    nativeSessionExists: () => { throw new Error('probe broke'); },
+  }).reused, true);
+  assert.strictEqual(activateCliState(opencodeSwitchSession(), 'opencode', {}).reused, true);
+});
+
+test('opencode probe answers from the opencode session table', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const Database = require('better-sqlite3');
+  const { nativeSessionExists } = require('../src/cli/native-session-exists');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-oc-probe-'));
+  try {
+    const dbPath = path.join(dir, 'opencode.db');
+    const db = new Database(dbPath);
+    db.exec('CREATE TABLE session (id TEXT PRIMARY KEY)');
+    db.prepare('INSERT INTO session (id) VALUES (?)').run('ses_here');
+    db.close();
+    const probe = (cli, id, opts = { dbPath }) => nativeSessionExists(cli, { cliSessionId: id }, opts);
+    assert.strictEqual(probe('opencode', 'ses_here'), true);
+    assert.strictEqual(probe('opencode', 'ses_gone'), false);
+    assert.strictEqual(probe('opencode', 'ses_here', { dbPath: path.join(dir, 'missing.db') }), null);
+    fs.writeFileSync(path.join(dir, 'broken.db'), 'not a database');
+    assert.strictEqual(probe('opencode', 'ses_here', { dbPath: path.join(dir, 'broken.db') }), null);
+    assert.strictEqual(probe('codex', 'ses_here'), null, 'CLIs without a probe stay unknown');
+    assert.strictEqual(nativeSessionExists('opencode', { cliSessionId: null }, { dbPath }), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 console.log(`\n${passed} passed`);
