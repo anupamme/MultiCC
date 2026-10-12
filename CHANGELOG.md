@@ -2,6 +2,18 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.5.0 — Visible Codex sub-agents, native background progress, and mobile fleet control (2026-10-12)
+
+### Highlights
+
+- **Codex sub-agents show up as real tools** — `collabAgentToolCall` items are no longer invisible: the timeline now renders agent orchestration steps (spawn/wait/send-input/close-agent/follow-up) as `tool_start` … `tool_result` entries with per-agent states, so a turn that forks into sub-agents reads like the Bash/tool calls next to it (`src/cli-adapters/codex-exp.js`).
+- **Native Codex background tasks report live progress** — a native background thread now streams its tool labels, running status and completion back instead of staying a black box; the CLI's own result delivery wakes the main Agent once, avoiding duplicate wake-ups (`src/cli-adapters/codex-background-events.cjs`, `src/chat/native-background-tasks.js`).
+- **CLI switching stops recycling dead native sessions** — before reusing a remembered stream/cli session id, MultiCC probes the target CLI's real store (claude/claude-exp/opencode/composio layout), and a definitely-gone id is dropped on the spot. Reusing a pruned id used to make the CLI silently start a new session that the turn engine then rejected as `cli_resume_mismatch` (`src/cli/native-session-exists.js`, `src/cli-switch.js`).
+- **The macOS agent lets you watch the room** — typed input from the human automatically suspends an ongoing automation with a visible countdown HUD, then resumes once you stop; automation now also supports drag gestures on one private event source (`scripts/macos-agent/MultiCCAgent.swift`).
+- **Mobile fleet management lands in the App** — the Air task list grows a *switch server* entry that flips the whole App to another remembered host (reconnecting the shell, leaving server-side tasks untouched), and settings are reorganised into named panels with a back affordance; a new mobile Air shell/workspace renders the fleet for phones (`app/lib/widgets/air/air_mobile_shell.dart`, `app/lib/widgets/server_switch_dialog.dart`, `app/lib/screens/air_settings_screen.dart`).
+- **Air gets a mobile layout and a setup nudge** — the web dashboard gains a phone-first navigation layout and a 3-step onboarding card (provider → account → project) that dismisses only when real work is configured (`public/air-mobile.js`, `public/air-navigation.js`, `public/air-onboarding.js`).
+- **Desktop packages are verified before shipping** — a new after-pack hook (and a CI re-check after packaging) resolves every packaged server dependency inside the built Resources tree, so a staging that skipped `node_modules` no longer slips into the installer silently (`scripts/desktop-verify-resources.js`, `desktop/after-pack.js`).
+
 ## v2.4.3 — Compressed snapshots and fewer dead ends (2026-10-11)
 
 ### Highlights
