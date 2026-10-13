@@ -2823,7 +2823,7 @@ const _chatRecovery = window.MultiCCChatRecoveryService.create({
   closeMoreMenu: () => closeHeaderMoreModal(),
 });
 
-const chatDoctor = window.MultiCCChatDoctor.create({ document, translate: tt, getSessionName: () => _sessionName, addSystemMsg, withToken, closeMoreMenu: () => closeHeaderMoreModal() });
+const chatDoctor = window.MultiCCChatDoctor.create({ document, translate: tt, getSessionName: () => _sessionName, addSystemMsg, withToken, closeMoreMenu: () => closeHeaderMoreModal(), confirm: (message, opts) => chatLiveUi.confirm(message, opts) });
 
 /* ── Debug panel wiring ── */
 (function initDebugPanel() {

@@ -73,7 +73,7 @@ function run(argv, cwd, timeoutMs = 15000) {
 function createDoctorTools(deps) {
   const {
     sessionId, getSession, loadHistory, cwdOf, repoRoot, dataDir, logDirs = [], autofix = false,
-    serverPid = process.pid, backupDir, exec = run, now = Date.now,
+    serverPid = process.pid, backupDir, exec = run, now = Date.now, onIssueDraft = () => {},
   } = deps;
   const session = getSession(sessionId) || {};
   const cwd = cwdOf ? cwdOf(sessionId) : null;
@@ -261,6 +261,17 @@ function createDoctorTools(deps) {
       },
     );
   }
+
+  tools.push({
+    name: 'propose_issue',
+    description: '穷尽手段仍无法解决时，整理一份 GitHub issue 草稿（标题 + Markdown 正文：现象、已收集的证据、已排除项、复现线索）。不会自动提交——由用户在界面上点击后才会打开 GitHub。之后仍须调用 finish。',
+    parameters: { type: 'object', properties: { title: str('简短标题'), body: str('Markdown 正文，不要包含任何凭据') }, required: ['title', 'body'] },
+    run: args => {
+      if (!args.title || !args.body) throw new Error('title 与 body 必填');
+      onIssueDraft({ title: String(args.title), body: String(args.body) });
+      return '草稿已保存，等待用户点击提交。请继续调用 finish。';
+    },
+  });
 
   tools.push({
     name: 'finish', description: '结束诊断并提交报告。必须调用且只调用一次。',

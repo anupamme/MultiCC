@@ -4491,7 +4491,14 @@ window.MULTICC_I18N_CATALOG = {
     "doctorEvidence": "证据：",
     "doctorActions": "已执行的修复：",
     "doctorNextSteps": "需要你处理：",
-    "doctorFixHint": "提示：按住 Shift 点击「诊断」可让它在 main 主仓内自动修复。"
+    "doctorFixHint": "提示：按住 Shift 点击「诊断」可让它在 main 主仓内自动修复。",
+    "doctorIssueButton": "提交到 GitHub issue",
+    "doctorIssueTitle": "医生没能解决：把已收集的信息整理成 issue 提交到 {repo}（点击后先预览，确认才会打开 GitHub）",
+    "doctorIssueConfirm": "将在新标签页打开 {repo} 的预填 issue 页面，你还需要在 GitHub 上再点一次提交。\n以下内容已脱敏（凭据、家目录路径），请确认没有不想公开的信息：\n\n{preview}",
+    "doctorIssueOk": "打开 GitHub",
+    "doctorIssueCancel": "先不提交",
+    "doctorIssueOpened": "已打开预填的 issue 页面，请在 GitHub 上检查后点击提交。",
+    "doctorIssueOpenedLong": "已打开预填的 issue 页面。正文较长，完整内容已复制到剪贴板，请粘贴替换页面里被截断的正文后再提交。"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -8984,6 +8991,13 @@ window.MULTICC_I18N_CATALOG = {
     "doctorEvidence": "Evidence:",
     "doctorActions": "Fixes applied:",
     "doctorNextSteps": "Needs your action:",
-    "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout."
+    "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout.",
+    "doctorIssueButton": "Submit as GitHub issue",
+    "doctorIssueTitle": "The doctor could not solve it: send what it collected to {repo} as an issue (you preview first; nothing opens until you confirm)",
+    "doctorIssueConfirm": "A pre-filled issue page for {repo} will open in a new tab; you still have to press Submit on GitHub.\nThe content below is redacted (credentials, home path). Make sure nothing private remains:\n\n{preview}",
+    "doctorIssueOk": "Open GitHub",
+    "doctorIssueCancel": "Not now",
+    "doctorIssueOpened": "Opened the pre-filled issue page. Review it on GitHub and press Submit.",
+    "doctorIssueOpenedLong": "Opened the pre-filled issue page. The body is long, so the full text was copied to your clipboard; paste it over the truncated body before submitting."
   }
 };

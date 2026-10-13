@@ -55,8 +55,9 @@
             seen = tools.length;
           }
           if (run.status !== 'running') {
-            options.addSystemMsg(run.status === 'error' ? tr('doctorFailed', { error: run.error })
+            const line = options.addSystemMsg(run.status === 'error' ? tr('doctorFailed', { error: run.error })
               : run.status === 'cancelled' ? tr('doctorCancelled') : formatReport(run, tr));
+            if (run.issue) offerIssue(line, run.issue);
             return { ok: run.status === 'done', run };
           }
         }
@@ -66,6 +67,35 @@
         options.addSystemMsg(tr('doctorFailed', { error: error.message }));
         return { ok: false };
       } finally { running = false; }
+    }
+
+    // The model could not solve it: let the human send what was collected to
+    // GitHub. Nothing leaves the machine until they confirm the preview; the
+    // click then only opens a pre-filled issue page they still have to submit.
+    function offerIssue(el, issue) {
+      if (!el || typeof el.appendChild !== 'function' || !issue || !issue.url) return null;
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.className = 'doctor-issue';
+      button.textContent = tr('doctorIssueButton');
+      button.title = tr('doctorIssueTitle', { repo: issue.repo });
+      button.style.cssText = 'display:block;margin-top:8px;padding:4px 12px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer';
+      button.addEventListener('click', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const preview = `${issue.title}\n\n${issue.body.slice(0, 1800)}${issue.body.length > 1800 ? '\n…' : ''}`;
+        const ok = options.confirm ? await options.confirm(tr('doctorIssueConfirm', { repo: issue.repo, preview }), {
+          title: tr('doctorIssueButton'), okText: tr('doctorIssueOk'), cancelText: tr('doctorIssueCancel'),
+        }) : true;
+        if (!ok) return;
+        if (issue.truncated && global.navigator?.clipboard?.writeText) {
+          await global.navigator.clipboard.writeText(`${issue.title}\n\n${issue.body}`).catch(() => {});
+        }
+        (options.open || ((url) => global.open(url, '_blank', 'noopener')))(issue.url);
+        options.addSystemMsg(tr(issue.truncated ? 'doctorIssueOpenedLong' : 'doctorIssueOpened'));
+      });
+      el.appendChild(button);
+      return button;
     }
 
     const onClick = event => {
@@ -89,7 +119,7 @@
       return button;
     }
 
-    return Object.freeze({ diagnose, offer });
+    return Object.freeze({ diagnose, offer, offerIssue });
   }
 
   const api = Object.freeze({ create, formatReport });

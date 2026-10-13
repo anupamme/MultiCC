@@ -4489,5 +4489,12 @@
   "doctorEvidence": "Evidence:",
   "doctorActions": "Fixes applied:",
   "doctorNextSteps": "Needs your action:",
-  "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout."
+  "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout.",
+  "doctorIssueButton": "Submit as GitHub issue",
+  "doctorIssueTitle": "The doctor could not solve it: send what it collected to {repo} as an issue (you preview first; nothing opens until you confirm)",
+  "doctorIssueConfirm": "A pre-filled issue page for {repo} will open in a new tab; you still have to press Submit on GitHub.\nThe content below is redacted (credentials, home path). Make sure nothing private remains:\n\n{preview}",
+  "doctorIssueOk": "Open GitHub",
+  "doctorIssueCancel": "Not now",
+  "doctorIssueOpened": "Opened the pre-filled issue page. Review it on GitHub and press Submit.",
+  "doctorIssueOpenedLong": "Opened the pre-filled issue page. The body is long, so the full text was copied to your clipboard; paste it over the truncated body before submitting."
 }

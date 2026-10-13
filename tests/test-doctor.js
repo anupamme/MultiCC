@@ -186,3 +186,56 @@ test('offer() puts one diagnose button on an abnormal output and reuses the same
   assert.equal(doctor.offer(el), null, 'no duplicate button on the same element');
   assert.equal(doctor.offer(null), null);
 });
+
+function serviceWith(report, { draftTitle } = {}) {
+  const fx = fixture(false);
+  const home = os.homedir();
+  const doctor = createDoctorService({
+    getSession: id => (id === 's1' ? { id: 's1', cli: 'claude', worktreePath: fx.worktree } : null), loadHistory: () => [], cwdOf: () => fx.worktree,
+    resolveTarget: () => ({ target: { wireApi: 'messages', url: 'http://x', apiKey: 'k' }, model: 'm' }),
+    repoRoot: fx.root, dataDir: fx.root, logDirs: [], exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+    loop: async ({ tools }) => {
+      if (draftTitle) await tools.find(t => t.name === 'propose_issue').run({ title: draftTitle, body: `卡在 ${home}/x，token=sk-abcdefghijklmnopqrstuvwx` });
+      return { finished: true, turns: 3, report };
+    },
+  });
+  return doctor;
+}
+const settle = async (doctor) => {
+  const { runId } = doctor.start({ sessionId: 's1' });
+  await new Promise(r => setTimeout(r, 30));
+  return doctor.get(runId);
+};
+
+test('unsolved run gets a scrubbed GitHub issue draft with a prefilled url, solved run does not', async () => {
+  const unsolved = await settle(serviceWith({ summary: '卡死', rootCause: '未确认', fixed: false }, { draftTitle: `标题 ${os.homedir()}` }));
+  assert.ok(unsolved.issue, 'issue offered');
+  assert.equal(unsolved.issue.repo, 'lsjwzh/MultiCC');
+  assert.ok(unsolved.issue.url.startsWith('https://github.com/lsjwzh/MultiCC/issues/new?title='));
+  assert.ok(!unsolved.issue.body.includes(os.homedir()) && !unsolved.issue.title.includes(os.homedir()), 'home path scrubbed');
+  assert.ok(!/sk-abcdefghijklmnopqrstuvwx/.test(unsolved.issue.body + unsolved.issue.url), 'credentials scrubbed');
+  assert.match(unsolved.issue.body, /环境（自动附带）/);
+  assert.equal(unsolved.issueDraft, undefined, 'raw draft is not exposed');
+  const fallback = await settle(serviceWith({ summary: '没修好', rootCause: '未确认', evidence: ['日志里有 ERR'] }));
+  assert.match(fallback.issue.body, /## 现象[\s\S]*没修好[\s\S]*日志里有 ERR/, 'auto-built when the model gave no draft');
+  const solved = await settle(serviceWith({ summary: 'ok', rootCause: 'lock', fixed: true }));
+  assert.equal(solved.issue, undefined);
+});
+
+test('issue button asks for confirmation before anything opens', async () => {
+  const { create } = require('../public/chat-doctor');
+  const makeBtn = () => ({ style: {}, listeners: {}, addEventListener(t, f) { this.listeners[t] = f; } });
+  const opened = []; const msgs = []; const el = { appendChild(c) { this.btn = c; } };
+  const issue = { repo: 'o/r', title: 'T', body: 'B', url: 'https://github.com/o/r/issues/new?title=T', truncated: false };
+  let answer = false;
+  const doctor = create({ document: { getElementById: () => null, createElement: makeBtn }, translate: (k, v) => k + JSON.stringify(v || {}),
+    getSessionName: () => 's1', addSystemMsg: m => msgs.push(m), withToken: u => u, confirm: async () => answer, open: u => opened.push(u) });
+  const btn = doctor.offerIssue(el, issue);
+  const ev = { preventDefault() {}, stopPropagation() {} };
+  await btn.listeners.click(ev);
+  assert.deepEqual(opened, [], 'declined: nothing opens');
+  answer = true;
+  await btn.listeners.click(ev);
+  assert.deepEqual(opened, [issue.url]);
+  assert.match(msgs.at(-1), /doctorIssueOpened/);
+});
