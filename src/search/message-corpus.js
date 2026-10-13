@@ -196,22 +196,13 @@ function createMessageCorpus({ index, history, fsImpl = fs, logger = console, no
     return { sessionId: id, sessionSkipped: false, chunks: rows.length, pruned, ...written };
   }
 
-  // One sweep. Sessions the index still holds but chat_history no longer has are
-  // dropped, so a deleted conversation stops being searchable.
-  function syncAll({ force = false } = {}) {
-    const started = now();
-    const ids = listSessions();
+  // Drop what the index still holds for sessions chat_history no longer has, so a
+  // deleted conversation stops being searchable. Split out of syncAll so a sliced
+  // sweep can prune at the end WITHOUT re-reading sessions that changed while it
+  // was running (an active session changes every few seconds — a full syncAll at
+  // the end would re-parse it again, synchronously, and undo the slicing).
+  function pruneDead(ids, known, { force = false } = {}) {
     const live = new Set(ids);
-    let synced = 0;
-    let skipped = 0;
-    let chunks = 0;
-    const known = index.listRefs(MESSAGE_SCOPE);
-    const refs = new Map(known.map(ref => [ref.refId, ref]));
-    for (const id of ids) {
-      const result = syncSession(id, { force, refs });
-      if (result.sessionSkipped) skipped += 1;
-      else { synced += 1; chunks += result.chunks || 0; }
-    }
     const emptySweep = !force && ids.length === 0 && known.length > 0 && historyRootMissing();
     const stale = emptySweep ? [] : known.map(ref => ref.refId).filter(refId => !live.has(refId));
     let removed = 0;
@@ -222,12 +213,47 @@ function createMessageCorpus({ index, history, fsImpl = fs, logger = console, no
     // sessions actually died.
     if (!emptySweep) index.dropMarkers(MESSAGE_SCOPE, deadMarkers(live));
     if (stale.length) removed = index.removeRefs(MESSAGE_SCOPE, stale);
-    const summary = { sessions: ids.length, synced, skipped, chunks, removedRefs: stale.length, removedChunks: removed, tookMs: now() - started };
-    if (emptySweep) {
+    return { emptySweep, stale, removed };
+  }
+
+  function pruneSummary(pruned, known) {
+    const summary = { removedRefs: pruned.stale.length, removedChunks: pruned.removed };
+    if (pruned.emptySweep) {
       summary.pruneSkipped = known.length;
       summary.pruneSkippedReason = 'no-sources-discovered';
       logger?.warn?.(`search_index_prune_skipped: 0 个来源被发现，保留已有的 ${known.length} 个来源（确认要清空请加 --force）`);
     }
+    return summary;
+  }
+
+  // Prune only — no session is read. The sliced sweep calls this after it has
+  // synced every session in slices.
+  function prune() {
+    const ids = listSessions();
+    const known = index.listRefs(MESSAGE_SCOPE);
+    return pruneSummary(pruneDead(ids, known), known);
+  }
+
+  // One sweep. Sessions the index still holds but chat_history no longer has are
+  // dropped, so a deleted conversation stops being searchable.
+  function syncAll({ force = false } = {}) {
+    const started = now();
+    const ids = listSessions();
+    let synced = 0;
+    let skipped = 0;
+    let chunks = 0;
+    const known = index.listRefs(MESSAGE_SCOPE);
+    const refs = new Map(known.map(ref => [ref.refId, ref]));
+    for (const id of ids) {
+      const result = syncSession(id, { force, refs });
+      if (result.sessionSkipped) skipped += 1;
+      else { synced += 1; chunks += result.chunks || 0; }
+    }
+    const pruned = pruneDead(ids, known, { force });
+    const summary = {
+      sessions: ids.length, synced, skipped, chunks,
+      ...pruneSummary(pruned, known), tookMs: now() - started,
+    };
     logger?.log?.(`search_index_sync: ${JSON.stringify(summary)}`);
     return summary;
   }
@@ -235,6 +261,7 @@ function createMessageCorpus({ index, history, fsImpl = fs, logger = console, no
   return Object.freeze({
     listSessions,
     syncAll,
+    prune,
     syncSession,
     search: options => index.search({ ...options, scope: MESSAGE_SCOPE }),
     stats: () => index.stats(),

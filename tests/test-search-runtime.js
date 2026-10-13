@@ -41,6 +41,7 @@ function manualImmediate() {
   return {
     setImmediateImpl(fn) { queue.push(fn); },
     pending: () => queue.length,
+    runOne() { queue.shift()(); },
     drain() {
       let guard = 0;
       while (queue.length) {
@@ -100,6 +101,56 @@ test('the staged first sweep yields between slices and prunes only once it is do
     assert.ok(found[0].snippet.text.includes('全文检索'));
   } finally {
     cleanup();
+  }
+});
+
+test('the 60s sweep is sliced: one slow session per slice, nothing parsed twice, pruning at the end', async () => {
+  const scheduler = manualImmediate();
+  const dir = tempDir();
+  const repo = createChatHistoryFileRepository({ dataDir: dir });
+  // The clock moves only when a history file is actually read, so the slice budget
+  // bites on re-parsed sessions the way it does on a 100MB conversation.
+  let clock = 1_000_000;
+  let reads = 0;
+  const history = { ...repo, read: id => { reads += 1; clock += 50; return repo.read(id); } };
+  for (const id of ['s1', 's2', 's3', 'gone']) repo.write(id, [turn('m1', `会话 ${id} 的第一版正文，主题是缓存层。`)]);
+  const runtime = createSearchRuntime({
+    dataDir: dir, logger, intervalMs: 0, history, now: () => clock,
+    setImmediateImpl: scheduler.setImmediateImpl,
+  });
+  try {
+    runtime.sweep();
+    assert.equal(runtime.stats().scopes[0].refs, 4);
+    const baseline = runtime.status().sweeps;
+
+    await sleep(5);
+    for (const id of ['s1', 's2', 's3']) repo.write(id, [turn('m2', `会话 ${id} 改写后的正文，主题是排序。`)]);
+    repo.deleteSession('gone');
+    reads = 0;
+
+    runtime.sweepSliced();
+    assert.equal(scheduler.pending(), 1, 'the tick defers its first slice instead of sweeping inline');
+    assert.equal(reads, 0, 'nothing is parsed inline');
+    runtime.sweepSliced();
+    assert.equal(scheduler.pending(), 1, 'a tick that lands mid-pass is refused');
+
+    let slices = 0;
+    while (scheduler.pending()) { scheduler.runOne(); slices += 1; assert.ok(slices < 50, 'the pass must finish'); }
+    assert.equal(slices, 3, 'every re-parsed session overruns the budget, so each one gets its own slice');
+    assert.equal(reads, 3, 'each changed session is parsed exactly once — the closing step does not re-sync');
+    assert.equal(runtime.status().sweeps, baseline + 1);
+    assert.equal(runtime.status().lastSweep.synced, 3);
+    assert.equal(runtime.status().lastSweep.removedRefs, 1, 'the deleted session is pruned at the end');
+    assert.equal(runtime.stats().scopes[0].refs, 3);
+    assert.ok(runtime.findMessages({ text: '排序' }).length >= 1, 'the rewritten text is searchable');
+
+    runtime.sweepSliced();
+    assert.equal(scheduler.pending(), 1, 'the next tick is accepted once the previous pass is done');
+    scheduler.drain();
+    assert.equal(reads, 3, 'an idle pass reads nothing');
+  } finally {
+    runtime.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
