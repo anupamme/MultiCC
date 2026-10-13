@@ -390,8 +390,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // Air navigation: localized project/settings labels and the three-step guide.
     // +20 键（doctor*）：会话医生按钮、异常处一键诊断与诊断进度/报告文案，生成器实测 8990/570883。
     // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
-    maxLines: 9004,
-    maxBytes: 572451,
+    // +5 键（airCliUpdatePinned/Unpin*）：*_CMD 钉住派生路径时的升级前提示与「改用新版」，实测 9014/573401。
+    maxLines: 9014,
+    maxBytes: 573401,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

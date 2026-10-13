@@ -140,6 +140,9 @@ function createCliSwitchRuntime(options) {
   const fetchLatestVersionOverride = options.fetchLatestVersion;
   const fetchLatestSourceOverride = options.fetchLatestVersionWithSource;
   const registryBaseOverride = options.registryBase;
+  // 被 *_CMD 钉死的路径来自哪个环境、写在哪个 .env(测试可注入, 缺省与 server.js 同一份)。
+  const pinEnv = options.env || process.env;
+  const envFilePath = options.envFile || path.join(__dirname, '..', '..', '.env');
   const versionCache = { at: 0, versions: null };
   // registry 与 latest 一起缓: 记下「这个新版是从哪个源读到的」, 安装时把同一个源
   // 交给 npm, 保证报得出的新版一定装得到(见 buildInstallEnv)。
@@ -284,6 +287,8 @@ function createCliSwitchRuntime(options) {
       endedAt: job.endedAt,
       exitCode: job.exitCode,
       error: job.error,
+      errorCode: job.errorCode || null,
+      pinnedEnv: job.pinnedEnv || null,
       // job.hint 优先: 它是「命令成功但没作用到派生的二进制」这类我们已经查明的
       // 具体原因, 比按日志正则猜出来的通用提示更准。
       hint: job.hint || classifyInstallHint(job._log.tail()),
@@ -411,6 +416,14 @@ function createCliSwitchRuntime(options) {
   // 合并成对外契约。原有字段(cmd/available/version/error)一个不动, 只新增
   // latest/updateAvailable/updateSource/inUseCount/latestRegistry, 老客户端继续照旧读。
   // 键是**家族**(= 升级目标): 一个 CLI 一行, 由它带出随 MultiCC 走的引擎(bundled)。
+  // 该 CLI 的派生路径是否被 *_CMD 钉住: 变量有值、且就是 multicc 当前派生的那个路径。
+  function pinnedInfo(cli, cmd) {
+    const name = CLI_CMD_ENV[cli];
+    const value = name ? String(pinEnv[name] || '').trim() : '';
+    if (!value || (cmd && value !== cmd)) return null;
+    return { env: name, path: value };
+  }
+
   function decorateVersions(versions, latest, inUse = {}, registry = {}) {
     const out = {};
     for (const family of familyTargets().keys()) {
@@ -427,6 +440,8 @@ function createCliSwitchRuntime(options) {
         // 走的是镜像」, 升级则用同一个源去装。
         latestRegistry: (registry && registry[family]) || null,
         inUseCount: inUse[family] || 0,
+        // 升级前预检: 钉住时, 升级装到安装车道自己的位置, 不会改变这份被钉的二进制。
+        pinned: pinnedInfo(family, entry.cmd),
       };
     }
     return out;
@@ -578,8 +593,9 @@ function createCliSwitchRuntime(options) {
     // 派生路径是用户用 *_CMD 钉死的: 升级大概率装到了安装车道自己的位置, 这不是
     // 「安装没生效」, 而是「钉住的那份本来就不归这条升级命令管」—— 如实说明, 别让用户去删旧安装。
     const cmdEnvName = CLI_CMD_ENV[cli] || `${String(cli).toUpperCase()}_CMD`;
-    if (process.env[cmdEnvName] && process.env[cmdEnvName] === cmd) {
+    if (pinEnv[cmdEnvName] && pinEnv[cmdEnvName] === cmd) {
       job.errorCode = 'pinned_target';
+      job.pinnedEnv = cmdEnvName;
       job.error = `升级命令已完成，但 ${cmdEnvName} 固定了 ${cmd}（v${before}），升级装到了别处，该固定路径没有变化`;
       job.hint = `multicc 派生会话会一直使用 ${cmdEnvName} 指向的这份。`
         + `若想用新版：取消 ${cmdEnvName}（改为注释）后重启 multicc，让它自动选择新装的那份；`
@@ -1149,6 +1165,47 @@ function createCliSwitchRuntime(options) {
       const force = !!(req.query && (req.query.refresh === '1' || req.query.force === '1'));
       const result = await collectCliVersions({ force });
       return res.json({ ok: true, ...result });
+    }));
+
+    // POST /api/cli/:cli/unpin — 「改用新版」: 把 .env 里钉住派生路径的 *_CMD 注释掉。
+    // 只有用户在面板上点了才会走到这里; 不删除原值(留成注释方便回退), 也不碰系统环境。
+    // 变量不在 .env 里(来自 launchd/shell)时拒绝, 因为我们改不了, 如实说明。
+    app.post('/api/cli/:cli/unpin', asyncHandler(async (req, res) => {
+      const cli = String((req.params && req.params.cli) || '').trim().toLowerCase();
+      if (!supportedClis.includes(cli) || !CLI_CMD_ENV[cli]) {
+        return res.status(400).json({ ok: false, error: 'unsupported cli' });
+      }
+      const name = CLI_CMD_ENV[cli];
+      const previous = String(pinEnv[name] || '').trim();
+      if (!previous) {
+        return res.status(409).json({ ok: false, code: 'not_pinned', error: `${name} 未设置，无需处理` });
+      }
+      let text;
+      try { text = fs.readFileSync(envFilePath, 'utf8'); } catch (_) { text = null; }
+      const lines = text == null ? [] : text.split('\n');
+      const index = lines.findIndex(line => {
+        const m = line.match(/^\s*([^#=]+?)\s*=/);
+        return m && m[1] === name;
+      });
+      if (index < 0) {
+        return res.status(409).json({
+          ok: false, code: 'pin_not_in_env_file',
+          error: `${name} 不是写在 .env 里的（可能来自系统服务或 shell 环境），multicc 无法代为修改`,
+          hint: `请在设置它的地方（如 launchd plist 的 EnvironmentVariables）移除 ${name}，然后重启 multicc。`,
+        });
+      }
+      lines[index] = `# ${lines[index].trim()}  # unpinned by multicc ${new Date(clock()).toISOString()}`;
+      const tmp = `${envFilePath}.tmp-${process.pid}`;
+      try {
+        fs.writeFileSync(tmp, lines.join('\n'));
+        fs.renameSync(tmp, envFilePath);
+      } catch (error) {
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        return res.status(500).json({ ok: false, code: 'env_write_failed', error: '写入 .env 失败' });
+      }
+      delete pinEnv[name];
+      invalidateVersionCaches();
+      return res.json({ ok: true, env: name, previous, restartRecommended: true });
     }));
 
     // POST /api/cli/:cli/upgrade — 跑官方安装命令做原地升级。

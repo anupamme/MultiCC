@@ -105,6 +105,8 @@ function createHarness(overrides = {}) {
     fetchLatestVersion: overrides.fetchLatestVersion || (async () => null),
     fetchLatestVersionWithSource: overrides.fetchLatestVersionWithSource,
     registryBase: overrides.registryBase,
+    env: overrides.env,
+    envFile: overrides.envFile,
   });
   const app = {
     routes: {},
@@ -143,7 +145,12 @@ function createHarness(overrides = {}) {
     await app.routes['POST /api/cli/:cli/upgrade']({ params: { cli }, body: {} }, res);
     return res;
   }
-  return { runtime, session, records, chat, effects, app, invoke, invokeSpecs, invokeInstall, invokeStatus, invokeVersions, invokeUpgrade };
+  async function invokeUnpin(cli) {
+    const res = createResponse();
+    await app.routes['POST /api/cli/:cli/unpin']({ params: { cli }, body: {} }, res);
+    return res;
+  }
+  return { runtime, session, records, chat, effects, app, invoke, invokeUnpin, invokeSpecs, invokeInstall, invokeStatus, invokeVersions, invokeUpgrade };
 }
 
 test('dependency boundary fails closed before registering a route', () => {
@@ -1419,4 +1426,73 @@ test('homebrew owner detection follows the real path and refuses unsafe names', 
   // 非 npm 渠道(curl 安装脚本)不接管
   assert.equal(takeoverCommand(owner, 'curl -fsSL https://qoder.cn/install | bash'),
     'curl -fsSL https://qoder.cn/install | bash');
+});
+
+// ── *_CMD 钉住派生路径: 归因 + 预检 + 「改用新版」────────────────────────────
+function pinHarness(extra = {}) {
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-pin-'));
+  const envFile = path.join(dir, '.env');
+  fs.writeFileSync(envFile, 'FOO=1\nCODEX_CMD=/bin/codex\nBAR=2\n');
+  const env = { CODEX_CMD: '/bin/codex' };
+  const procs = [];
+  const harness = createHarness({
+    env, envFile,
+    spawnProcess: () => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter(); proc.kill = () => {};
+      procs.push(proc);
+      return proc;
+    },
+    cliCommands: { codex: '/bin/codex' },
+    execFileVersion: (cmd, args, _o, cb) => cb(null, 'codex-cli 0.160.0', ''),
+    fetchLatestVersion: async () => '0.162.1',
+    availability: { codex: { available: true } },
+    ...extra,
+  });
+  return { harness, env, envFile, procs };
+}
+
+test('versions reports a pinned *_CMD so the panel can warn before upgrading', async () => {
+  const { harness } = pinHarness();
+  const res = await harness.invokeVersions();
+  assert.deepEqual(res.body.versions.codex.pinned, { env: 'CODEX_CMD', path: '/bin/codex' });
+});
+
+test('an upgrade that lands elsewhere is attributed to the pin, not to a failed install', async () => {
+  const { harness, procs } = pinHarness();
+  await harness.invokeVersions();
+  const started = await harness.invokeUpgrade('codex');
+  procs[0].emit('exit', 0, null);
+  for (let i = 0; i < 6; i += 1) await new Promise(resolve => setImmediate(resolve));
+  const job = (await harness.invokeStatus(started.body.jobId)).body.job;
+  assert.equal(job.status, 'error');
+  assert.equal(job.errorCode, 'pinned_target');
+  assert.equal(job.pinnedEnv, 'CODEX_CMD');
+  assert.match(job.hint, /不要删除被固定的旧安装/);
+});
+
+test('unpin comments out the *_CMD line, keeps the old value, and drops it from the live env', async () => {
+  const { harness, env, envFile } = pinHarness();
+  const res = await harness.invokeUnpin('codex');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.env, 'CODEX_CMD');
+  assert.equal(res.body.previous, '/bin/codex');
+  const lines = fs.readFileSync(envFile, 'utf8').split('\n');
+  assert.equal(lines[0], 'FOO=1');
+  assert.match(lines[1], /^# CODEX_CMD=\/bin\/codex {2}# unpinned by multicc /);
+  assert.equal(lines[2], 'BAR=2');
+  assert.equal(env.CODEX_CMD, undefined);
+  const again = await harness.invokeUnpin('codex');
+  assert.equal(again.statusCode, 409);
+  assert.equal(again.body.code, 'not_pinned');
+});
+
+test('unpin refuses when the pin does not live in the .env file, and rejects unknown clis', async () => {
+  const { harness, envFile } = pinHarness();
+  fs.writeFileSync(envFile, 'FOO=1\n');
+  const res = await harness.invokeUnpin('codex');
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.code, 'pin_not_in_env_file');
+  assert.equal((await harness.invokeUnpin('nope')).statusCode, 400);
 });

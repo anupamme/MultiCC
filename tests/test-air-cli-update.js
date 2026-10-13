@@ -495,3 +495,35 @@ test('升级失败时把服务端查明的具体原因一并说出来', async ()
   assert.match(rowTexts(context.registry)[0], /v2\.0\.1/);
   assert.match(context.registry['cli-update-log'].textContent, /CLAUDE_CMD/);
 });
+
+// 升级前预检 + 「改用新版」: *_CMD 钉住派生路径时, 点升级前就要说清, 并给一颗点了才生效的按钮。
+test('派生路径被 *_CMD 钉住时升级前就提示，「改用新版」确认后才调 unpin 并重探', async () => {
+  const pinned = { env: 'CODEX_CMD', path: '/opt/homebrew/bin/codex' };
+  const fetchImpl = createFetch({
+    '/api/cli/versions': versionsBody({
+      codex: entry({ version: '0.160.0', latest: '0.162.1', updateAvailable: true, pinned }),
+    }, 1),
+    '/api/cli/versions?refresh=1': versionsBody({ codex: entry({ version: '0.162.1', latest: '0.162.1' }) }, 0),
+    'POST /api/cli/codex/unpin': { status: 200, body: { ok: true, env: 'CODEX_CMD', restartRecommended: true } },
+  });
+  const refused = buildContext({ fetchImpl, confirmResult: false });
+  await settle();
+  openPopover(refused.registry);
+  assert.match(rowTexts(refused.registry)[0], /CODEX_CMD/, '升级前就要说出被钉住的变量');
+  const allButtons = context => context.registry['cli-update-rows'].descendants().filter(node => node.tagName === 'BUTTON');
+  assert.equal(allButtons(refused).length, 2, '升级按钮之外还有「改用新版」');
+  assert.equal(rowButtons(refused.registry).length, 1);
+  const unpinOf = context => allButtons(context).find(node => node.textContent !== TXT.upgrade);
+  unpinOf(refused).onclick();
+  await settle();
+  assert.ok(!fetchImpl.called('POST', '/api/cli/codex/unpin'), '用户拒绝时不能动 .env');
+
+  const accepted = buildContext({ fetchImpl, confirmResult: true });
+  await settle();
+  openPopover(accepted.registry);
+  unpinOf(accepted).onclick();
+  await settle();
+  assert.match(accepted.asked[0], /CODEX_CMD/);
+  assert.ok(fetchImpl.called('POST', '/api/cli/codex/unpin'));
+  assert.ok(fetchImpl.called('GET', '/api/cli/versions?refresh=1'));
+});
