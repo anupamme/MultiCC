@@ -2829,6 +2829,15 @@
       ]
     },
     {
+      "path": "tests/test-egress-ip.js",
+      "tier": "other",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-error-envelope.js",
       "tier": "core",
       "lane": "deterministic",
