@@ -695,10 +695,7 @@ async function ensureDirGitReady(dir) {
 //   directories.json: [{ id, name, path, createdAt, baseBranch?, gitInitialized? }]
 //   sessions.json:    [{ id, dirId, cli, kind, cliSessionId, label?, createdAt, worktreePath?, branch? }]  (+ __aux__)
 //
-// On first load, we auto-migrate the old flat { id, cwd, claudeSessionId, chatClaudeSessionId } schema
-// into directories.json + split each paired session into a terminal + optional chat record.
-// Paths flow through MULTICC_PATHS so MULTICC_DATA_DIR can relocate the whole
-// state directory in tests / alternate deployments without a code change.
+// Old flat schemas are auto-migrated on first load. Paths flow through MULTICC_PATHS (MULTICC_DATA_DIR relocates them).
 const SESSIONS_FILE = MULTICC_PATHS.sessionsFile;
 const DIRECTORIES_FILE = MULTICC_PATHS.directoriesFile;
 
@@ -2220,7 +2217,7 @@ chatHistoryRuntime = createChatHistoryRuntime({
 });
 chatHistoryService = chatHistoryRuntime.service;
 chatHistoryRuntime.mountRoutes(app);
-createAuxRunRoutes({ records: persistedSessions, getLog: () => auxRunLog }).mountRoutes(app); turnLedgerRuntime.mountRoutes(app);
+createAuxRunRoutes({ records: persistedSessions, getLog: () => auxRunLog }).mountRoutes(app); turnLedgerRuntime.mountRoutes(app); require('./src/doctor/host').mountDoctor(app, { persistedSessions, loadChatHistory, cwdForSession, auxQueue, getAuxConfig, rootDir: __dirname, dataDir: MULTICC_PATHS.root });
 
 // Compatibility wrappers preserve the earlier host composition point.
 function loadChatHistory(sessionId) { return chatHistoryRuntime.load(sessionId); }

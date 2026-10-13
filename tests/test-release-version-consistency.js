@@ -244,14 +244,14 @@ test('core runner covers every selected path and expands declared variants', () 
   //     与 codex-exp 适配器 collabAgentToolCall 展示的契约——子任务衍生/两路并行/
   //     嵌套追踪、心跳静默与超时回收、Agent 工具卡片与中文状态。完全 hermetic：
   //     注入 timer/now/emit，fixture 驱动，不碰网络、端口、真进程。
-  // 311 + 1 = 312，deterministic 265 + 1 = 266，commands 293 + 1 = 294。
-  assert.equal(core.length, 312, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 312);
+  // 会话医生（tests/test-doctor.js）：312 + 1 = 313，deterministic 266 + 1 = 267，commands 294 + 1 = 295。
+  assert.equal(core.length, 313, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 313);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 266);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 267);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 21,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -261,7 +261,7 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 294,
+  assert.equal(plan.commands.length, 295,
     '290 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([

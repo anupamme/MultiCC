@@ -1,0 +1,148 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { runToolLoop } = require('../src/doctor/llm-loop');
+const { createDoctorTools, checkCommand, redact } = require('../src/doctor/tools');
+const { createDoctorService } = require('../src/doctor/service');
+const { mountDoctorRoutes } = require('../src/routes/doctor');
+
+function fixture(autofix) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-')));
+  const worktree = path.join(root, 'wt'); fs.mkdirSync(worktree);
+  fs.writeFileSync(path.join(worktree, 'a.txt'), 'hello\nworld\n');
+  fs.writeFileSync(path.join(worktree, '.env'), 'KEY=sk-abcdefghijklmnopqrstuv');
+  fs.mkdirSync(path.join(root, 'logs'));
+  fs.writeFileSync(path.join(root, 'logs', 'err.log'), 'ok\nboom ERROR here\nfine\n');
+  const session = { id: 's1', cli: 'claude', worktreePath: worktree, apiKey: 'sekret-value-123456' };
+  const deps = { sessionId: 's1', getSession: id => (id === 's1' ? session : null), loadHistory: () => [{ role: 'assistant', content: 'x', error: true }],
+    cwdOf: () => worktree, repoRoot: root, dataDir: root, logDirs: [path.join(root, 'logs')], autofix,
+    exec: async argv => ({ code: 0, stdout: `ran ${argv.join(' ')}`, stderr: '' }) };
+  return { root, worktree, ...createDoctorTools(deps) };
+}
+const get = (tools, n) => tools.find(t => t.name === n);
+
+test('reads are jailed and credentials never leak', async () => {
+  const { tools, worktree, root } = fixture(false);
+  assert.match(get(tools, 'read_file').run({ path: 'a.txt' }), /1\thello/);
+  assert.throws(() => get(tools, 'read_file').run({ path: path.join(worktree, '.env') }), /拒绝/);
+  assert.throws(() => get(tools, 'read_file').run({ path: '/etc/hosts' }), /不在可读范围/);
+  assert.throws(() => get(tools, 'read_file').run({ path: path.join(root, '..', '..', 'etc', 'hosts') }), /不在可读范围/);
+  assert.equal(get(tools, 'session_info').run({}).apiKey, '***');
+  assert.match(get(tools, 'tail_file').run({ path: path.join(root, 'logs', 'err.log'), filter: 'error' }), /boom/);
+  assert.doesNotMatch(get(tools, 'search_text').run({ pattern: 'sk-abc' }), /sk-abc/);
+  assert.equal(redact('Authorization: Bearer abcdefghijklmnop1234'), 'Authorization: Bearer ***'.replace('Bearer ***', '***'));
+});
+
+test('read-only mode has no write tools; commands are allowlisted', async () => {
+  const { tools } = fixture(false);
+  assert.equal(get(tools, 'edit_file'), undefined);
+  assert.equal(checkCommand(['git', 'status'], false), null);
+  assert.match(checkCommand(['git', 'push'], true), /白名单/);
+  assert.match(checkCommand(['git', '-c', 'core.pager=x', 'log'], true), /禁止/);
+  assert.match(checkCommand(['git', 'rebase', '--abort'], false), /autofix/);
+  assert.match(checkCommand(['rm', '-rf', '/'], true), /不在白名单/);
+  await assert.rejects(get(tools, 'run_command').run({ argv: ['curl', 'x'] }), /白名单/);
+});
+
+test('autofix edits only inside the worktree and records actions', async () => {
+  const { tools, actions, worktree } = fixture(true);
+  get(tools, 'edit_file').run({ path: 'a.txt', old: 'world', new: 'doctor' });
+  assert.equal(fs.readFileSync(path.join(worktree, 'a.txt'), 'utf8'), 'hello\ndoctor\n');
+  assert.throws(() => get(tools, 'edit_file').run({ path: '../outside.txt', old: 'a', new: 'b' }), /worktree|禁止|只允许/);
+  assert.throws(() => get(tools, 'edit_file').run({ path: '.git/config', old: 'a', new: 'b' }), /禁止|不存在|ENOENT/);
+  assert.throws(() => get(tools, 'edit_file').run({ path: 'a.txt', old: 'zzz', new: 'b' }), /恰好出现/);
+  await get(tools, 'run_command').run({ argv: ['git', 'rebase', '--abort'] });
+  assert.deepEqual(actions.map(a => a.kind), ['edit_file', 'command']);
+  await assert.rejects(get(tools, 'kill_process').run({ pid: process.pid }), /拒绝/);
+});
+
+const toolDef = [{ name: 'echo', description: 'e', parameters: { type: 'object', properties: {} }, run: a => `got ${a.v}` },
+  { name: 'finish', description: 'f', parameters: { type: 'object', properties: {} }, run: () => 'ok' }];
+
+for (const [wire, first, second, expectResultShape] of [
+  ['messages',
+    { content: [{ type: 'text', text: 'checking' }, { type: 'tool_use', id: 't1', name: 'echo', input: { v: 1 } }] },
+    { content: [{ type: 'tool_use', id: 't2', name: 'finish', input: { summary: 'done', rootCause: 'x' } }] },
+    msgs => msgs.at(-1).content[0].type === 'tool_result'],
+  ['chat_completions',
+    { choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'c1', function: { name: 'echo', arguments: '{"v":1}' } }] } }] },
+    { choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'c2', function: { name: 'finish', arguments: '{"summary":"done","rootCause":"x"}' } }] } }] },
+    msgs => msgs.some(m => m.role === 'tool' && m.content === 'got 1')],
+  ['responses',
+    { output: [{ type: 'function_call', call_id: 'r1', name: 'echo', arguments: '{"v":1}' }] },
+    { output: [{ type: 'function_call', call_id: 'r2', name: 'finish', arguments: '{"summary":"done","rootCause":"x"}' }] },
+    items => items.some(i => i.type === 'function_call_output' && i.output === 'got 1')],
+]) {
+  test(`tool loop speaks ${wire}`, async () => {
+    const replies = [first, second]; const bodies = [];
+    const result = await runToolLoop({ target: { wireApi: wire, url: 'http://x', apiKey: 'k' }, model: 'm', system: 's', user: 'u', tools: toolDef,
+      post: async (_t, body) => { bodies.push(JSON.parse(JSON.stringify(body))); return replies.shift(); } });
+    assert.equal(result.finished, true);
+    assert.equal(result.report.summary, 'done');
+    const history = bodies[1].messages || bodies[1].input;
+    assert.ok(expectResultShape(history), JSON.stringify(history));
+  });
+}
+
+test('tool loop reports unknown tools back to the model and stops at maxTurns', async () => {
+  const seen = [];
+  const result = await runToolLoop({ target: { wireApi: 'chat_completions', url: 'http://x', apiKey: 'k' }, model: 'm', system: 's', user: 'u', tools: toolDef, maxTurns: 2,
+    post: async (_t, body) => { seen.push(body); return { choices: [{ message: { content: '', tool_calls: [{ id: 'n', function: { name: 'nope', arguments: '{}' } }] } }] }; } });
+  assert.equal(result.exhausted, true);
+  assert.match(seen[1].messages.at(-1).content, /未知工具/);
+});
+
+test('service runs a diagnosis end to end and routes expose it', async () => {
+  const { tools: _ignore, ...fx } = fixture(false);
+  const doctor = createDoctorService({
+    getSession: id => (id === 's1' ? { id: 's1', worktreePath: fx.worktree } : null), loadHistory: () => [], cwdOf: () => fx.worktree,
+    resolveTarget: () => ({ target: { wireApi: 'messages', url: 'http://x', apiKey: 'k' }, model: 'm' }),
+    repoRoot: fx.root, dataDir: fx.root, logDirs: [], exec: async () => ({ code: 0, stdout: '## main', stderr: '' }),
+    loop: async ({ user, tools }) => {
+      assert.match(user, /Preliminary snapshot/);
+      assert.ok(!tools.some(t => t.name === 'edit_file'));
+      return { finished: true, turns: 2, report: { summary: 'ok', rootCause: 'stale lock' } };
+    },
+  });
+  const routes = {};
+  mountDoctorRoutes({ post: (p, h) => { routes['POST ' + p] = h; }, get: (p, h) => { routes['GET ' + p] = h; } }, { doctor });
+  const reply = () => { const r = { code: 200 }; r.status = c => { r.code = c; return r; }; r.json = b => { r.body = b; return r; }; return r; };
+  const missing = reply(); routes['POST /api/sessions/:id/doctor']({ params: { id: 'nope' }, body: {} }, missing);
+  assert.equal(missing.code, 404);
+  const started = reply(); routes['POST /api/sessions/:id/doctor']({ params: { id: 's1' }, body: { autofix: false } }, started);
+  assert.ok(started.body.runId);
+  await new Promise(r => setTimeout(r, 30));
+  const got = reply(); routes['GET /api/doctor/runs/:runId']({ params: { runId: started.body.runId } }, got);
+  assert.equal(got.body.run.status, 'done');
+  assert.equal(got.body.run.report.rootCause, 'stale lock');
+});
+
+test('service refuses politely when Aux is unavailable', () => {
+  const doctor = createDoctorService({ getSession: () => ({}), resolveTarget: () => { throw new Error('Aux Provider 不可用'); } });
+  const out = doctor.start({ sessionId: 's1' });
+  assert.equal(out.ok, false); assert.equal(out.status, 503);
+});
+
+test('chat button polls the run and posts one readable report', async () => {
+  const { create } = require('../public/chat-doctor');
+  const msgs = []; const calls = [];
+  let polls = 0;
+  const fetchStub = async (url, init) => {
+    calls.push([url, init && init.body]);
+    if (init && init.method === 'POST') return { ok: true, json: async () => ({ runId: 'doc_1' }) };
+    polls++;
+    const run = polls < 2 ? { status: 'running', events: [{ type: 'tool', name: 'tail_file' }] }
+      : { status: 'done', autofix: true, actions: [{ kind: 'remove_lock', detail: 'x' }], events: [{ type: 'tool', name: 'tail_file' }], report: { summary: 'S', rootCause: 'R', nextSteps: ['restart'] } };
+    return { ok: true, json: async () => ({ run }) };
+  };
+  const doc = { getElementById: () => null };
+  const doctor = create({ document: doc, fetch: fetchStub, sleep: async () => {}, getSessionName: () => 's 1', addSystemMsg: m => msgs.push(m), withToken: u => u });
+  const out = await doctor.diagnose({ autofix: true });
+  assert.equal(out.ok, true);
+  assert.match(calls[0][0], /sessions\/s%201\/doctor/);
+  assert.equal(JSON.parse(calls[0][1]).autofix, true);
+  assert.match(msgs.at(-1), /根因：R[\s\S]*remove_lock[\s\S]*restart/);
+});
