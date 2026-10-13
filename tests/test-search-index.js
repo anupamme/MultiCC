@@ -516,3 +516,224 @@ test('hashOf is stable and short enough to store per chunk', () => {
   assert.notEqual(hashOf('同样的文字'), hashOf('同样的文字 '));
   assert.equal(hashOf('x').length, 16);
 });
+
+// ── streaming / incremental sync ─────────────────────────────────────────────
+// A changed session is not re-read: the sync resumes from the byte offset it
+// reached. These tests pin the two halves of that — it reads only the tail when the
+// file only grew, and it lands on exactly the index a from-scratch pass would build
+// when the file did anything else.
+
+function incrementalFixture(blockBytes) {
+  const dir = tempDir();
+  const logger = { warn() {}, log() {} };
+  const history = createChatHistoryFileRepository({ dataDir: dir });
+  const index = createSearchIndex({ dbFile: path.join(dir, 'search-index.sqlite'), logger });
+  const reads = { bytes: 0, calls: 0 };
+  const countingFs = {
+    ...fs,
+    readSync(fd, buffer, offset, length, position) {
+      const n = fs.readSync(fd, buffer, offset, length, position);
+      reads.bytes += n;
+      reads.calls += 1;
+      return n;
+    },
+  };
+  // The clock sits well past every mtime, so the "same millisecond" guard never
+  // forces a re-read the test did not ask for.
+  const corpus = createMessageCorpus({ index, history, fsImpl: countingFs, logger, now: () => Date.now() + 10_000, blockBytes });
+  return {
+    dir, history, index, corpus, reads,
+    cleanup: () => { index.close(); fs.rmSync(dir, { recursive: true, force: true }); },
+  };
+}
+
+// Every message carries a marker no other message has, so a search can tell exactly
+// which messages are in the index (the tokenizer is bigram-based, so a Chinese
+// phrase would match far more than the message it came from).
+function marker(n) { return `zxq${n}vv`; }
+function say(n, text = '', length = 300) {
+  const head = `第${n}条消息 ${marker(n)} ${text}`;
+  return { id: `m${n}`, role: n % 2 ? 'user' : 'assistant', content: head.padEnd(length, `，补位文字第${n}段`) };
+}
+
+// What the index holds for one session, independent of how it got there.
+function storedHashes(index, sessionId) {
+  return index.hashesBefore(MESSAGE_SCOPE, sessionId, Number.MAX_SAFE_INTEGER).sort();
+}
+
+function rebuiltHashes(history, sessionId) {
+  const dir = tempDir();
+  const logger = { warn() {}, log() {} };
+  const index = createSearchIndex({ dbFile: path.join(dir, 'fresh.sqlite'), logger });
+  try {
+    createMessageCorpus({ index, history, logger }).syncSession(sessionId, { force: true });
+    return storedHashes(index, sessionId);
+  } finally {
+    index.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('a session that only grew is resumed from its offset, not re-read', async () => {
+  const { history, index, corpus, reads, cleanup } = incrementalFixture();
+  try {
+    const messages = Array.from({ length: 300 }, (_, i) => say(i + 1, '', 1200));
+    history.write('big', messages);
+    const built = corpus.syncSession('big');
+    assert.equal(built.incremental, false, 'the first pass has nothing to resume from');
+    const fileBytes = fs.statSync(history.fileFor('big')).size;
+    assert.ok(reads.bytes >= fileBytes, 'a from-scratch pass reads the whole file');
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+    messages.push(say(301, '增量追加的独特词：量子纠缠验证', 1200));
+    messages.push(say(302, '', 1200));
+    history.write('big', messages);
+    reads.bytes = 0;
+    const resumed = corpus.syncSession('big');
+    assert.equal(resumed.incremental, true);
+    assert.ok(resumed.inserted >= 2, 'the appended turn is written');
+    assert.ok(reads.bytes < fileBytes / 5, `only the tail is read (read ${reads.bytes} of ${fileBytes})`);
+    assert.equal(corpus.search({ text: marker(301) }).results.length, 1);
+    assert.deepEqual(storedHashes(index, 'big'), rebuiltHashes(history, 'big'),
+      'resuming lands on exactly the index a from-scratch pass builds');
+  } finally { cleanup(); }
+});
+
+test('tool-only growth is recognised as already indexed, without reading the file', async () => {
+  const { history, corpus, reads, cleanup } = incrementalFixture();
+  try {
+    const messages = Array.from({ length: 10 }, (_, i) => say(i + 1));
+    history.write('quiet', messages);
+    corpus.syncSession('quiet');
+    // `updated_at` only moves with chunk text, so the ref row alone can never prove
+    // this file is current once it gains lines that add no chunk.
+    await new Promise(resolve => setTimeout(resolve, 5));
+    messages.push({ id: 'tool1', role: 'assistant', content: '好', tools: [{ name: 'Bash', result: 'x'.repeat(2000) }] });
+    history.write('quiet', messages);
+    assert.equal(corpus.syncSession('quiet').sessionSkipped, false, 'the file moved, so it is read once');
+    reads.bytes = 0;
+    reads.calls = 0;
+    assert.equal(corpus.syncSession('quiet').sessionSkipped, true);
+    assert.equal(reads.calls, 0, 'and the second look does not touch the file');
+  } finally { cleanup(); }
+});
+
+test('anything but an append falls back to a full pass and still matches a rebuild', async () => {
+  const { history, index, corpus, cleanup } = incrementalFixture();
+  const settle = () => new Promise(resolve => setTimeout(resolve, 5));
+  try {
+    const base = Array.from({ length: 40 }, (_, i) => say(i + 1));
+    history.write('edit', base);
+    corpus.syncSession('edit');
+
+    // 1. a message deleted from the middle: the bytes the resume offset stands on move.
+    await settle();
+    const withoutMiddle = base.filter((_, i) => i !== 10);
+    history.write('edit', withoutMiddle);
+    const afterDelete = corpus.syncSession('edit');
+    assert.equal(afterDelete.incremental, false, 'a shifted transcript is not trusted');
+    assert.equal(corpus.search({ text: marker(11) }).results.length, 0, 'the deleted message stops answering');
+    assert.equal(corpus.search({ text: marker(12) }).results.length, 1, 'its neighbours still do');
+    assert.deepEqual(storedHashes(index, 'edit'), rebuiltHashes(history, 'edit'));
+
+    // 2. a message edited in place, same length: invisible to size and to the tail.
+    await settle();
+    const edited = withoutMiddle.map(m => (m.id === 'm30' ? { ...m, content: m.content.replace(marker(30), 'zxqEDITEDvv') } : m));
+    history.write('edit', edited);
+    corpus.syncSession('edit', { force: true });
+    assert.equal(corpus.search({ text: 'zxqEDITEDvv' }).results.length, 1);
+    assert.equal(corpus.search({ text: marker(30) }).results.length, 0);
+
+    // 3. the transcript shortened below the resume offset.
+    await settle();
+    history.write('edit', edited.slice(0, 5));
+    const shrunk = corpus.syncSession('edit');
+    assert.equal(shrunk.incremental, false);
+    assert.equal(corpus.search({ text: marker(40) }).results.length, 0, 'the retired tail is pruned');
+    assert.deepEqual(storedHashes(index, 'edit'), rebuiltHashes(history, 'edit'));
+  } finally { cleanup(); }
+});
+
+test('the last message being replaced is absorbed by the resume margin', async () => {
+  const { history, index, corpus, cleanup } = incrementalFixture();
+  try {
+    const base = Array.from({ length: 30 }, (_, i) => say(i + 1));
+    // A streaming reply is saved as an interim line, then truncated and rewritten
+    // with its final text by the repository's incremental write.
+    history.write('stream', [...base, { id: 'live', role: 'assistant', content: 'zxqINTERIMvv 临时片段'.padEnd(120, '…'), streaming: true }]);
+    corpus.syncSession('stream');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    history.write('stream', [...base, { id: 'live', role: 'assistant', content: 'zxqFINALvv 最终回复'.padEnd(120, '。') }]);
+    const result = corpus.syncSession('stream');
+    assert.equal(result.incremental, true, 'a replaced trailing line must not cost a full pass');
+    assert.equal(corpus.search({ text: 'zxqFINALvv' }).results.length, 1);
+    assert.equal(corpus.search({ text: 'zxqINTERIMvv' }).results.length, 0, 'the interim text is gone');
+    assert.deepEqual(storedHashes(index, 'stream'), rebuiltHashes(history, 'stream'));
+  } finally { cleanup(); }
+});
+
+test('a half-written final line is left for the next pass', async () => {
+  const { history, corpus, cleanup } = incrementalFixture();
+  try {
+    const base = Array.from({ length: 12 }, (_, i) => say(i + 1));
+    history.write('torn', base);
+    corpus.syncSession('torn');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const file = history.fileFor('torn');
+    const line = JSON.stringify(say(13, 'zxqMETEORvv'));
+    fs.appendFileSync(file, line.slice(0, 40));
+    corpus.syncSession('torn');
+    assert.equal(corpus.search({ text: 'zxqMETEORvv' }).results.length, 0, 'a torn line is not indexed');
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+    fs.appendFileSync(file, `${line.slice(40)}\n`);
+    corpus.syncSession('torn');
+    assert.equal(corpus.search({ text: 'zxqMETEORvv' }).results.length, 1, 'once it completes, it is');
+  } finally { cleanup(); }
+});
+
+test('appended text that repeats earlier text is deduplicated like a full pass would', async () => {
+  const { history, index, corpus, cleanup } = incrementalFixture();
+  try {
+    const base = Array.from({ length: 20 }, (_, i) => say(i + 1));
+    history.write('dup', base);
+    corpus.syncSession('dup');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    history.write('dup', [...base, { ...base[3], id: 'resent' }]);
+    const result = corpus.syncSession('dup');
+    assert.equal(result.incremental, true);
+    assert.equal(result.inserted, 0, 'a resent message adds no second copy');
+    assert.deepEqual(storedHashes(index, 'dup'), rebuiltHashes(history, 'dup'));
+  } finally { cleanup(); }
+});
+
+test('a pass is a generator that yields between blocks, and can refuse a large one', () => {
+  const { history, corpus, cleanup } = incrementalFixture(2048);
+  try {
+    history.write('slow', Array.from({ length: 50 }, (_, i) => say(i + 1)));
+    const gen = corpus.syncSessionSteps('slow');
+    let yields = 0;
+    let step = gen.next();
+    while (!step.done) { yields += 1; step = gen.next(); }
+    assert.ok(yields >= 5, `a multi-block file yields between blocks (saw ${yields})`);
+    assert.equal(step.value.sessionSkipped, false);
+    assert.equal(corpus.search({ text: marker(50) }).results.length, 1, 'driving it block by block indexes everything');
+
+    history.write('slow2', Array.from({ length: 50 }, (_, i) => say(i + 100)));
+    const refused = corpus.syncSession('slow2', { maxBytes: 1024 });
+    assert.equal(refused.deferred, true);
+    assert.equal(refused.sessionSkipped, true);
+    assert.equal(corpus.search({ text: marker(120) }).results.length, 0, 'nothing was indexed');
+  } finally { cleanup(); }
+});
+
+test('a session being written right now is left alone when asked to wait', () => {
+  const { history, corpus, cleanup } = incrementalFixture();
+  try {
+    history.write('hot', Array.from({ length: 5 }, (_, i) => say(i + 1)));
+    const hot = corpus.syncSession('hot', { quietMs: 60 * 60 * 1000 });
+    assert.equal(hot.sessionSkipped, true);
+    assert.equal(hot.hot, true);
+    assert.equal(corpus.syncSession('hot', { quietMs: 0 }).sessionSkipped, false);
+  } finally { cleanup(); }
+});

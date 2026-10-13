@@ -199,6 +199,7 @@ function unavailableIndex({ dbFile, reason, logger }) {
     listMarkers: () => [],
     dropMarkers: () => 0,
     listRefs: () => [],
+    hashesBefore: () => [],
     search: () => ({ mode: 'unavailable', terms: [], results: [] }),
     stats: () => ({ available: false, reason, dbFile, scopes: [], emptyRefs: 0 }),
     close: () => {},
@@ -312,6 +313,7 @@ function createSearchIndex({
   }
   const chunkIdsOfRef = db.prepare('SELECT id FROM search_chunk WHERE scope = ? AND ref_id = ?');
   const tailIdsOfRef = db.prepare('SELECT id FROM search_chunk WHERE scope = ? AND ref_id = ? AND ord > ?');
+  const hashesBeforeStmt = db.prepare('SELECT content_hash AS hash FROM search_chunk WHERE scope = ? AND ref_id = ? AND ord < ?');
   const refList = db.prepare(`SELECT ref_id AS refId, count(*) AS chunks, max(updated_at) AS updatedAt
     FROM search_chunk WHERE scope = ? GROUP BY ref_id ORDER BY ref_id`);
   // `chars` is a character count and `bytes` is the UTF-8 size of the same text.
@@ -406,6 +408,16 @@ function createSearchIndex({
       chunks: Number(row.chunks) || 0,
       updatedAt: Number(row.updatedAt) || 0,
     }));
+  }
+
+  // The content hashes a unit already stores below `ord`. A sync that resumes from
+  // the middle of a source seeds its duplicate filter with these, so the chunks it
+  // adds are deduplicated against what is already there exactly as a from-scratch
+  // pass would have done.
+  function hashesBefore(scope, refId, ord) {
+    const id = String(refId || '');
+    if (!id) return [];
+    return hashesBeforeStmt.all(String(scope), id, Math.floor(Number(ord) || 0)).map(row => String(row.hash));
   }
 
   // Filters shared by both query modes. Every value is bound, never interpolated;
@@ -536,6 +548,7 @@ function createSearchIndex({
     listMarkers,
     dropMarkers,
     listRefs,
+    hashesBefore,
     search,
     stats,
     close: () => { try { db.close(); } catch (error) { /* closing twice is fine */ } },

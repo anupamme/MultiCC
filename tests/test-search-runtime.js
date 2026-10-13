@@ -25,6 +25,7 @@ const {
   DEFAULT_HITS,
 } = require('../src/search/runtime');
 const { createChatHistoryFileRepository } = require('../src/session/adapters/chat-history-file-repository');
+const { createSliceRunner } = require('../src/search/slice-runner');
 
 const logger = { warn() {}, log() {}, info() {} };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -38,8 +39,12 @@ function tempDir() {
 // them by hand, one slice at a time.
 function manualImmediate() {
   const queue = [];
+  const delays = [];
   return {
-    setImmediateImpl(fn) { queue.push(fn); },
+    // The runner asks for (fn, delayMs): 0 is "next turn", positive is the pause that
+    // keeps the duty cycle down. Recorded so a test can check what was asked for.
+    setImmediateImpl(fn, delayMs) { queue.push(fn); delays.push(delayMs); },
+    delays,
     pending: () => queue.length,
     runOne() { queue.shift()(); },
     drain() {
@@ -60,7 +65,9 @@ function fixture({ sessions = {}, ...options } = {}) {
   const dir = tempDir();
   const history = createChatHistoryFileRepository({ dataDir: dir });
   for (const [sessionId, messages] of Object.entries(sessions)) history.write(sessionId, messages);
-  const runtime = createSearchRuntime({ dataDir: dir, logger, intervalMs: 0, firstSweepBatch: 1, ...options });
+  // quietMs 0: the fixture writes a file and syncs it in the same millisecond, which
+  // the production default would (rightly) treat as a session still being written.
+  const runtime = createSearchRuntime({ dataDir: dir, logger, intervalMs: 0, quietMs: 0, ...options });
   return {
     dir,
     history,
@@ -104,54 +111,201 @@ test('the staged first sweep yields between slices and prunes only once it is do
   }
 });
 
-test('the 60s sweep is sliced: one slow session per slice, nothing parsed twice, pruning at the end', async () => {
+// A conversation big enough that its file spans many blocks.
+function fat(id, count, mark = '') {
+  return Array.from({ length: count }, (_, i) => turn(`${id}-${i}`,
+    `会话${id}第${i}条 zxq${id}n${i}vv ${mark}`.padEnd(900, `补位文字${id}${i}`), i % 2 ? 'assistant' : 'user'));
+}
+
+test('the background sweep is paced: bounded slices, duty-cycle pauses, only what was appended', async () => {
   const scheduler = manualImmediate();
   const dir = tempDir();
   const repo = createChatHistoryFileRepository({ dataDir: dir });
-  // The clock moves only when a history file is actually read, so the slice budget
-  // bites on re-parsed sessions the way it does on a 100MB conversation.
+  // The clock moves 5ms per positional read, so the slice budget bites the way it
+  // does on a real multi-megabyte transcript.
   let clock = 1_000_000;
-  let reads = 0;
-  const history = { ...repo, read: id => { reads += 1; clock += 50; return repo.read(id); } };
-  for (const id of ['s1', 's2', 's3', 'gone']) repo.write(id, [turn('m1', `会话 ${id} 的第一版正文，主题是缓存层。`)]);
+  let bytes = 0;
+  const countingFs = {
+    ...fs,
+    readSync(...args) { const n = fs.readSync(...args); bytes += n; clock += 5; return n; },
+  };
+  for (const id of ['s1', 's2', 's3']) repo.write(id, fat(id, 200));
+  const total = ['s1', 's2', 's3'].reduce((sum, id) => sum + fs.statSync(repo.fileFor(id)).size, 0);
   const runtime = createSearchRuntime({
-    dataDir: dir, logger, intervalMs: 0, history, now: () => clock,
-    setImmediateImpl: scheduler.setImmediateImpl,
+    dataDir: dir, logger, intervalMs: 0, history: repo, now: () => clock, fsImpl: countingFs,
+    blockBytes: 64 * 1024, quietMs: 0, sliceMs: 8, duty: 0.1, setImmediateImpl: scheduler.setImmediateImpl,
   });
   try {
     runtime.sweep();
-    assert.equal(runtime.stats().scopes[0].refs, 4);
+    assert.equal(runtime.stats().scopes[0].refs, 3);
     const baseline = runtime.status().sweeps;
 
     await sleep(5);
-    for (const id of ['s1', 's2', 's3']) repo.write(id, [turn('m2', `会话 ${id} 改写后的正文，主题是排序。`)]);
-    repo.deleteSession('gone');
-    reads = 0;
+    for (const id of ['s1', 's2', 's3']) repo.write(id, [...fat(id, 200), turn(`${id}-new`, `追加的一轮 zxq${id}newvv`, 'user')]);
+    await sleep(5);
+    bytes = 0;
 
-    runtime.sweepSliced();
-    assert.equal(scheduler.pending(), 1, 'the tick defers its first slice instead of sweeping inline');
-    assert.equal(reads, 0, 'nothing is parsed inline');
-    runtime.sweepSliced();
-    assert.equal(scheduler.pending(), 1, 'a tick that lands mid-pass is refused');
+    assert.equal(runtime.sweepInBackground(), true);
+    assert.equal(runtime.sweepInBackground(), false, 'a tick that lands while a sweep is queued is dropped, not stacked');
+    assert.equal(scheduler.pending(), 1, 'nothing runs inline: the first slice is deferred');
+    assert.equal(bytes, 0);
 
     let slices = 0;
-    while (scheduler.pending()) { scheduler.runOne(); slices += 1; assert.ok(slices < 50, 'the pass must finish'); }
-    assert.equal(slices, 3, 'every re-parsed session overruns the budget, so each one gets its own slice');
-    assert.equal(reads, 3, 'each changed session is parsed exactly once — the closing step does not re-sync');
+    while (scheduler.pending()) {
+      const before = clock;
+      scheduler.runOne();
+      slices += 1;
+      assert.ok(slices < 200, 'the sweep must finish');
+      if (scheduler.pending()) {
+        const worked = clock - before;
+        const pause = scheduler.delays[scheduler.delays.length - 1];
+        assert.ok(pause >= Math.min(500, Math.ceil(worked * 9)), `${worked}ms of work earns a pause of at least ${Math.min(500, Math.ceil(worked * 9))}ms (got ${pause})`);
+      }
+    }
+    assert.ok(slices >= 3, `the sweep is spread over several slices (took ${slices})`);
+    assert.ok(bytes < total / 3, `only the appended tails are read, not whole files (read ${bytes} of ${total})`);
     assert.equal(runtime.status().sweeps, baseline + 1);
     assert.equal(runtime.status().lastSweep.synced, 3);
-    assert.equal(runtime.status().lastSweep.removedRefs, 1, 'the deleted session is pruned at the end');
-    assert.equal(runtime.stats().scopes[0].refs, 3);
-    assert.ok(runtime.findMessages({ text: '排序' }).length >= 1, 'the rewritten text is searchable');
+    for (const id of ['s1', 's2', 's3']) {
+      assert.equal(runtime.findMessages({ text: `zxq${id}newvv` }).length, 1, `${id}'s new turn is searchable`);
+    }
 
-    runtime.sweepSliced();
-    assert.equal(scheduler.pending(), 1, 'the next tick is accepted once the previous pass is done');
+    // Nothing changed since: the next pass reads nothing at all.
+    await sleep(5);
+    bytes = 0;
+    assert.equal(runtime.sweepInBackground(), true, 'the next tick is accepted once the previous sweep is done');
     scheduler.drain();
-    assert.equal(reads, 3, 'an idle pass reads nothing');
+    assert.equal(bytes, 0, 'an idle sweep does not touch a single file');
+    assert.equal(runtime.status().lastSweep.synced, 0);
   } finally {
     runtime.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the sweep prunes deleted sessions and leaves sessions that are still being written', async () => {
+  const scheduler = manualImmediate();
+  const { history, runtime, cleanup } = fixture({
+    sessions: {
+      keep: [turn('k1', '这一段会一直留在索引里，讲的是缓存层。')],
+      gone: [turn('g1', '这一段随后会被删除，讲的是排序。')],
+    },
+    setImmediateImpl: scheduler.setImmediateImpl,
+  });
+  try {
+    runtime.sweep();
+    assert.equal(runtime.stats().scopes[0].refs, 2);
+    history.deleteSession('gone');
+    history.write('live', [turn('l1', '这一段刚刚写完，讲的是流式输出。')]);
+
+    // A production-style quiet window: `live` was written a moment ago.
+    const quiet = createSearchRuntime({
+      dataDir: runtime.dataDir, logger, intervalMs: 0, quietMs: 60_000, setImmediateImpl: scheduler.setImmediateImpl,
+    });
+    try {
+      assert.equal(quiet.sweepInBackground(), true);
+      scheduler.drain();
+      const swept = quiet.status().lastSweep;
+      assert.equal(swept.removedRefs, 1, 'the deleted session is pruned at the end');
+      assert.equal(swept.hot, 1, 'the session still being written is counted, and skipped');
+      assert.deepEqual(quiet.findMessages({ text: '流式输出' }), [], 'and not indexed yet');
+      // The turn-end nudge is not subject to the quiet window.
+      assert.equal(quiet.syncSession('live').sessionSkipped, false);
+      assert.equal(quiet.findMessages({ text: '流式输出' }).length, 1);
+    } finally { quiet.close(); }
+  } finally {
+    cleanup();
+  }
+});
+
+test('a turn-end nudge with too much to catch up on is queued, not done inline', async () => {
+  const scheduler = manualImmediate();
+  const { runtime, cleanup } = fixture({
+    sessions: { big: fat('big', 40) },
+    setImmediateImpl: scheduler.setImmediateImpl,
+    inlineMaxBytes: 1024,
+  });
+  try {
+    const first = runtime.syncSession('big');
+    assert.equal(first.deferred, true);
+    assert.equal(first.sessionSkipped, true);
+    assert.equal(scheduler.pending(), 1);
+    assert.equal(runtime.status().queued, 1);
+    runtime.syncSession('big');
+    assert.equal(runtime.status().queued, 1, 'asking again does not queue it twice');
+    assert.deepEqual(runtime.findMessages({ text: 'zxqbign7vv' }), [], 'nothing was read on the caller\'s turn');
+
+    scheduler.drain();
+    assert.equal(runtime.status().queued, 0);
+    assert.equal(runtime.findMessages({ text: 'zxqbign7vv' }).length, 1);
+    await sleep(5);
+    assert.equal(runtime.syncSession('big').sessionSkipped, true, 'and the next nudge has nothing to do');
+  } finally {
+    cleanup();
+  }
+});
+
+test('the slice runner holds each slice to its budget and sleeps in proportion to the work', () => {
+  let clock = 0;
+  const delays = [];
+  const waiting = [];
+  const runner = createSliceRunner({
+    now: () => clock, sliceMs: 8, duty: 0.1,
+    defer: (fn, delay) => { delays.push(delay); waiting.push(fn); },
+  });
+  let steps = 0;
+  const job = (function* () { for (let i = 0; i < 7; i += 1) { clock += 3; steps += 1; yield; } return 'done'; }());
+  let result = null;
+  runner.enqueue(job, { onDone: value => { result = value; } });
+  assert.deepEqual(delays, [0], 'the first slice is deferred, not run inline');
+  let slices = 0;
+  while (waiting.length) { waiting.shift()(); slices += 1; }
+  assert.equal(steps, 7);
+  assert.equal(result, 'done');
+  // 3ms steps against an 8ms budget: 3 steps (9ms) per slice, then a pause of 9 * 9 = 81ms.
+  assert.equal(slices, 3);
+  assert.deepEqual(delays.slice(1), [81, 81], 'duty 0.1 means 90% of every cycle is spent off');
+});
+
+test('a front job runs at the next yield and the job it interrupted carries on afterwards', () => {
+  const order = [];
+  const waiting = [];
+  const runner = createSliceRunner({ now: () => 0, defer: fn => waiting.push(fn) });
+  const labelled = (label, count) => (function* () { for (let i = 0; i < count; i += 1) { order.push(`${label}${i}`); yield; } }());
+  runner.enqueue(labelled('sweep', 3));
+  waiting.shift()();
+  assert.deepEqual(order, ['sweep0', 'sweep1', 'sweep2'], 'a zero-cost clock lets the first job run whole');
+
+  // Now with a budget that stops after every step, the interruption is observable.
+  order.length = 0;
+  let clock = 0;
+  const slow = [];
+  const paced = createSliceRunner({ now: () => clock, sliceMs: 1, defer: fn => slow.push(fn) });
+  const stepper = (label, count) => (function* () { for (let i = 0; i < count; i += 1) { clock += 2; order.push(`${label}${i}`); yield; } }());
+  paced.enqueue(stepper('sweep', 4));
+  slow.shift()();
+  paced.enqueue(stepper('turn', 2), { front: true });
+  while (slow.length) slow.shift()();
+  assert.deepEqual(order, ['sweep0', 'turn0', 'turn1', 'sweep1', 'sweep2', 'sweep3']);
+});
+
+test('a job that throws is reported and does not stop the queue; stop() ends all work', () => {
+  const waiting = [];
+  const runner = createSliceRunner({ now: () => 0, defer: fn => waiting.push(fn) });
+  const errors = [];
+  const done = [];
+  runner.enqueue((function* () { yield; throw new Error('boom'); }()), { onError: error => errors.push(error.message) });
+  runner.enqueue((function* () { yield; return 'second'; }()), { onDone: value => done.push(value) });
+  while (waiting.length) waiting.shift()();
+  assert.deepEqual(errors, ['boom']);
+  assert.deepEqual(done, ['second']);
+
+  let ran = false;
+  runner.enqueue((function* () { ran = true; yield; }()));
+  runner.stop();
+  while (waiting.length) waiting.shift()();
+  assert.equal(ran, false, 'a stopped runner never runs what was already queued');
+  assert.equal(runner.pending(), 0);
 });
 
 test('a finished turn is searchable immediately, and an unchanged session is not re-parsed', async () => {
