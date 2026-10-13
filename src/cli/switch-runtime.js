@@ -518,24 +518,42 @@ function createCliSwitchRuntime(options) {
     gemini: 'GEMINI_CMD', grok: 'GROK_CMD', commandcode: 'COMMAND_CODE_CMD',
   });
 
-  // claude 有 npm 全局与 native 安装器两种官方形态, 且 multicc 优先派生 native 那份
-  // (~/.local/bin/claude 是指向 ~/.local/share/claude/versions/<ver> 的软链; 旧安装器
-  // 放 ~/.claude/local/claude)。此时若仍跑 spec 里的 `npm install -g`, 升的是另一份
-  // 没人派生的副本 —— 面板角标永不消失(见 verifyInstallReachedBinary 的实测注释)。
-  // 「升级就要升 multicc 控制的那个版本」: 派生二进制是 native 安装时, 升级命令改用
-  // 它自带的 `claude update` —— 与派生会话是同一个二进制, 升级必然作用到真身。
-  function claudeNativeUpgradeCommand(cmd) {
+  // 「升级就要升 multicc 检测/派生的那个二进制」: 检测与 spawn 都过同一个解析器
+  // (resolveCliCommandMap, 与 createCliAdapters 同源 —— 见 cli-adapters/commands.js),
+  // 升级命令也从同一个解析结果推导 —— 派生二进制落在「官方安装器布局」时, 不再跑
+  // spec 里的 `npm install -g`(npm 装到 npm prefix, 与官方安装的 bin 是两份文件,
+  // 永远升不到在用的那份, 面板角标永不消失), 而是调用它自带的升级子命令: 和派生
+  // 会话是同一个二进制, 升级必然作用到真身。
+  // claude: ~/.local/bin/claude 是指向 ~/.local/share/claude/versions/<ver> 的软链
+  // (旧安装器放 ~/.claude/local/claude), 自带 `claude update`。
+  // opencode: 官方 curl 安装落在 ~/.opencode/bin/opencode(解析器第一候选), 自带
+  // `opencode upgrade` —— 实测它自报 Using method: curl, 原地覆盖的就是这份二进制。
+  // 归 Homebrew 管的分支在 launchInstallJob 里由 homebrew-takeover 单独处理, 这里不碰。
+  const NATIVE_SELF_UPDATE = Object.freeze({
+    claude: {
+      subcommand: 'update',
+      markers: [
+        `${path.sep}.local${path.sep}share${path.sep}claude${path.sep}versions${path.sep}`, // native 安装器真身
+        `${path.sep}.claude${path.sep}local${path.sep}`,                                    // 旧版 native 安装器
+        `${path.sep}.local${path.sep}bin${path.sep}claude`,                                 // 官方 shim(realpath 失败时兜底)
+      ],
+    },
+    opencode: {
+      subcommand: 'upgrade',
+      markers: [
+        `${path.sep}.opencode${path.sep}bin${path.sep}`, // 官方 curl 安装(~/.opencode/bin)
+      ],
+    },
+  });
+
+  function nativeSelfUpgradeCommand(cmd, target) {
     if (!cmd) return null;
+    const entry = NATIVE_SELF_UPDATE[String(target || '').toLowerCase()];
+    if (!entry) return null;
     let real = cmd;
     try { real = fs.realpathSync(cmd); } catch (_) {}
-    const sep = path.sep;
-    const markers = [
-      `${sep}.local${sep}share${sep}claude${sep}versions${sep}`, // native 安装器真身
-      `${sep}.claude${sep}local${sep}`,                          // 旧版 native 安装器
-      `${sep}.local${sep}bin${sep}claude`,                       // 官方 shim(realpath 失败时兜底)
-    ];
-    if (markers.some(m => real.includes(m) || cmd.includes(m))) {
-      return `"${cmd}" update`;
+    if (entry.markers.some(marker => real.includes(marker) || cmd.includes(marker))) {
+      return `"${cmd}" ${entry.subcommand}`;
     }
     return null;
   }
@@ -570,11 +588,9 @@ function createCliSwitchRuntime(options) {
     const env = buildInstallEnv(cli);
     // 派生二进制归 Homebrew 管时先卸掉它再 npm 装(见 homebrew-takeover.js)。
     // 探测失败按「不归 brew 管」处理, 照旧只跑 npm。
-    // 但 claude 的 native 安装优先于这两者: 它不归 brew 管、也不走 npm,
-    // 升级命令是它自己的 `claude update`(见 claudeNativeUpgradeCommand)。
-    const nativeUpgrade = target === 'claude'
-      ? claudeNativeUpgradeCommand(resolveCliCommandMap()[cli])
-      : null;
+    // 但 native 官方安装优先于这两者: 它不归 brew 管、也不走 npm,
+    // 升级命令是它自带的升级子命令(见 nativeSelfUpgradeCommand)。
+    const nativeUpgrade = nativeSelfUpgradeCommand(resolveCliCommandMap()[cli], target);
     let brewOwner = null;
     if (!nativeUpgrade && homebrewTakeover.isNpmGlobalInstall(spec.command)) {
       try { brewOwner = homebrewOwnerOf(resolveCliCommandMap()[cli], { envPath: env.PATH }); } catch (_) {}
