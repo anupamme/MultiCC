@@ -4471,7 +4471,7 @@
   "airExampleProject": "Example project",
   "airServiceRoutes": "Service routes",
   "doctor": "Diagnose",
-  "doctorTitle": "Session doctor: a small AI analyses this session's problem (Shift-click lets it auto-fix inside this session's worktree)",
+  "doctorTitle": "Session doctor: a small AI analyses this session's problem (Shift-click lets it auto-fix in the main checkout)",
   "doctorOffer": "🩺 Diagnose this error",
   "doctorOfferTitle": "Let the session doctor analyse this error (Shift-click allows auto-fix)",
   "doctorNoSession": "No session, cannot diagnose",
@@ -4489,5 +4489,5 @@
   "doctorEvidence": "Evidence:",
   "doctorActions": "Fixes applied:",
   "doctorNextSteps": "Needs your action:",
-  "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix inside this session's worktree."
+  "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout."
 }

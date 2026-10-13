@@ -26,13 +26,13 @@ const get = (tools, n) => tools.find(t => t.name === n);
 
 test('reads are jailed and credentials never leak', async () => {
   const { tools, worktree, root } = fixture(false);
-  assert.match(get(tools, 'read_file').run({ path: 'a.txt' }), /1\thello/);
+  assert.match(get(tools, 'read_file').run({ path: path.join(worktree, 'a.txt') }), /1\thello/);
   assert.throws(() => get(tools, 'read_file').run({ path: path.join(worktree, '.env') }), /拒绝/);
   assert.throws(() => get(tools, 'read_file').run({ path: '/etc/hosts' }), /不在可读范围/);
   assert.throws(() => get(tools, 'read_file').run({ path: path.join(root, '..', '..', 'etc', 'hosts') }), /不在可读范围/);
   assert.equal(get(tools, 'session_info').run({}).apiKey, '***');
   assert.match(get(tools, 'tail_file').run({ path: path.join(root, 'logs', 'err.log'), filter: 'error' }), /boom/);
-  assert.doesNotMatch(get(tools, 'search_text').run({ pattern: 'sk-abc' }), /sk-abc/);
+  assert.doesNotMatch(get(tools, 'search_text').run({ pattern: 'sk-abc', path: worktree }), /sk-abc/);
   assert.equal(redact('Authorization: Bearer abcdefghijklmnop1234'), 'Authorization: Bearer ***'.replace('Bearer ***', '***'));
 });
 
@@ -47,15 +47,26 @@ test('read-only mode has no write tools; commands are allowlisted', async () => 
   await assert.rejects(get(tools, 'run_command').run({ argv: ['curl', 'x'] }), /白名单/);
 });
 
-test('autofix edits only inside the worktree and records actions', async () => {
-  const { tools, actions, worktree } = fixture(true);
-  get(tools, 'edit_file').run({ path: 'a.txt', old: 'world', new: 'doctor' });
+test('autofix edits only in main or the session worktree and records actions', async () => {
+  const { tools, actions, worktree, root } = fixture(true);
+  get(tools, 'edit_file').run({ path: path.join(worktree, 'a.txt'), old: 'world', new: 'doctor' });
   assert.equal(fs.readFileSync(path.join(worktree, 'a.txt'), 'utf8'), 'hello\ndoctor\n');
+  // The main checkout is writable too: relative paths are based on it.
+  fs.writeFileSync(path.join(root, 'main.js'), 'const a = 1;\n');
+  get(tools, 'edit_file').run({ path: 'main.js', old: 'a = 1', new: 'a = 2' });
+  assert.equal(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), 'const a = 2;\n');
+  // ...but runtime data, sibling worktrees and the .git dir are not.
+  fs.mkdirSync(path.join(root, 'chat_history'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'chat_history', 's1.json'), '[]');
+  assert.throws(() => get(tools, 'edit_file').run({ path: 'chat_history/s1.json', old: '[]', new: 'x' }), /禁止/);
+  fs.mkdirSync(path.join(root, '.multicc-worktrees', 'other'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.multicc-worktrees', 'other', 'f.js'), 'x');
+  assert.throws(() => get(tools, 'edit_file').run({ path: '.multicc-worktrees/other/f.js', old: 'x', new: 'y' }), /禁止/);
   assert.throws(() => get(tools, 'edit_file').run({ path: '../outside.txt', old: 'a', new: 'b' }), /worktree|禁止|只允许/);
   assert.throws(() => get(tools, 'edit_file').run({ path: '.git/config', old: 'a', new: 'b' }), /禁止|不存在|ENOENT/);
-  assert.throws(() => get(tools, 'edit_file').run({ path: 'a.txt', old: 'zzz', new: 'b' }), /恰好出现/);
+  assert.throws(() => get(tools, 'edit_file').run({ path: path.join(worktree, 'a.txt'), old: 'zzz', new: 'b' }), /恰好出现/);
   await get(tools, 'run_command').run({ argv: ['git', 'rebase', '--abort'] });
-  assert.deepEqual(actions.map(a => a.kind), ['edit_file', 'command']);
+  assert.deepEqual(actions.map(a => a.kind), ['edit_file', 'edit_file', 'command']);
   await assert.rejects(get(tools, 'kill_process').run({ pid: process.pid }), /拒绝/);
 });
 
@@ -86,6 +97,22 @@ for (const [wire, first, second, expectResultShape] of [
     assert.ok(expectResultShape(history), JSON.stringify(history));
   });
 }
+
+test('tool loop has no turn cap by default and trims old tool output', async () => {
+  let n = 0; const bodies = [];
+  const result = await runToolLoop({ target: { wireApi: 'chat_completions', url: 'http://x', apiKey: 'k' }, model: 'm', system: 's', user: 'u',
+    tools: [{ name: 'big', description: 'b', parameters: { type: 'object', properties: {} }, run: () => 'x'.repeat(5000) }, toolDef[1]],
+    post: async (_t, body) => {
+      bodies.push(JSON.parse(JSON.stringify(body))); n++;
+      const call = n < 40 ? { id: `c${n}`, function: { name: 'big', arguments: '{}' } } : { id: 'f', function: { name: 'finish', arguments: '{"summary":"s","rootCause":"r"}' } };
+      return { choices: [{ message: { content: '', tool_calls: [call] } }] };
+    } });
+  assert.equal(result.finished, true);
+  assert.equal(result.turns, 40, 'ran well past the old 14-turn cap');
+  const tools = bodies.at(-1).messages.filter(m => m.role === 'tool');
+  assert.ok(tools.slice(0, 5).every(m => m.content.length < 400), 'old output is trimmed');
+  assert.equal(tools.at(-1).content.length, 5000, 'recent output stays whole');
+});
 
 test('tool loop reports unknown tools back to the model and stops at maxTurns', async () => {
   const seen = [];

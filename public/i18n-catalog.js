@@ -4473,7 +4473,7 @@ window.MULTICC_I18N_CATALOG = {
     "airExampleProject": "示例项目",
     "airServiceRoutes": "服务路由",
     "doctor": "诊断",
-    "doctorTitle": "会话医生：让小 AI 自动分析本会话异常（按住 Shift 点击 = 允许它在本会话 worktree 内自动修复）",
+    "doctorTitle": "会话医生：让小 AI 自动分析本会话异常（按住 Shift 点击 = 允许它在 main 主仓内自动修复）",
     "doctorOffer": "🩺 诊断此异常",
     "doctorOfferTitle": "让会话医生自动分析这次异常（按住 Shift 点击 = 允许自动修复）",
     "doctorNoSession": "当前没有会话，无法诊断",
@@ -4491,7 +4491,7 @@ window.MULTICC_I18N_CATALOG = {
     "doctorEvidence": "证据：",
     "doctorActions": "已执行的修复：",
     "doctorNextSteps": "需要你处理：",
-    "doctorFixHint": "提示：按住 Shift 点击「诊断」可让它在该会话 worktree 内自动修复。"
+    "doctorFixHint": "提示：按住 Shift 点击「诊断」可让它在 main 主仓内自动修复。"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -8966,7 +8966,7 @@ window.MULTICC_I18N_CATALOG = {
     "airExampleProject": "Example project",
     "airServiceRoutes": "Service routes",
     "doctor": "Diagnose",
-    "doctorTitle": "Session doctor: a small AI analyses this session's problem (Shift-click lets it auto-fix inside this session's worktree)",
+    "doctorTitle": "Session doctor: a small AI analyses this session's problem (Shift-click lets it auto-fix in the main checkout)",
     "doctorOffer": "🩺 Diagnose this error",
     "doctorOfferTitle": "Let the session doctor analyse this error (Shift-click allows auto-fix)",
     "doctorNoSession": "No session, cannot diagnose",
@@ -8984,6 +8984,6 @@ window.MULTICC_I18N_CATALOG = {
     "doctorEvidence": "Evidence:",
     "doctorActions": "Fixes applied:",
     "doctorNextSteps": "Needs your action:",
-    "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix inside this session's worktree."
+    "doctorFixHint": "Tip: Shift-click \"Diagnose\" to let it auto-fix in the main checkout."
   }
 };

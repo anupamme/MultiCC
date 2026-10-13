@@ -9,6 +9,17 @@ const https = require('https');
 const { parseResponsesStream } = require('../aux-http');
 
 const MAX_TOKENS = 8192;
+// Turns are not capped (a hard problem can take many rounds), so old tool output
+// is shrunk instead: only the newest KEEP_FULL results stay verbatim.
+const KEEP_FULL = 8;
+const STUB_CHARS = 240;
+
+function shrinkOld(slots) {
+  slots.slice(0, Math.max(0, slots.length - KEEP_FULL)).forEach(slot => {
+    const text = slot.get();
+    if (typeof text === 'string' && text.length > STUB_CHARS) slot.set(`${text.slice(0, STUB_CHARS)}…[earlier output trimmed]`);
+  });
+}
 
 function postJson(target, body, headers, timeoutMs, signal) {
   return new Promise((resolve, reject) => {
@@ -77,6 +88,9 @@ const ADAPTERS = {
       },
       addResults: results => messages.push({ role: 'user',
         content: results.map(r => ({ type: 'tool_result', tool_use_id: r.id, content: r.output, is_error: r.error || undefined })) }),
+      compact: () => shrinkOld(messages.filter(m => m.role === 'user' && Array.isArray(m.content))
+        .flatMap(m => m.content).filter(b => b.type === 'tool_result')
+        .map(b => ({ get: () => b.content, set: v => { b.content = v; } }))),
     };
   },
   chat_completions(model, system, tools, user) {
@@ -93,6 +107,8 @@ const ADAPTERS = {
         return { text, calls: (msg.tool_calls || []).map(c => ({ id: c.id, name: c.function && c.function.name, args: parseArgs(c.function && c.function.arguments) })) };
       },
       addResults: results => results.forEach(r => messages.push({ role: 'tool', tool_call_id: r.id, content: r.output })),
+      compact: () => shrinkOld(messages.filter(m => m.role === 'tool')
+        .map(m => ({ get: () => m.content, set: v => { m.content = v; } }))),
     };
   },
   responses(model, system, tools, user) {
@@ -110,13 +126,15 @@ const ADAPTERS = {
         return { text, calls: out.filter(i => i.type === 'function_call').map(i => ({ id: i.call_id, name: i.name, args: parseArgs(i.arguments) })) };
       },
       addResults: results => results.forEach(r => input.push({ type: 'function_call_output', call_id: r.id, output: r.output })),
+      compact: () => shrinkOld(input.filter(i => i.type === 'function_call_output')
+        .map(i => ({ get: () => i.output, set: v => { i.output = v; } }))),
     };
   },
 };
 
 // tools: [{ name, description, parameters, run(args) -> string|object }]. A tool
 // named `finish` ends the loop; its args are the structured report.
-async function runToolLoop({ target, model, system, user, tools, maxTurns = 14, timeoutMs = 90000,
+async function runToolLoop({ target, model, system, user, tools, maxTurns = 0, timeoutMs = 90000,
   signal, onEvent = () => {}, post = postJson }) {
   const make = ADAPTERS[target && target.wireApi];
   if (!make) throw new Error(`Doctor 不支持的 wire API：${target && target.wireApi}`);
@@ -124,7 +142,8 @@ async function runToolLoop({ target, model, system, user, tools, maxTurns = 14, 
   const adapter = make(model, system, tools, user);
   const byName = new Map(tools.map(t => [t.name, t]));
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${target.apiKey}`, ...adapter.headers(target.apiKey) };
-  for (let turn = 1; turn <= maxTurns; turn++) {
+  // maxTurns <= 0 means no cap; the run ends on finish, error or cancel.
+  for (let turn = 1; !maxTurns || turn <= maxTurns; turn++) {
     const res = await post(target, adapter.request(), headers, timeoutMs, signal);
     const { text, calls } = adapter.absorb(res);
     if (text) onEvent({ type: 'thought', turn, text });
@@ -145,6 +164,7 @@ async function runToolLoop({ target, model, system, user, tools, maxTurns = 14, 
       onEvent({ type: 'result', turn, name: call.name, error, preview: output.slice(0, 300) });
     }
     adapter.addResults(results);
+    adapter.compact();
     if (report) return { finished: true, report, text, turns: turn };
   }
   return { finished: false, report: null, text: '', turns: maxTurns, exhausted: true };
