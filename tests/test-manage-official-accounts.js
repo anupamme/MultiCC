@@ -184,3 +184,18 @@ test('global account controls switch via account API and retain the singleton pr
   assert.match(body.innerHTML, new RegExp(`data-act="delete"[^>]*data-id="${id}"`));
   assert.match(status.textContent, /已全局切换/);
 });
+
+test('an official Provider card still opens the editor, because the egress-IP allowlist lives only there', () => {
+  const provider = fs.readFileSync(path.join(ROOT, 'public', 'air-provider.js'), 'utf8');
+  // The editor is the only place the egress-IP allowlist can be set, and the
+  // server's official branch of updateProvider accepts exactly that one field. A card
+  // that hides "Edit" for official lines (it once did, in favour of "Re-login")
+  // leaves the restriction unreachable for the accounts that need it most.
+  assert.doesNotMatch(provider, /if \(!provider\.isOfficial\) actions\.append\(button\(t\('airProviderEdit'\)/,
+    'the edit button must not be gated on !isOfficial');
+  assert.match(provider, /actions\.append\(button\(t\('airProviderEdit'\), \(\) => openEditor\(provider\)\)\)/);
+  assert.match(provider, /provider\.isOfficial && account\) actions\.append\(button\(t\('airProviderRelogin'\)/,
+    're-login stays, as an extra action next to edit');
+  // And the editor keeps its official mode: identity read-only, only the allowlist is written.
+  assert.match(provider, /if \(form\.dataset\.official === '1'\) \{[^}]*body = \{ egressIpAllowlist \};/s);
+});

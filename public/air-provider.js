@@ -276,8 +276,11 @@
     // 每个会话走的仍是 AI 配置弹窗那条 PATCH（src/provider-reassign.js），所以
     // 模型替换 / Auto 会话跳过 / 忙会话下一轮生效这些口径都一致。
     actions.append(button(t('airProviderReassignAction'), () => openReassign(provider)));
-    if (!provider.isOfficial) actions.append(button(t('airProviderEdit'), () => openEditor(provider)));
-    else if (account) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, provider.officialAccountId)));
+    // 官方线路也要有「编辑」：登录身份由 OAuth 管，对话框对它们只放开「限定出口 IP」
+    // （openEditor 的 locked 分支，服务端 updateProvider 的官方分支同样只收这一项）。
+    // 去掉它，官方线路就再也够不到出口 IP 白名单 —— 而官方账号恰恰是最需要它的。
+    actions.append(button(t('airProviderEdit'), () => openEditor(provider)));
+    if (provider.isOfficial && account) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, provider.officialAccountId)));
     // 生成一份带独立令牌的借道分享码（manage-provider-relay.js，弹层自带样式）。
     // 官方 Provider 同样可借道：出借方在本机用官方登录 / OAuth 凭证代发请求，
     // 接收方只拿到分享码里的 provider 范围凭据，永远看不到上游 key 或 OAuth token
