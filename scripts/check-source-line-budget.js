@@ -389,8 +389,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 净 +29 键 −5 键（Esc/输入监控退役），生成器实测 8892/565523，按真实高水位抬一格。
     // Air navigation: localized project/settings labels and the three-step guide.
     // +20 键（doctor*）：会话医生按钮、异常处一键诊断与诊断进度/报告文案，生成器实测 8990/570883。
-    maxLines: 8990,
-    maxBytes: 570883,
+    // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
+    maxLines: 9004,
+    maxBytes: 572451,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
