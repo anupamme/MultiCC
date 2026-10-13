@@ -2,7 +2,8 @@
 // Tool belt for the session doctor. Everything is jailed: reads stay inside a
 // few roots and never touch credential files, commands are argv-only from an
 // allowlist (no shell), and writes exist only in autofix mode and only inside
-// the diagnosed session's own worktree. Nothing here can restart the server.
+// the MultiCC main checkout (where the running server lives) or the diagnosed
+// session's own worktree. Nothing here can restart the server.
 
 const fs = require('fs');
 const path = require('path');
@@ -77,24 +78,34 @@ function createDoctorTools(deps) {
   const session = getSession(sessionId) || {};
   const cwd = cwdOf ? cwdOf(sessionId) : null;
   const worktree = session.worktreePath ? realOrSelf(session.worktreePath) : null;
+  const main = realOrSelf(repoRoot);
   const readRoots = [repoRoot, cwd, worktree, dataDir, ...logDirs].filter(Boolean).map(realOrSelf);
   const actions = [];
+  // Runtime data that lives beside the source in the main checkout: never edited.
+  const DATA_DIRS = new Set(['.git', 'node_modules', '.multicc-worktrees', 'chat_history', 'aux_runs', 'events', 'bridges', 'artifacts', '.journal', 'logs', 'memories']);
+  const whereDir = where => (where === 'session' ? (worktree || realOrSelf(cwd || repoRoot)) : main);
 
   function guardRead(p) {
     if (typeof p !== 'string' || !p) throw new Error('path 必填');
-    const abs = realOrSelf(path.isAbsolute(p) ? p : path.join(cwd || repoRoot, p));
+    const abs = realOrSelf(path.isAbsolute(p) ? p : path.join(main, p));
     if (!readRoots.some(r => within(r, abs))) throw new Error(`路径不在可读范围内：${p}`);
     if (SECRET_PATH.test(abs) || abs.split(path.sep).includes('node_modules')) throw new Error(`路径被拒绝（凭据或依赖目录）：${p}`);
     return abs;
   }
   function guardWrite(p) {
     if (!autofix) throw new Error('当前为只读诊断模式，未开启 autofix');
-    if (!worktree) throw new Error('该会话没有独立 worktree，拒绝写入');
-    const abs = path.resolve(path.isAbsolute(p) ? p : path.join(worktree, p));
-    if (!within(worktree, abs) || !within(worktree, realOrSelf(path.dirname(abs)))) throw new Error('只允许写入该会话自己的 worktree');
-    const rel = path.relative(worktree, abs).split(path.sep);
-    if (rel[0] === '.git' || rel.includes('node_modules') || SECRET_PATH.test(abs)) throw new Error('该路径禁止写入');
-    return abs;
+    if (typeof p !== 'string' || !p) throw new Error('path 必填');
+    const abs = path.resolve(path.isAbsolute(p) ? p : path.join(main, p));
+    const real = realOrSelf(path.dirname(abs));
+    // Writable: the main checkout's source files, or the session's own worktree.
+    const root = [worktree, main].filter(Boolean).find(r => within(r, abs) && within(r, real));
+    if (!root) throw new Error('只允许写入 main 主仓或该会话自己的 worktree');
+    const rel = path.relative(root, abs).split(path.sep);
+    const sibling = root === main && rel[0] === '.multicc-worktrees' && !(worktree && within(worktree, abs));
+    if (rel.some(seg => seg === '.git' || seg === 'node_modules') || sibling || (root === main && DATA_DIRS.has(rel[0])) || SECRET_PATH.test(abs)) {
+      throw new Error('该路径禁止写入（运行数据、依赖、.git、其它会话的 worktree 或凭据）');
+    }
+    return { abs, root };
   }
   function backup(abs) {
     if (!backupDir || !fs.existsSync(abs)) return null;
@@ -189,14 +200,14 @@ function createDoctorTools(deps) {
       },
     },
     {
-      name: 'run_command', description: '执行白名单命令（argv 数组，无 shell）。git 只读子命令/ps/pgrep/lsof/df/node --check；autofix 下另允许 git rebase|merge|cherry-pick --abort 与 git worktree prune。cwd 默认会话工作目录。',
-      parameters: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } } }, required: ['argv'] },
+      name: 'run_command', description: '执行白名单命令（argv 数组，无 shell）。git 只读子命令/ps/pgrep/lsof/df/node --check；autofix 下另允许 git rebase|merge|cherry-pick --abort 与 git worktree prune。where 选择工作目录：main（默认，主仓）或 session（该会话 worktree）。',
+      parameters: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } }, where: { type: 'string', enum: ['main', 'session'] } }, required: ['argv'] },
       run: async args => {
         const bad = checkCommand(args.argv, autofix);
         if (bad) throw new Error(bad);
-        const r = await exec(args.argv, worktree || cwd || repoRoot);
+        const r = await exec(args.argv, whereDir(args.where));
         const fixing = autofix && args.argv[0] === 'git' && GIT_FIX.some(p => p.every((x, i) => args.argv[1 + i] === x));
-        if (fixing) note('command', args.argv.join(' '));
+        if (fixing) note('command', `${args.argv.join(' ')} @${args.where === 'session' ? 'session' : 'main'}`);
         return clip(`exit=${r.code}\n${r.stdout}${r.stderr ? `\nSTDERR:\n${r.stderr}` : ''}`);
       },
     },
@@ -205,29 +216,29 @@ function createDoctorTools(deps) {
   if (autofix) {
     tools.push(
       {
-        name: 'edit_file', description: '在该会话 worktree 内做精确字符串替换（old 必须唯一）。写前自动备份。',
+        name: 'edit_file', description: '在 main 主仓（相对路径默认基于主仓）或该会话 worktree 内做精确字符串替换，old 必须唯一。运行数据目录、.git、依赖、其它会话的 worktree、凭据文件不可写。改动服务端代码后需用户手动重启才生效。',
         parameters: { type: 'object', properties: { path: str('文件'), old: str('原文'), new: str('新文') }, required: ['path', 'old', 'new'] },
         run: args => {
-          const abs = guardWrite(args.path);
+          const { abs, root } = guardWrite(args.path);
           const text = fs.readFileSync(abs, 'utf8');
           const count = text.split(args.old).length - 1;
           if (!args.old || count !== 1) throw new Error(`old 必须恰好出现 1 次，实际 ${count} 次`);
           const bak = backup(abs);
           fs.writeFileSync(abs, text.replace(args.old, () => args.new));
-          note('edit_file', `${path.relative(worktree, abs)}${bak ? ` (backup ${bak})` : ''}`);
+          note('edit_file', `${root === main ? 'main:' : 'session:'}${path.relative(root, abs)}${bak ? ` (backup ${bak})` : ''}`);
           return 'ok';
         },
       },
       {
-        name: 'remove_stale_git_lock', description: '删除该 worktree 的陈旧 .git/index.lock（先确认没有 git 进程持有）。',
-        parameters: { type: 'object', properties: {} },
-        run: async () => {
-          if (!worktree) throw new Error('该会话没有独立 worktree');
-          const gitDirRes = await exec(['git', 'rev-parse', '--git-dir'], worktree);
-          const gitDir = path.resolve(worktree, gitDirRes.stdout.trim());
+        name: 'remove_stale_git_lock', description: '删除陈旧的 .git/index.lock（先确认没有 git 写操作在运行）。where：main（默认）或 session。',
+        parameters: { type: 'object', properties: { where: { type: 'string', enum: ['main', 'session'] } } },
+        run: async args => {
+          const dir = whereDir(args.where);
+          const gitDirRes = await exec(['git', 'rev-parse', '--git-dir'], dir);
+          const gitDir = path.resolve(dir, gitDirRes.stdout.trim());
           const lock = path.join(gitDir, 'index.lock');
           if (!fs.existsSync(lock)) return '没有 index.lock';
-          const ps = await exec(['pgrep', '-fl', 'git'], worktree);
+          const ps = await exec(['pgrep', '-fl', 'git'], dir);
           if (/git (add|commit|merge|rebase|checkout|stash|worktree)/.test(ps.stdout)) throw new Error('仍有 git 进程在运行，拒绝删除锁');
           fs.unlinkSync(lock);
           note('remove_lock', lock);

@@ -2,11 +2,11 @@
   'use strict';
   // "会话医生": one click asks a small tool-using model agent (server-side, no CLI
   // process involved) to diagnose this session. Shift/Alt-click also lets it fix
-  // things inside the session's own worktree. offer() puts the same action next
+  // things in the MultiCC main checkout (or the session's worktree). offer() puts the same action next
   // to an abnormal output (error line, upstream-error bar) so it is one tap away
   // exactly when the session misbehaves.
   const POLL_MS = 2000;
-  const MAX_POLLS = 150;
+  const MAX_POLLS = 3600; // ~2h; the run itself has no turn cap
 
   function formatReport(run, translate) {
     const tr = translate || (key => key);
