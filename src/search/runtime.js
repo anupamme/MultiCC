@@ -38,6 +38,13 @@ const DEFAULT_INTERVAL_MS = 60000;
 // Sessions per event-loop turn during the first sweep. Small on purpose: the cost
 // of a slice is the slowest single session it contains, not the average.
 const FIRST_SWEEP_BATCH = 8;
+// The 60s safety-net sweep yields to the event loop once a slice has run this long.
+// A changed session is re-read and re-parsed whole (a busy conversation is tens of
+// MB), so one unsliced sweep over several of them held the server for seconds and
+// every request — a provider save included — queued behind it. Unchanged sessions
+// cost microseconds and ride along in the same slice; the budget bites only on a
+// session that really had to be re-parsed.
+const SLICE_BUDGET_MS = 20;
 // One search's worth of hits when the caller does not say. The index clamps its
 // own limit too; this is the default the port advertises.
 const DEFAULT_HITS = 10;
@@ -68,6 +75,7 @@ function createSearchRuntime({
     indexedAt: 0,
     timer: null,
     failures: 0,
+    slicing: false,
   };
 
   // Failures are logged a bounded number of times: this port sits on the turn-end
@@ -107,6 +115,56 @@ function createSearchRuntime({
       noteFailure('sweep_failed', error);
       return null;
     }
+  }
+
+  // The periodic pass: same slicing as the cold path, but it never syncs a session
+  // twice — the closing step only prunes sessions history no longer has. (Ending
+  // with a plain sweep() here would re-parse every session that changed while the
+  // pass ran, and an active conversation changes every few seconds.) Re-entry is
+  // refused: if a pass is still running when the next tick fires, that tick skips.
+  function sweepSliced() {
+    if (!corpus || state.slicing) return;
+    if (state.firstSweepScheduled && !state.firstSweepDone) return;
+    let ids = [];
+    let refs = new Map();
+    try {
+      ids = corpus.listSessions();
+      refs = new Map(opened.listRefs(MESSAGE_SCOPE).map(ref => [ref.refId, ref]));
+    } catch (error) {
+      noteFailure('sweep_failed', error);
+      return;
+    }
+    state.slicing = true;
+    const started = now();
+    let cursor = 0;
+    let synced = 0;
+    let skipped = 0;
+    const step = () => {
+      const sliceStart = now();
+      try {
+        while (cursor < ids.length) {
+          const id = ids[cursor];
+          cursor += 1;
+          try {
+            const result = corpus.syncSession(id, { refs });
+            if (result?.sessionSkipped) skipped += 1;
+            else synced += 1;
+          } catch (error) {
+            noteFailure('sync_failed', error, { sessionId: id });
+          }
+          if (now() - sliceStart >= SLICE_BUDGET_MS) break;
+        }
+        if (cursor < ids.length) { defer(step); return; }
+        const pruned = corpus.prune();
+        state.sweeps += 1;
+        state.indexedAt = now();
+        state.lastSweep = { sessions: ids.length, synced, skipped, ...pruned, tookMs: now() - started };
+      } catch (error) {
+        noteFailure('sweep_failed', error);
+      }
+      state.slicing = false;
+    };
+    defer(step);
   }
 
   // The cold path, sliced. Sessions are synced in batches with an event-loop turn
@@ -160,7 +218,7 @@ function createSearchRuntime({
     state.started = true;
     if (!corpus) return api;
     if (intervalMs > 0) {
-      state.timer = setInterval(() => sweep(), intervalMs);
+      state.timer = setInterval(() => sweepSliced(), intervalMs);
       // The index is derived data: it must never be the reason the process stays
       // alive at shutdown.
       if (typeof state.timer?.unref === 'function') state.timer.unref();
@@ -249,6 +307,7 @@ function createSearchRuntime({
     start,
     stop,
     sweep,
+    sweepSliced,
     syncSession,
     search,
     findMessages,
@@ -287,6 +346,7 @@ module.exports = {
   DEFAULT_HITS,
   DEFAULT_INTERVAL_MS,
   FIRST_SWEEP_BATCH,
+  SLICE_BUDGET_MS,
   createSearchRuntime,
   getSharedSearchRuntime,
   resetSharedSearchRuntimes,
