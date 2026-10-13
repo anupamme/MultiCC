@@ -47,10 +47,12 @@ try {
     env: { PATH: windowsBin, PATHEXT: '.EXE;.CMD' },
   }), windowsCommand, 'Windows lookup does not append PATHEXT twice');
 
+  const codexOverride = path.join(root, 'custom-codex');
+  makeExecutable(codexOverride);
   const overrideEnv = {
     PATH: '',
     CLAUDE_CMD: '/custom/claude --flag',
-    CODEX_CMD: '/custom/codex',
+    CODEX_CMD: codexOverride,
     OPENCODE_CMD: '/custom/opencode',
     ZCODE_CMD: '/custom/zcode',
     QODER_CMD: '/custom/qoderclicn',
@@ -69,8 +71,8 @@ try {
   }), {
     claude: '/custom/claude --flag',
     'claude-exp': process.execPath,
-    codex: '/custom/codex',
-    'codex-exp': '/custom/codex',
+    codex: codexOverride,
+    'codex-exp': codexOverride,
     opencode: '/custom/opencode',
     zcode: '/custom/zcode',
     qoder: '/custom/qoderclicn',
