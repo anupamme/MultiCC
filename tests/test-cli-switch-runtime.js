@@ -1057,6 +1057,62 @@ test('upgrade treats legacy ~/.claude/local and dangling shim as native installs
   fs.rmSync(home, { recursive: true, force: true });
 });
 
+test('upgrade of the official ~/.opencode/bin install runs the binary itself, not npm', async () => {
+  // 复刻真机布局: resolveOpencode 的第一候选 ~/.opencode/bin/opencode(官方 curl 安装)。
+  // 这正是「npm 全局装到 /opt/homebrew、永远升不到这份」的形态 —— 升级必须作用到
+  // multicc 派生的那个二进制本身, 所以命令应是它自带的 `opencode upgrade`。
+  const os = require('node:os');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-native-'));
+  const bin = path.join(home, '.opencode', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const stub = path.join(bin, 'opencode');
+  fs.writeFileSync(stub, '#!/bin/sh\n');
+
+  let brewProbed = false;
+  let proc = null;
+  const fakeSpawn = () => {
+    proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = () => {};
+    return proc;
+  };
+  const harness = createHarness({
+    spawnProcess: fakeSpawn,
+    cliCommands: { opencode: stub },
+    homebrewOwnerOf: () => { brewProbed = true; return null; },
+    availability: { opencode: { available: true } },
+  });
+  const res = await harness.invokeUpgrade('opencode');
+  assert.equal(res.statusCode, 202);
+  assert.equal(res.body.command, `"${stub}" upgrade`);
+  assert.equal(brewProbed, false, '官方安装不归 Homebrew 管, 不该探测 brew 归属');
+  assert.ok(proc, '升级必须真的起了安装进程');
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('upgrade of a Homebrew-owned opencode still goes through the npm takeover', async () => {
+  // 与 native 的判定互斥: 派生二进制在 Cellar 时不该命中 `opencode upgrade`,
+  // 而应走 homebrew-takeover(brew uninstall && npm install -g)。
+  const os = require('node:os');
+  const brewBin = '/opt/homebrew/bin/opencode';
+  const harness = createHarness({
+    spawnProcess: () => {
+      const ee = new EventEmitter();
+      ee.stdout = new EventEmitter();
+      ee.stderr = new EventEmitter();
+      ee.kill = () => {};
+      return ee;
+    },
+    cliCommands: { opencode: brewBin },
+    homebrewOwnerOf: (cmd) => cmd === brewBin ? { kind: 'formula', name: 'opencode', path: brewBin } : null,
+    availability: { opencode: { available: true } },
+  });
+  const res = await harness.invokeUpgrade('opencode');
+  assert.equal(res.statusCode, 202);
+  assert.equal(res.body.command, 'brew uninstall --formula opencode && npm install -g opencode-ai');
+});
+
 test('upgrade refuses unsupported clis and manual-only installs', async () => {
   const harness = createHarness();
   const unknown = await harness.invokeUpgrade('nope');
