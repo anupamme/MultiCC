@@ -2,6 +2,16 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.5.1 — Session doctor, faster chat search, and a run-config cleanup (2026-10-13)
+
+### Highlights
+
+- **The Session Doctor diagnoses a stuck chat for you** — a "diagnose" action spins up a small tool-using model agent (independent of any CLI session, running through the Aux HTTP target) that snapshots a misbehaving session, forms hypotheses, and confirms each with real evidence (`session_info`, `chat_tail`, log tails, `git status/log`, `ps/lsof`) before believing it. Read-only by default; an autofix mode makes the smallest reversible fix and re-checks. A confirmed-but-unsolvable case drafts a GitHub issue for you to submit — nothing is posted automatically (`src/doctor/*`, `public/chat-doctor.js`).
+- **Chat search gets a slice runner and a bigger corpus** — the message corpus is rebuilt to index far more history, search runs in bounded slices instead of one full pass, and the runtime streams results so a large workspace stays responsive (`src/search/message-corpus.js`, `src/search/slice-runner.js`, `src/search/runtime.js`).
+- **Run-config presets show their names** — the auto-route pill now prints the preset name it came from (matched against machine-saved presets by exact route-pool identity), and the picker keeps scroll position, accepts Enter inline for the preset name, and gains per-preset delete; IME submissions no longer misfire (`public/run-config.js`, `public/run-config.css`).
+- **Egress-IP routing refines** — the egress allowlist policy is reworked to cover more provider shapes with clearer diagnostics (`src/providers/egress-ip.js`).
+- **The openrouter-usage demo service is removed** — the MacroMicro-token demo page and its daily fetch job no longer ship; `.gitignore` and `whisper_vocab.json` housekeeping follow.
+
 ## v2.5.0 — Visible Codex sub-agents, native background progress, and mobile fleet control (2026-10-12)
 
 ### Highlights
