@@ -139,10 +139,23 @@ test('chat button polls the run and posts one readable report', async () => {
     return { ok: true, json: async () => ({ run }) };
   };
   const doc = { getElementById: () => null };
-  const doctor = create({ document: doc, fetch: fetchStub, sleep: async () => {}, getSessionName: () => 's 1', addSystemMsg: m => msgs.push(m), withToken: u => u });
+  const doctor = create({ document: doc, translate: (k, v) => k + JSON.stringify(v || {}), fetch: fetchStub, sleep: async () => {}, getSessionName: () => 's 1', addSystemMsg: m => msgs.push(m), withToken: u => u });
   const out = await doctor.diagnose({ autofix: true });
   assert.equal(out.ok, true);
   assert.match(calls[0][0], /sessions\/s%201\/doctor/);
   assert.equal(JSON.parse(calls[0][1]).autofix, true);
-  assert.match(msgs.at(-1), /根因：R[\s\S]*remove_lock[\s\S]*restart/);
+  assert.match(msgs.at(-1), /doctorRootCause\{"cause":"R"\}[\s\S]*remove_lock[\s\S]*restart/);
+});
+
+test('offer() puts one diagnose button on an abnormal output and reuses the same flow', () => {
+  const { create } = require('../public/chat-doctor');
+  const children = [];
+  const el = { appendChild: c => children.push(c), querySelector: sel => children.find(c => sel === '.doctor-offer' && c.className === 'doctor-offer') || null };
+  const makeBtn = () => ({ listeners: {}, style: {}, addEventListener(t, f) { this.listeners[t] = f; } });
+  const doctor = create({ document: { getElementById: () => null, createElement: makeBtn }, translate: k => k, fetch: async () => ({ ok: false, json: async () => ({ error: 'x' }) }),
+    getSessionName: () => 's1', addSystemMsg: () => {}, withToken: u => u });
+  const button = doctor.offer(el);
+  assert.equal(button.textContent, 'doctorOffer');
+  assert.equal(doctor.offer(el), null, 'no duplicate button on the same element');
+  assert.equal(doctor.offer(null), null);
 });

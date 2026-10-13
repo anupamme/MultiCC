@@ -2444,6 +2444,7 @@ chatEventController = window.MultiCCChatEventController.createEventController({
     applyCliUi,
     addSystemMsg,
     addAuthActionMsg: (text, action) => chatAuthAction.render(text, action),
+    offerDoctor: el => chatDoctor.offer(el),
     addAgentNotes,
     updateEffortBtn,
     updateProviderBtn,
@@ -2822,7 +2823,7 @@ const _chatRecovery = window.MultiCCChatRecoveryService.create({
   closeMoreMenu: () => closeHeaderMoreModal(),
 });
 
-window.MultiCCChatDoctor.create({ document, getSessionName: () => _sessionName, addSystemMsg, withToken, closeMoreMenu: () => closeHeaderMoreModal() });
+const chatDoctor = window.MultiCCChatDoctor.create({ document, translate: tt, getSessionName: () => _sessionName, addSystemMsg, withToken, closeMoreMenu: () => closeHeaderMoreModal() });
 
 /* ── Debug panel wiring ── */
 (function initDebugPanel() {

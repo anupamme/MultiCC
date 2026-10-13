@@ -388,8 +388,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 队列重试回执（queueRetrying）与桌面 agent 平台提示（rsErrPlatform）。
     // 净 +29 键 −5 键（Esc/输入监控退役），生成器实测 8892/565523，按真实高水位抬一格。
     // Air navigation: localized project/settings labels and the three-step guide.
-    maxLines: 8950,
-    maxBytes: 568203,
+    // +20 键（doctor*）：会话医生按钮、异常处一键诊断与诊断进度/报告文案，生成器实测 8990/570883。
+    maxLines: 8990,
+    maxBytes: 570883,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

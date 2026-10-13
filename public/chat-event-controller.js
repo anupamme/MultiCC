@@ -815,6 +815,7 @@
           // turn-scoped: the next stream_start clears it, and a failed retry
           // re-shows it with the fresh decision.
           liveUi.renderApiError?.(message);
+          if (message.state !== 'retry_wait' && message.action !== 'retry') host.offerDoctor?.(global.document?.getElementById('api-error-bar'));
           break;
         }
         case 'rate_limit_event': {
@@ -897,9 +898,12 @@
           }
           // A refusal that carries its own reason is shown as prose: the bare
           // code tells the person waiting to send nothing they can act on.
-          host.addSystemMsg?.(`Error: ${message.error === 'task_switching'
-            ? host.translate?.('taskSwitchingRefused') || message.error
-            : (message.error || 'Unknown chat error')}`);
+          {
+            const errorLine = host.addSystemMsg?.(`Error: ${message.error === 'task_switching'
+              ? host.translate?.('taskSwitchingRefused') || message.error
+              : (message.error || 'Unknown chat error')}`);
+            host.offerDoctor?.(errorLine);
+          }
           state.isStreaming = false;
           finishStreaming();
           host.stopTitleAnimation?.();

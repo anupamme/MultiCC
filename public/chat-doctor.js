@@ -2,29 +2,34 @@
   'use strict';
   // "会话医生": one click asks a small tool-using model agent (server-side, no CLI
   // process involved) to diagnose this session. Shift/Alt-click also lets it fix
-  // things inside the session's own worktree.
+  // things inside the session's own worktree. offer() puts the same action next
+  // to an abnormal output (error line, upstream-error bar) so it is one tap away
+  // exactly when the session misbehaves.
   const POLL_MS = 2000;
   const MAX_POLLS = 150;
 
-  function formatReport(run) {
+  function formatReport(run, translate) {
+    const tr = translate || (key => key);
     const r = run.report || {};
-    const lines = [`🩺 诊断${run.status === 'done' ? '完成' : '未完整结束'}：${r.summary || '无结论'}`, `根因：${r.rootCause || '未确认'}`];
-    if (r.evidence && r.evidence.length) lines.push(`证据：\n- ${r.evidence.join('\n- ')}`);
-    if (run.actions && run.actions.length) lines.push(`已执行的修复：\n- ${run.actions.map(a => `${a.kind}: ${a.detail}`).join('\n- ')}`);
-    if (r.nextSteps && r.nextSteps.length) lines.push(`需要你处理：\n- ${r.nextSteps.join('\n- ')}`);
-    if (!run.autofix && r.rootCause && !/未确认/.test(r.rootCause)) lines.push('提示：按住 Shift 点击「诊断」可让它在该会话 worktree 内自动修复。');
+    const head = tr(run.status === 'done' ? 'doctorReportDone' : 'doctorReportIncomplete', { summary: r.summary || tr('doctorNoConclusion') });
+    const lines = [head, tr('doctorRootCause', { cause: r.rootCause || tr('doctorUnconfirmed') })];
+    if (r.evidence && r.evidence.length) lines.push(`${tr('doctorEvidence')}\n- ${r.evidence.join('\n- ')}`);
+    if (run.actions && run.actions.length) lines.push(`${tr('doctorActions')}\n- ${run.actions.map(a => `${a.kind}: ${a.detail}`).join('\n- ')}`);
+    if (r.nextSteps && r.nextSteps.length) lines.push(`${tr('doctorNextSteps')}\n- ${r.nextSteps.join('\n- ')}`);
+    if (!run.autofix && r.rootCause && !/未确认|unconfirmed/i.test(r.rootCause)) lines.push(tr('doctorFixHint'));
     return lines.join('\n');
   }
 
   function create(options) {
     const doc = options.document;
+    const tr = options.translate || (key => key);
     const fetchImpl = options.fetch || global.fetch.bind(global);
     const sleep = options.sleep || (ms => new Promise(r => setTimeout(r, ms)));
     let running = false;
 
     async function diagnose({ autofix = false } = {}) {
       const id = options.getSessionName();
-      if (!id) { options.addSystemMsg('当前没有会话，无法诊断'); return { ok: false }; }
+      if (!id) { options.addSystemMsg(tr('doctorNoSession')); return { ok: false }; }
       if (running) return { ok: false, reason: 'running' };
       running = true;
       try {
@@ -33,10 +38,10 @@
         });
         const started = await res.json().catch(() => ({}));
         if (!res.ok || !started.runId) {
-          options.addSystemMsg(`🩺 诊断无法启动：${started.error || res.status}（需要先在辅助模型里配好可用的 Provider）`);
+          options.addSystemMsg(tr('doctorStartFailed', { error: started.error || res.status }));
           return { ok: false };
         }
-        options.addSystemMsg(`🩺 会话医生已开始${autofix ? '（含自动修复）' : '（只读）'}…`);
+        options.addSystemMsg(tr(autofix ? 'doctorStartedFix' : 'doctorStarted'));
         let seen = 0;
         for (let i = 0; i < MAX_POLLS; i++) {
           await sleep(POLL_MS);
@@ -50,24 +55,41 @@
             seen = tools.length;
           }
           if (run.status !== 'running') {
-            options.addSystemMsg(run.status === 'error' ? `🩺 诊断失败：${run.error}` : run.status === 'cancelled' ? '🩺 诊断已取消' : formatReport(run));
+            options.addSystemMsg(run.status === 'error' ? tr('doctorFailed', { error: run.error })
+              : run.status === 'cancelled' ? tr('doctorCancelled') : formatReport(run, tr));
             return { ok: run.status === 'done', run };
           }
         }
-        options.addSystemMsg('🩺 诊断超时，仍在后台运行，可稍后再点一次查看');
+        options.addSystemMsg(tr('doctorTimeout'));
         return { ok: false, reason: 'timeout' };
       } catch (error) {
-        options.addSystemMsg(`🩺 诊断失败：${error.message}`);
+        options.addSystemMsg(tr('doctorFailed', { error: error.message }));
         return { ok: false };
       } finally { running = false; }
     }
 
-    const btn = doc.getElementById('doctor-btn');
-    if (btn) btn.addEventListener('click', event => {
+    const onClick = event => {
       options.closeMoreMenu?.();
-      diagnose({ autofix: !!(event.shiftKey || event.altKey) });
-    });
-    return Object.freeze({ diagnose });
+      return diagnose({ autofix: !!(event.shiftKey || event.altKey) });
+    };
+    const btn = doc.getElementById('doctor-btn');
+    if (btn) btn.addEventListener('click', onClick);
+
+    // Attach a one-tap "diagnose" button to an abnormal-output element.
+    function offer(el) {
+      if (!el || typeof el.appendChild !== 'function' || el.querySelector?.('.doctor-offer')) return null;
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.className = 'doctor-offer';
+      button.textContent = tr('doctorOffer');
+      button.title = tr('doctorOfferTitle');
+      button.style.cssText = 'margin-left:8px;padding:2px 10px;border:1px solid currentColor;border-radius:6px;background:transparent;color:inherit;font-size:12px;cursor:pointer';
+      button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); onClick(event); });
+      el.appendChild(button);
+      return button;
+    }
+
+    return Object.freeze({ diagnose, offer });
   }
 
   const api = Object.freeze({ create, formatReport });
