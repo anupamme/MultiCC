@@ -95,10 +95,17 @@ func indeterminate(_ mechanism: String, _ message: String) -> [String: Any] {
 func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
 let automationEventSource = CGEventSource(stateID: .privateState)
 
-func post(_ e: CGEvent?, pid: pid_t? = nil) {
-  guard let e = e else { return }
-  e.setIntegerValueField(.eventSourceUserData, value: EVENT_MARK)
+func deliverAutomationEvent(_ e: CGEvent, pid: pid_t?) {
   if let pid = pid { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
+}
+
+func post(_ e: CGEvent?, pid: pid_t? = nil, flags: CGEventFlags = []) {
+  guard let e = e else { return }
+  // Every operation declares its modifiers. Never inherit flags from an event
+  // source's earlier chord or the current system state for a plain click/type.
+  e.flags = flags
+  e.setIntegerValueField(.eventSourceUserData, value: EVENT_MARK)
+  deliverAutomationEvent(e, pid: pid)
 }
 
 func click(_ p: CGPoint, right: Bool, count: Int) {
@@ -214,8 +221,7 @@ func postChord(_ code: CGKeyCode, _ flags: CGEventFlags, pid: pid_t?) {
   let src = automationEventSource
   for down in [true, false] {
     let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)
-    e?.flags = flags
-    post(e, pid: pid)
+    post(e, pid: pid, flags: flags)
     usleep(1_000)
   }
 }

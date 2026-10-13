@@ -50,6 +50,74 @@ test('agent + scroll sources: ungated code stays Swift 5.5 compatible (macOS 11 
   }
 });
 
+test('computer use: input dispatch clears inherited modifiers and preserves explicit chords', { skip: !hasSwift, timeout: 60000 }, t => {
+  const root = fs.mkdtempSync('/tmp/multicc-input-flags-');
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/macos-agent/MultiCCAgent.swift'), 'utf8');
+  const post = source.slice(source.indexOf('func post('), source.indexOf('func click('));
+  const chord = source.slice(source.indexOf('func postChord('), source.indexOf('func runTool('));
+  const file = path.join(root, 'main.swift');
+  fs.writeFileSync(file, `import Foundation
+import CoreGraphics
+import Darwin
+let EVENT_MARK: Int64 = 0x4D43_4341
+let automationEventSource = CGEventSource(stateID: .privateState)
+var captured: [(CGEvent, pid_t?)] = []
+// Replace only the OS transport: production event configuration and chord
+// construction run unchanged, without posting keys or moving the real pointer.
+func deliverAutomationEvent(_ event: CGEvent, pid: pid_t?) { captured.append((event, pid)) }
+${post}
+${chord}
+let inherited: CGEventFlags = [.maskCommand, .maskShift, .maskControl, .maskAlternate, .maskSecondaryFn]
+var events: [CGEvent] = []
+for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .leftMouseDragged] {
+  events.append(CGEvent(mouseEventSource: automationEventSource, mouseType: type,
+                        mouseCursorPosition: CGPoint(x: 12, y: 34), mouseButton: .left)!)
+}
+events.append(CGEvent(scrollWheelEvent2Source: automationEventSource, units: .line,
+                      wheelCount: 1, wheel1: 3, wheel2: 0, wheel3: 0)!)
+for down in [true, false] {
+  events.append(CGEvent(keyboardEventSource: automationEventSource, virtualKey: 7, keyDown: down)!)
+}
+for event in events {
+  let originalType = event.type
+  event.flags = inherited
+  post(event, pid: 42)
+  let delivered = captured.last!
+  precondition(delivered.0.flags.isEmpty, "plain input inherited modifiers")
+  precondition(delivered.0.type == originalType, "dispatch changed event type")
+  precondition(delivered.0.getIntegerValueField(.eventSourceUserData) == EVENT_MARK)
+  precondition(delivered.1 == 42, "dispatch lost the target PID")
+}
+let count = captured.count
+post(nil)
+precondition(captured.count == count, "nil events must not dispatch")
+let requested: CGEventFlags = [.maskCommand, .maskShift]
+captured = []
+postChord(5, requested, pid: 123)
+precondition(captured.count == 2)
+precondition(captured[0].0.type == .keyDown && captured[1].0.type == .keyUp)
+for (event, pid) in captured {
+  precondition(event.flags == requested, "explicit chord modifiers were lost")
+  precondition(event.getIntegerValueField(.keyboardEventKeycode) == 5)
+  precondition(pid == 123)
+}
+// A subsequent unmodified chord must not retain modifiers from its predecessor.
+postChord(36, [], pid: nil)
+for (event, pid) in captured.suffix(2) {
+  precondition(event.flags.isEmpty && pid == nil)
+}
+let dirty = events[0]
+dirty.flags = inherited
+post(dirty, flags: .maskControl)
+precondition(captured.last!.0.flags == .maskControl, "explicit flags must replace, not merge with, inherited flags")
+print("Input flags OK: plain events cleared, chords preserved, next operation isolated")
+`);
+  const binary = path.join(root, 'input-flags-tests');
+  execFileSync('xcrun', ['swiftc', file, '-o', binary], { timeout: 30000 });
+  assert.match(execFileSync(binary, [], { encoding: 'utf8', timeout: 10000 }), /Input flags OK/);
+});
+
 test('computer use: human input pauses dispatch, resets countdown, respects held input and Esc', { skip: !hasSwift, timeout: 60000 }, t => {
   const root = fs.mkdtempSync('/tmp/multicc-input-native-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
