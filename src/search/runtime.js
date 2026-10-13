@@ -4,6 +4,7 @@ const path = require('node:path');
 const { resolveDataDir, createPaths } = require('../paths');
 const { createSearchIndex } = require('./index-store');
 const { createMessageCorpus, MESSAGE_SCOPE } = require('./message-corpus');
+const { createSliceRunner, DEFAULT_SLICE_MS, DEFAULT_DUTY } = require('./slice-runner');
 const { createChatHistoryFileRepository } = require('../session/adapters/chat-history-file-repository');
 
 // The message index as a running service, rather than a CLI over a file.
@@ -11,18 +12,21 @@ const { createChatHistoryFileRepository } = require('../session/adapters/chat-hi
 // scripts/search-index.js builds and reads the index by hand; this module is what
 // the server itself owns. Three jobs, in the order they matter:
 //
-//   1. Warm the index. A cold build over the real corpus is seconds of CPU (314
-//      sessions / 124MB / 3.6s measured), so the first sweep is sliced by session
-//      and yields between slices instead of blocking the event loop: no single
-//      tick pays more than one session's parse (worst observed 6.7ms). Once warm,
-//      a sweep is a Map lookup per session — 16ms for the whole corpus — so the
-//      60s interval below is what keeps the index current without a per-turn
-//      dependency on it.
+//   1. Keep the index current without ever being felt. Everything that touches
+//      chat_history runs as a job on a slice runner (slice-runner.js): at most
+//      ~8ms of work per slice, then a pause sized so the work averages out to
+//      ~10% of one core. Within a session the pass is incremental — it parses only
+//      what was appended since the last one — so a 100MB conversation that gained a
+//      turn costs a turn, and a cold build of the whole corpus is spread over
+//      seconds instead of held in one. The safety-net sweep is every few minutes,
+//      not every minute: the per-turn nudge below is what keeps the conversation
+//      that just spoke fresh, the sweep only has to catch whatever missed it.
 //   2. Serve searches: the same bigram/bm25 query semantics as the board search,
 //      over message text instead of task excerpts.
 //   3. Accept a per-turn nudge (syncSession) so the session that just spoke is
-//      searchable immediately rather than up to a minute later. Measured at ~7ms
-//      for a live session, which is why it may sit on the turn-end path.
+//      searchable immediately rather than minutes later. It sits on the turn-end
+//      path, so it is only done inline when it is small (the appended tail); a
+//      session with a lot to catch up on is queued at the front of the runner.
 //
 // Everything here is best-effort and never throws at its caller: a missing FTS5,
 // a vanished history directory or a closed database all degrade to "no results",
@@ -34,17 +38,15 @@ const { createChatHistoryFileRepository } = require('../session/adapters/chat-hi
 // must not each open their own handle on the same SQLite file — reach the same
 // instance without threading a port through server.js.
 
-const DEFAULT_INTERVAL_MS = 60000;
-// Sessions per event-loop turn during the first sweep. Small on purpose: the cost
-// of a slice is the slowest single session it contains, not the average.
-const FIRST_SWEEP_BATCH = 8;
-// The 60s safety-net sweep yields to the event loop once a slice has run this long.
-// A changed session is re-read and re-parsed whole (a busy conversation is tens of
-// MB), so one unsliced sweep over several of them held the server for seconds and
-// every request — a provider save included — queued behind it. Unchanged sessions
-// cost microseconds and ride along in the same slice; the budget bites only on a
-// session that really had to be re-parsed.
-const SLICE_BUDGET_MS = 20;
+// A safety net, not the freshness mechanism (see the header): an idle sweep is a
+// stat per session, so this could be shorter, but there is nothing for it to catch
+// that the per-turn nudge has not already indexed.
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
+// A file written this recently is still being written. Leave it to the turn-end
+// nudge and the next sweep instead of chasing it mid-stream.
+const QUIET_MS = 20 * 1000;
+// What the turn-end nudge may read inline. Past this the work moves to the runner.
+const INLINE_MAX_BYTES = 4 * 1024 * 1024;
 // One search's worth of hits when the caller does not say. The index clamps its
 // own limit too; this is the default the port advertises.
 const DEFAULT_HITS = 10;
@@ -54,8 +56,15 @@ function createSearchRuntime({
   dataDir = resolveDataDir(),
   logger = console,
   intervalMs = DEFAULT_INTERVAL_MS,
-  firstSweepBatch = FIRST_SWEEP_BATCH,
-  setImmediateImpl = setImmediate,
+  // Called as (fn, delayMs): delayMs is 0 for "next turn of the loop", positive for
+  // the duty-cycle pause between slices.
+  setImmediateImpl = null,
+  sliceMs = DEFAULT_SLICE_MS,
+  duty = DEFAULT_DUTY,
+  quietMs = QUIET_MS,
+  inlineMaxBytes = INLINE_MAX_BYTES,
+  blockBytes = undefined,
+  fsImpl = undefined,
   dbFile = null,
   index = null,
   history = null,
@@ -64,18 +73,26 @@ function createSearchRuntime({
   const paths = createPaths({ dataDir });
   const opened = index || createSearchIndex({ dbFile: dbFile || paths.searchIndexDbFile, logger });
   const repo = history || createChatHistoryFileRepository({ dataDir });
-  const corpus = opened.available ? createMessageCorpus({ index: opened, history: repo, logger }) : null;
-  const defer = typeof setImmediateImpl === 'function' ? setImmediateImpl : setImmediate;
+  const corpus = opened.available
+    ? createMessageCorpus({ index: opened, history: repo, logger, ...(fsImpl ? { fsImpl } : {}), ...(blockBytes ? { blockBytes } : {}) })
+    : null;
+  const runner = createSliceRunner({
+    now,
+    sliceMs,
+    duty,
+    ...(typeof setImmediateImpl === 'function' ? { defer: (fn, delayMs) => setImmediateImpl(fn, delayMs) } : {}),
+  });
   const state = {
     started: false,
     firstSweepScheduled: false,
     firstSweepDone: false,
+    sweepQueued: false,
+    queued: new Set(),
     sweeps: 0,
     lastSweep: null,
     indexedAt: 0,
     timer: null,
     failures: 0,
-    slicing: false,
   };
 
   // Failures are logged a bounded number of times: this port sits on the turn-end
@@ -87,23 +104,41 @@ function createSearchRuntime({
     logger?.warn?.(`search_index_${event}: ${error?.message || error}`, context);
   }
 
+  // Queue a session behind nothing but the job already running. Used when the
+  // turn-end nudge finds more to catch up on than it may do inline.
+  function queueSession(id) {
+    if (!corpus || state.queued.has(id)) return;
+    state.queued.add(id);
+    runner.enqueue(corpus.syncSessionSteps(id), {
+      front: true,
+      onDone: () => { state.queued.delete(id); },
+      onError: error => { state.queued.delete(id); noteFailure('sync_failed', error, { sessionId: id }); },
+    });
+  }
+
+  // The per-turn nudge. Cheap by construction: a session that only grew costs the
+  // appended tail, and one that would cost more than `inlineMaxBytes` (first sight
+  // of a huge transcript, or one that was rewritten) is handed to the runner and
+  // reported as `deferred` rather than held on the turn-end path.
   function syncSession(sessionId) {
     if (!corpus || !sessionId) return null;
+    const id = String(sessionId);
     try {
-      return corpus.syncSession(String(sessionId));
+      const result = corpus.syncSession(id, { maxBytes: inlineMaxBytes });
+      if (result?.deferred) queueSession(id);
+      return result;
     } catch (error) {
-      noteFailure('sync_failed', error, { sessionId: String(sessionId) });
+      noteFailure('sync_failed', error, { sessionId: id });
       return null;
     }
   }
 
-  // One sweep, synchronously. Only the 60s interval and tests call this: on the
-  // real corpus a sweep with nothing to do is ~16ms, and one that picks up a turn
-  // pays only for the sessions whose file moved.
+  // One sweep, synchronously, with no pacing. Tests and tools call this; the server
+  // never does (it would hold the loop for as long as the sweep takes).
   function sweep({ force = false } = {}) {
     if (!corpus) return null;
-    // A sweep during the sliced first pass would fight it for the same rows and
-    // could prune against a half-built ref list.
+    // A sweep during the first pass would fight it for the same rows and could
+    // prune against a half-built ref list.
     if (state.firstSweepScheduled && !state.firstSweepDone) return { skipped: 'warming' };
     try {
       const summary = corpus.syncAll({ force });
@@ -117,100 +152,44 @@ function createSearchRuntime({
     }
   }
 
-  // The periodic pass: same slicing as the cold path, but it never syncs a session
-  // twice — the closing step only prunes sessions history no longer has. (Ending
-  // with a plain sweep() here would re-parse every session that changed while the
-  // pass ran, and an active conversation changes every few seconds.) Re-entry is
-  // refused: if a pass is still running when the next tick fires, that tick skips.
-  function sweepSliced() {
-    if (!corpus || state.slicing) return;
-    if (state.firstSweepScheduled && !state.firstSweepDone) return;
-    let ids = [];
-    let refs = new Map();
-    try {
-      ids = corpus.listSessions();
-      refs = new Map(opened.listRefs(MESSAGE_SCOPE).map(ref => [ref.refId, ref]));
-    } catch (error) {
-      noteFailure('sweep_failed', error);
-      return;
-    }
-    state.slicing = true;
+  // The sweep as a paced job: the interval timer's work, and the cold build. One at
+  // a time — a tick that lands while the previous sweep is still being worked off
+  // is dropped rather than stacked.
+  function queueSweep({ first = false } = {}) {
+    if (!corpus || state.sweepQueued) return false;
+    state.sweepQueued = true;
     const started = now();
-    let cursor = 0;
-    let synced = 0;
-    let skipped = 0;
-    const step = () => {
-      const sliceStart = now();
-      try {
-        while (cursor < ids.length) {
-          const id = ids[cursor];
-          cursor += 1;
-          try {
-            const result = corpus.syncSession(id, { refs });
-            if (result?.sessionSkipped) skipped += 1;
-            else synced += 1;
-          } catch (error) {
-            noteFailure('sync_failed', error, { sessionId: id });
-          }
-          if (now() - sliceStart >= SLICE_BUDGET_MS) break;
-        }
-        if (cursor < ids.length) { defer(step); return; }
-        const pruned = corpus.prune();
+    runner.enqueue(corpus.syncAllSteps({ quietMs }), {
+      onDone: summary => {
+        state.sweepQueued = false;
         state.sweeps += 1;
+        state.lastSweep = summary;
         state.indexedAt = now();
-        state.lastSweep = { sessions: ids.length, synced, skipped, ...pruned, tookMs: now() - started };
-      } catch (error) {
+        if (first) {
+          state.firstSweepDone = true;
+          logger?.log?.(`search_index_ready: ${summary.sessions} 个会话（新增 ${summary.synced}、未变 ${summary.skipped}）、`
+            + `${summary.chunks} 块、耗时 ${now() - started}ms`);
+        }
+      },
+      onError: error => {
+        state.sweepQueued = false;
+        // A failed cold build must not leave the runtime "warming" forever.
+        if (first) state.firstSweepDone = true;
         noteFailure('sweep_failed', error);
-      }
-      state.slicing = false;
-    };
-    defer(step);
+      },
+    });
+    return true;
   }
 
-  // The cold path, sliced. Sessions are synced in batches with an event-loop turn
-  // between them, and the plain sweep at the end is what prunes sessions history
-  // no longer has — by then every live session fast-paths skipped, so it is cheap
-  // and the prune rules stay in exactly one place (corpus.syncAll).
+  function sweepInBackground() {
+    if (state.firstSweepScheduled && !state.firstSweepDone) return false;
+    return queueSweep();
+  }
+
   function scheduleFirstSweep() {
     if (state.firstSweepScheduled || !corpus) return;
     state.firstSweepScheduled = true;
-    const started = now();
-    let ids = [];
-    try {
-      ids = corpus.listSessions();
-    } catch (error) {
-      noteFailure('list_failed', error);
-    }
-    // One ref snapshot for the whole pass: the per-session fast path would
-    // otherwise re-read the ref table for every session (O(sessions²)), and a
-    // linear pass never revisits an id, so a snapshot cannot go stale under it.
-    let refs = new Map();
-    try {
-      refs = new Map(opened.listRefs(MESSAGE_SCOPE).map(ref => [ref.refId, ref]));
-    } catch (error) {
-      noteFailure('list_refs_failed', error);
-    }
-    let cursor = 0;
-    let synced = 0;
-    let skipped = 0;
-    const step = () => {
-      const until = Math.min(ids.length, cursor + Math.max(1, firstSweepBatch));
-      for (; cursor < until; cursor += 1) {
-        try {
-          const result = corpus.syncSession(ids[cursor], { refs });
-          if (result?.sessionSkipped) skipped += 1;
-          else synced += 1;
-        } catch (error) {
-          noteFailure('sync_failed', error, { sessionId: ids[cursor] });
-        }
-      }
-      if (cursor < ids.length) { defer(step); return; }
-      state.firstSweepDone = true;
-      const summary = sweep();
-      logger?.log?.(`search_index_ready: ${ids.length} 个会话（新增 ${synced}、未变 ${skipped}）、`
-        + `${summary?.chunks || 0} 块、耗时 ${now() - started}ms`);
-    };
-    defer(step);
+    queueSweep({ first: true });
   }
 
   function start() {
@@ -218,7 +197,7 @@ function createSearchRuntime({
     state.started = true;
     if (!corpus) return api;
     if (intervalMs > 0) {
-      state.timer = setInterval(() => sweepSliced(), intervalMs);
+      state.timer = setInterval(() => sweepInBackground(), intervalMs);
       // The index is derived data: it must never be the reason the process stays
       // alive at shutdown.
       if (typeof state.timer?.unref === 'function') state.timer.unref();
@@ -229,6 +208,9 @@ function createSearchRuntime({
 
   function stop() {
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    runner.clear();
+    state.sweepQueued = false;
+    state.queued.clear();
     return api;
   }
 
@@ -292,6 +274,7 @@ function createSearchRuntime({
       // sweep is still walking the corpus, so hits are partial for a few hundred ms.
       warming: state.firstSweepScheduled && !state.firstSweepDone,
       sweeps: state.sweeps,
+      queued: runner.pending(),
       indexedAt: state.indexedAt,
       failures: state.failures,
       lastSweep: state.lastSweep,
@@ -307,13 +290,13 @@ function createSearchRuntime({
     start,
     stop,
     sweep,
-    sweepSliced,
+    sweepInBackground,
     syncSession,
     search,
     findMessages,
     stats,
     status,
-    close: () => { stop(); try { opened.close(); } catch (error) { /* closing twice is fine */ } },
+    close: () => { stop(); runner.stop(); try { opened.close(); } catch (error) { /* closing twice is fine */ } },
   };
   return api;
 }
@@ -345,8 +328,8 @@ function resetSharedSearchRuntimes() {
 module.exports = {
   DEFAULT_HITS,
   DEFAULT_INTERVAL_MS,
-  FIRST_SWEEP_BATCH,
-  SLICE_BUDGET_MS,
+  INLINE_MAX_BYTES,
+  QUIET_MS,
   createSearchRuntime,
   getSharedSearchRuntime,
   resetSharedSearchRuntimes,
