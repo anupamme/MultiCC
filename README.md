@@ -5,16 +5,16 @@
 <h1 align="center">MultiCC</h1>
 
 <p align="center">
-  <strong>One conversation. Eight coding CLIs. Switch between them mid-task without losing context.</strong>
+  <strong>Keep agents working. Step in from your phone when they need you.</strong>
 </p>
 
 <p align="center">
-  <em>Claude Code · Codex · OpenCode · ZCode · Kimi Code · Qoder · WorkBuddy · DSH — same chat, same repo, same task.<br/>
-  Run them in parallel across isolated git worktrees, and drive it all from your desk, your phone, or IM.</em>
+  <em>A self-hosted workspace for coding agents: assign tasks, follow progress, and take over a desktop step when needed.<br/>
+  Reply when you're done, and let the agent continue in the same task.</em>
 </p>
 
 <p align="center">
-  <a href="#the-headline-one-chat-eight-clis">Multi-CLI switching</a> &bull;
+  <a href="#step-in-then-let-the-agent-continue">Human handoff</a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#what-else-it-does">Features</a> &bull;
   <a href="#documentation">Docs</a> &bull;
@@ -32,21 +32,37 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
 </p>
 
-<!--
-  DEMO ASSET PLACEHOLDER — see docs/images/README.md
-  Record a GIF of the CLI switcher (claude → codex → back to claude, mid-task),
-  save it as docs/images/cli-switch.gif, then uncomment the block below.
 
-<p align="center">
-  <img src="docs/images/cli-switch.gif" width="720" alt="Switching a live chat from Claude Code to Codex and back" />
-  <br/>
-  <sub><i>Switching a running task from Claude Code to Codex — and back — without re-explaining anything.</i></sub>
-</p>
--->
 
 ---
 
-## The headline: one chat, eight CLIs
+## Step in, then let the agent continue
+
+A task can reach a step that needs you: a sign-in confirmation, a visual decision, or a desktop interaction. MultiCC brings the task and the host's screen into the same conversation, accessible from your computer or phone.
+
+1. **Give the agent a task.** It works in a task-bound conversation; code changes have their own Git worktree.
+2. **Get a specific request for help.** The agent explains what is blocked and can provide a remote-control link or a screenshot to annotate.
+3. **Handle that step.** Open the host's screen from the chat, click or type as needed, then close the controls and reply that you're done.
+4. **Continue to a result.** The agent checks the new state and carries on with the same task. Review its output and, for code changes, the diff and relevant checks.
+
+Remote desktop control requires a desktop agent on the host and its OS permissions. macOS uses MultiCC Agent; Linux requires X11 and its agent. Windows desktop control and Wayland are not currently supported. The host and MultiCC service must remain running, and your phone needs an authenticated LAN or tunnel connection. **Reply in the chat after completing the desktop action to let the agent continue.**
+
+**→ [Getting started](#quick-start) · [Human-assistance workflow](skills/multicc-human-assist/SKILL.md) · [Host setup and permissions](skills/multicc-computer-use/SKILL.md)**
+
+## Choose how to work
+
+| When you need to… | MultiCC gives you… |
+|---|---|
+| Step away from your desk | The same task on the web or mobile app, with notifications and remote desktop access on supported hosts |
+| Work on several changes | Separate task worktrees, visible diffs, and a merge workflow with syntax checks; conflicts still need resolution |
+| Ask another coding agent to continue | In-place engine switching, with the same task and worktree plus a visible handoff checkpoint |
+| Wait for a build or external result | Background commands, scheduled tasks, and registered waits that return results to the conversation |
+
+Supported engines include **Claude Code, Codex, OpenCode, ZCode, Kimi Code, Qoder, WorkBuddy, and DSH**. Provider and model controls, subagent routing, memory, voice, and IM bridges support these workflows; see the [feature catalogue](docs/features.md).
+
+<a id="the-headline-one-chat-eight-clis"></a>
+
+## Keep the task when you switch engines
 
 You are three hours into a refactor with Claude Code. You want a second opinion from Codex, or your Anthropic quota just ran out, or GLM is simply cheaper for the next mechanical stretch.
 
@@ -65,6 +81,9 @@ In MultiCC it is one click. The **conversation** is yours; the CLI is just the e
       └──────────┴───────────────┴───────────────┴──────────┴─────────┴──────────┴──────┘
         each keeps its own native session — switch back and it resumes
 ```
+
+<details>
+<summary>How engine handoff works</summary>
 
 ### What actually carries over
 
@@ -92,6 +111,8 @@ Clearing a chat invalidates **all** native sessions, so a switch can never resur
 The picker shows which CLIs are installed, which already hold a saved session, and offers one-click installation for the ones that are missing (`claude`, `codex`, `opencode`, `kimi`, `qoder`, `codebuddy`, `dsh`; ZCode ships inside its desktop app).
 
 **→ Full details: [Multi-CLI switching](docs/cli-switching.md)**
+
+</details>
 
 > Multi-CLI switching applies to **chat** sessions. Terminal sessions stay pinned to the CLI they were created with.
 
@@ -123,9 +144,9 @@ The picker shows which CLIs are installed, which already hold a saved session, a
 | | |
 |---|---|
 | 🔄 **Not locked to one vendor** | Quota exhausted, model deprecated, or a task better suited to another engine — switch instead of starting over. |
-| 🧵 **Real parallelism** | Each session gets its own git worktree on branch `multicc/<sessionId>`. Eight agents, one repo, no stepping on each other. Merge back through a syntax-gated API. |
-| 💸 **Cheap subagents** | Main agent on a frontier model, subagents routed to DeepSeek / GLM / Qwen through a local provider router. Same repo, in parallel, at a fraction of the cost. |
-| 📱 **Sessions outlive the client** | Close the laptop mid-task; pick it up on your phone. Terminal sessions live in `tmux`, chat sessions as stateful turns. |
+| 🧵 **Real parallelism** | Each session gets its own git worktree on branch `multicc/<sessionId>`. Code changes stay separate until you review and merge them through a syntax-gated API; overlapping changes can still conflict. |
+| 💸 **Cheap subagents** | Main agent on a frontier model, subagents routed to DeepSeek / GLM / Qwen through a local provider router. Choose models for each role and inspect their actual usage. |
+| 📱 **Sessions outlive the client** | Reconnect from your phone while the host and service remain running. Terminal sessions live in `tmux`, chat sessions as stateful turns. |
 | 🗣️ **Voice, including full duplex** | Dictate prompts, or hold a real-time speech-to-speech conversation with your agent while your hands are busy. |
 | 🔔 **It finds you** | Web Push, Bark, webhooks, and bridges to WeChat, Feishu, Telegram, Discord and Slack. |
 
@@ -256,7 +277,7 @@ cd ~/MultiCC        # the installer's default directory (--dir changes it)
 
 Open **<http://localhost:3000>** — you land on the **Air console** (`/air`). Installer-created, password-protected instances also listen on the IPv4 LAN automatically; public access is never configured automatically and should use a tunnel (Tailscale Funnel, 花生壳, or SakuraFrp) — see [Configuration](docs/configuration.md).
 
-### 3. See the point in 30 seconds
+### 3. Run your first task
 
 1. On `/air`, **add a directory** — point it at any git repo.
 2. First run: the **setup card** walks you through preparing a model (import a provider from `cc-switch`, or just use a CLI's own login) and configuring the **AI Assistant** — a lightweight flash-tier model is enough.
@@ -267,9 +288,11 @@ Open **<http://localhost:3000>** — you land on the **Air console** (`/air`). I
    ![The new-task composer with the AI configuration pill](docs/images/en/air-new-task.png)
 4. The task binds a chat session and gets to work. Open it to watch the transcript; when it answers, click the **CLI badge in the chat header** and pick a different CLI, then send a follow-up: *"you're a different model now — do you agree with the previous assessment?"*
 
-The second CLI answers with full awareness of the conversation, on the same branch and worktree, and tells you it is working from a handoff checkpoint. Switch back and the first CLI resumes its own session.
+The second CLI receives a bounded checkpoint of recent visible conversation, task and Git state, on the same branch and worktree. Switch back and the first CLI resumes its own session.
 
-Then open the same URL on your phone, or install the [Flutter app](docs/installation.md#build-the-flutter-app) — the task is right there, mid-conversation.
+Then open your server’s reachable, authenticated address on your phone, or use the [Flutter app](docs/installation.md#build-the-flutter-app). Open the same task to follow its progress or answer a question. Use the host’s LAN address or configured tunnel; a phone’s `localhost` points to the phone itself.
+
+For desktop handoff, install and authorize the [host agent](skills/multicc-computer-use/SKILL.md), open **Screen** from the chat, and check that you can view and control the intended desktop. When the agent needs help, complete the requested action, close remote control, and reply in the task to resume. Keep the host awake for this workflow.
 
 ![MultiCC on a phone-width screen](docs/images/en/air-mobile.png)
 
@@ -354,6 +377,7 @@ keeps the full output and offers a force retry.
 <tr><td width="50%" valign="top">
 
 **Clients & reach**
+- **Human handoff** — remote desktop controls, screenshot annotations, and a reply in the task to let the agent continue; host support and permissions apply
 - Zero-build web UI + installable **PWA**
 - Native **desktop app** (Electron) for macOS / Windows / Linux — backend included, loopback-only, no terminal needed
 - Native **Flutter app** for Android and iOS
@@ -391,7 +415,7 @@ keeps the full output and offers a force retry.
 
 | Document | What's in it |
 |---|---|
-| **[Multi-CLI switching](docs/cli-switching.md)** | The headline feature: checkpoint format, reuse semantics, API, one-click install |
+| **[Multi-CLI switching](docs/cli-switching.md)** | Checkpoint format, reuse semantics, API, one-click install |
 | [Installation & service management](docs/installation.md) | Install flags, updating, `./multicc` commands, systemd, Flutter builds |
 | [Desktop app](docs/desktop.md) | macOS / Windows / Linux desktop installers: first launch, failures, data & log locations, security model, signing |
 | [Standalone package](docs/standalone.md) | The distribution form everything else wraps: layout, `multicc` commands, updates, data locations, and why it runs on macOS 11+/Intel with no compiler and no Homebrew |
@@ -436,7 +460,9 @@ Providers, subagent routing, voice, TTS/ASR and notification settings are config
 
 Projects that **harness** the official CLIs — spawning and managing the real `claude` / `codex` binaries rather than reimplementing them — cluster into remote-access wrappers, web IDEs, and multi-agent orchestrators.
 
-**Where MultiCC is the only one, or nearly so:**
+**MultiCC combines these workflows:**
+
+- **Human handoff within a task** — remote desktop controls and screenshot annotations, followed by the agent continuing after your reply
 
 - **In-place cross-CLI switching** across eight coding CLIs with a bounded handoff checkpoint
 - **Task board with bound chat sessions** — every task gets a private chat transcript, short codes, and lifecycle controls
@@ -449,7 +475,9 @@ Projects that **harness** the official CLIs — spawning and managing the real `
 
 **Where it is weaker:** no hosted/cloud option, no built-in code editor, and single-user by design — there is no team RBAC.
 
-Surveyed: cc-switch, Ruflo, CLIProxyAPI, oh-my-claudecode, AionUi, vibe-kanban, cc-connect, CloudCLI, Superset, Orca, cockpit-tools — eleven peers, plus MultiCC itself, make up the 12-project landscape.
+Model and account managers such as [Magpie](https://github.com/yetone/magpie) overlap with MultiCC’s provider, routing and session features. MultiCC focuses on task execution, isolated code changes and human intervention. Choose based on the workflow you need.
+
+The linked survey is historical, not evidence that individual features remain exclusive. Surveyed: cc-switch, Ruflo, CLIProxyAPI, oh-my-claudecode, AionUi, vibe-kanban, cc-connect, CloudCLI, Superset, Orca, cockpit-tools — eleven peers, plus MultiCC itself, make up the 12-project landscape.
 
 **→ The full 12-project survey and head-to-head tables: [How MultiCC compares](docs/ecosystem-comparison.md)**
 
@@ -517,8 +545,8 @@ A few of the most common questions:
 
 ## 中文用户
 
-MultiCC 的核心卖点是：**同一个对话里并行运行、随时切换多个 AI 编程 CLI，上下文不丢。**
-安装、30 秒上手、常见问题的中文说明见 **[README.zh.md](README.zh.md)**。界面支持中英文切换，非中文系统默认英文，页头右上角的开关随时可切。
+**让智能体持续推进任务；需要你时，在手机接手一步，再让它继续。** MultiCC 将任务、工作区、跨引擎接续与人机协作放在同一个工作台。
+安装、首次任务与常见问题的中文说明见 **[README.zh.md](README.zh.md)**。界面支持中英文切换，非中文系统默认英文，页头右上角的开关随时可切。
 
 ---
 

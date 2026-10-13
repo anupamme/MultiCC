@@ -5,12 +5,12 @@
 <h1 align="center">MultiCC</h1>
 
 <p align="center">
-  <strong>一个对话，八个 AI 编程 CLI。任务进行到一半也能随时切换，上下文不丢。</strong>
+  <strong>让智能体持续推进任务；需要你时，在手机接手一步，再让它继续。</strong>
 </p>
 
 <p align="center">
-  <em>Claude Code · Codex · OpenCode · ZCode · Kimi Code · Qoder · WorkBuddy · DSH —— 同一个聊天、同一个仓库、同一件事。<br/>
-  多个会话并行跑在互不干扰的 git worktree 里，桌面、手机、微信都能操控。</em>
+  <em>自托管的智能体工作台：分配任务、查看进展，需要时远程操作电脑。<br/>
+  操作完成后在聊天里回复，智能体就在同一任务中继续。</em>
 </p>
 
 <p align="center">
@@ -23,15 +23,44 @@
 
 ## 一句话定位
 
-MultiCC 是一个自托管的编排层：把你本机已经装好的 AI 编程 CLI，变成可以**并行、可切换、跨设备访问**的会话平台。
+MultiCC 把任务、智能体执行、代码工作区和人的介入组织在一起。你可以从桌面或手机跟进任务，在需要判断或操作时接手，再交回智能体继续处理。
 
-## 核心卖点：多 CLI 同上下文切换
+## 接手一步，再让智能体继续
+
+任务可能走到只有你能完成的一步：确认登录、判断画面，或亲手完成一次桌面操作。MultiCC 让任务对话和受控电脑的屏幕出现在同一个工作台，电脑和手机都能访问。
+
+1. **交给智能体一项任务。** 任务拥有自己的对话，涉及代码修改时使用独立 Git 工作区。
+2. **收到具体的求助。** 智能体说明卡在哪里，并可提供远程操作链接或待标注截图。
+3. **接手需要你做的那一步。** 从聊天打开电脑屏幕，点击或输入；完成后关闭远程操作，在任务里回复。
+4. **继续做到有结果。** 智能体检查新状态，接着完成任务；你检查产物，代码任务还应检查差异和相关测试。
+
+远程桌面需要受控电脑安装桌面 Agent 并获得系统授权。macOS 使用 MultiCC Agent；Linux 需要 X11 及对应 Agent；当前不支持 Windows 桌面控制和 Wayland。电脑与 MultiCC 服务须保持运行，手机通过已鉴权的局域网地址或隧道连接。**远程操作完成后，还需在聊天里回复，智能体才继续。**
+
+**→ [快速上手](#快速上手) · [人机协助流程](skills/multicc-human-assist/SKILL.md) · [主机组件与授权](skills/multicc-computer-use/SKILL.md)**
+
+## 按你的任务选择用法
+
+| 你需要做的事 | MultiCC 提供的支持 |
+|---|---|
+| 离开电脑后继续跟进 | 网页或手机 App 访问同一任务，接收提醒，在支持的主机上远程接手 |
+| 同时推进多项代码修改 | 独立任务工作区、可检查的差异和带语法检查的合并流程；冲突仍需解决 |
+| 换个智能体接着做 | 同一任务与工作区中的引擎切换，通过可见摘要交接 |
+| 等构建或外部结果 | 后台命令、定时任务、条件等待和结果回流 |
+
+支持的引擎包括 **Claude Code、Codex、OpenCode、ZCode、Kimi Code、Qoder、WorkBuddy 和 DSH**。模型与线路、子代理路由、记忆、语音和 IM 桥接服务于这些工作流程，详见[完整功能目录](docs/features.md)。
+
+<a id="核心卖点多-cli-同上下文切换"></a>
+
+## 换个引擎，接着同一任务做
 
 你已经和 Claude Code 聊了三个小时做重构。这时你想让 Codex 给个第二意见，或者 Anthropic 额度用完了，又或者接下来那段机械活儿用 GLM 更便宜。
 
 通常这意味着：开新终端、开新会话、把来龙去脉再讲一遍。
 
 在 MultiCC 里这是一次点击。**对话是你的**，CLI 只是当前驱动它的引擎。
+
+<details>
+<summary>交接范围、切回原会话与引擎安装</summary>
 
 ### 切过去时，什么会带走
 
@@ -50,13 +79,15 @@ MultiCC **不会**把一家厂商的对话记录翻译成另一家的格式—�
 
 每个 CLI 都记着自己的原生会话 id、模型、思考强度、provider、子 agent 路由。Claude → Codex → Claude 切回来，回到的是**那个已经存在的 Claude 会话**，并补上一份涵盖这期间发生了什么的新 checkpoint —— 而不是一张白纸。想要白纸就传 `fresh: true`。
 
-清空对话会同时作废**全部八个** CLI 的原生会话，所以切换永远不会把你刚删掉的上下文又捞回来。
+清空对话会同时作废所有引擎的原生会话，所以切换永远不会把你刚删掉的上下文又捞回来。
 
 ### 缺哪个 CLI，切换弹窗里一键装
 
 切换弹窗会显示：哪些 CLI 已安装、哪些已有会话，并为缺失的提供一键安装（`claude`、`codex`、`opencode`、`kimi`、`qoder`、`codebuddy`、`dsh`；ZCode 的 CLI 内置在其桌面版里，需要手动装）。
 
 **→ 完整说明：[Multi-CLI switching](docs/cli-switching.md)**
+
+</details>
 
 > 多 CLI 切换只适用于**聊天（chat）会话**。终端会话创建时用的哪个 CLI 就固定是哪个。
 
@@ -85,7 +116,7 @@ MultiCC **不会**把一家厂商的对话记录翻译成另一家的格式—�
 
 | | |
 |---|---|
-| 🧵 **真并行** | 每个会话独占一个 git worktree，分支 `multicc/<会话id>`。八个 agent 同仓库互不打架，合回主分支时有语法校验把关，合并后自动同步兄弟 worktree。 |
+| 🧵 **真并行** | 每个会话独占一个 git worktree，分支 `multicc/<会话id>`。各任务的代码修改分别保留，检查差异后经带语法校验的流程合并；交叉修改仍可能冲突，无法安全同步的工作区会跳过。 |
 | 📋 **任务板绑定会话** | 每个任务拥有独立的隐藏聊天会话，实时台账、稳定短码 `#CODE`、取消/清理/归档释放全套生命周期；任务聊天视图与普通会话同一套渲染器。 |
 | 🕸️ **任务图谱与记忆图谱** | Air 控制台原生视图：任务父子 / 分组 / 合并关系的关联网络，以及跨任务的记忆网络。 |
 | 🤖 **AI Assistant (aux)** | 意图分类、任务归属、自动推进的核心服务，控制台里有独立的设置页和运行记录（轻量 flash 级模型即可）。 |
@@ -211,7 +242,7 @@ cd ~/MultiCC        # 安装脚本的默认目录（--dir 可以改）
 
 > 安装器会生成 `ACCESS_TOKEN`；只要没有手工指定 `HOST` / `MULTICC_ALLOW_REMOTE`，MultiCC 就会自动监听 IPv4 局域网，同一 Wi-Fi 下可直接打开安装完成页给出的 LAN 地址并用该密码登录。它不会配置路由器端口映射或公网入口；公网访问请使用控制台内置的隧道（Tailscale Funnel / 花生壳 / SakuraFrp）。想保持仅本机访问时，设置 `HOST=127.0.0.1` 或 `MULTICC_ALLOW_REMOTE=0`。
 
-### 3. 30 秒体验到「任务优先」
+### 3. 跑一个真实任务
 
 1. 在 `/air` 里**添加一个目录**，指向任意 git 仓库。
 2. 首次启动会弹出**首启配置卡**：先准备模型（从 `cc-switch` 导入 Provider，或直接用 CLI 自带登录），再配置 **AI Assistant**——它是意图分类和任务归属的核心服务，轻量 flash 级模型就够了。
@@ -222,9 +253,11 @@ cd ~/MultiCC        # 安装脚本的默认目录（--dir 可以改）
    ![新任务输入框与 AI 配置胶囊](docs/images/air-new-task.png)
 4. 任务绑定一个聊天会话开始干活。打开它看实时记录；回答完点聊天头部的 **CLI 徽标** 换一个 CLI，再追问：*「你现在是另一个模型了——你同意刚才那个判断吗？」*
 
-第二个 CLI 会带着完整上下文回答，仍在同一个分支和 worktree 上，并且会说明自己是基于交接 checkpoint 在工作。切回去，第一个 CLI 会接着它自己的会话继续。
+第二个 CLI 会收到有上限的近期可见对话、任务与 Git 状态摘要，仍在同一个分支和 worktree 上。切回去，第一个 CLI 会接着它自己的会话继续。
 
-然后在手机上打开同一个地址，或装上 [Flutter App](docs/installation.md#build-the-flutter-app)——任务就在那儿，对话还在半路上。
+然后在手机上打开这台服务器可访问、已鉴权的地址，或使用 [Flutter App](docs/installation.md#build-the-flutter-app)，进入同一任务查看进展或回答问题。手机上的 `localhost` 指手机自身，应使用受控电脑的局域网地址或配置好的隧道。
+
+体验桌面接手时，先安装并授权[主机 Agent](skills/multicc-computer-use/SKILL.md)，从聊天打开「屏幕」，确认能看到并操作目标桌面。智能体求助后，完成指定操作、关闭远程控制，再在任务中回复继续。此流程需要主机保持唤醒。
 
 ![手机宽度的 Air 界面](docs/images/air-mobile.png)
 
@@ -322,7 +355,9 @@ curl -X POST "http://localhost:3000/api/sessions/$SESSION_ID/switch-cli" \
 
 那些**驾驭**官方 CLI 的项目（拉起并管理真实的 `claude` / `codex` 二进制，而不是重造它们）大致分三类：远程访问包装、Web IDE、多 agent 编排器。
 
-**MultiCC 独有或接近独有：**
+**MultiCC 将这些工作流程放在一起：**
+
+- **同一任务内的人机接手**——远程桌面、截图标注，以及回复后继续执行
 
 - 跨**八个**编程 CLI 的原位切换，附带有界交接 checkpoint
 - **任务板绑定聊天会话**——每个任务自带私有聊天记录、短码和生命周期控制
@@ -335,7 +370,9 @@ curl -X POST "http://localhost:3000/api/sessions/$SESSION_ID/switch-cli" \
 
 **较弱的地方：** 没有托管/云端方案、没有内置代码编辑器、设计上单用户——没有团队 RBAC。
 
-调查范围：cc-switch、Ruflo、CLIProxyAPI、oh-my-claudecode、AionUi、vibe-kanban、cc-connect、CloudCLI、Superset、Orca、cockpit-tools——十一个同类，加上 MultiCC 本身，构成 12 项目横评。
+[Magpie](https://github.com/yetone/magpie) 等模型与账号管理工具，在供应商、路由和会话能力上与 MultiCC 有重叠。MultiCC 更侧重围绕任务组织执行、隔离代码修改和人的介入，应按需要完成的工作流程选择。
+
+下列横评为历史资料，不能证明某项功能目前仍然独占。调查范围：cc-switch、Ruflo、CLIProxyAPI、oh-my-claudecode、AionUi、vibe-kanban、cc-connect、CloudCLI、Superset、Orca、cockpit-tools——十一个同类，加上 MultiCC 本身，构成 12 项目横评。
 
 **→ 完整 12 项目横评与逐项对比表：[How MultiCC compares](docs/ecosystem-comparison.md)**
 
