@@ -357,7 +357,7 @@
         tone: 'auto',
         pending,
         mark: '⚡',
-        text: [currentRouteLabel(pickLabel, count), pending ? pendingLabel : ''].filter(Boolean).join(' · '),
+        text: [currentRouteLabel(pickLabel, count, matchPresetName(selection)), pending ? pendingLabel : ''].filter(Boolean).join(' · '),
         turn: route || model ? [route || (catalog && catalog.nativeRouteLabel ? catalog.nativeRouteLabel(current.cli) : ''), model].filter(Boolean).join(' · ') : '',
       };
     }
@@ -371,9 +371,32 @@
     };
   }
 
-  function currentRouteLabel(pick, count) {
+  function currentRouteLabel(pick, count, presetName) {
     const pickLabel = pick === PICK_DIFFICULTY ? '按难度' : '按顺序';
-    return `⚡ 自动 · ${pickLabel} · ${count} 条`;
+    return `⚡ 自动 · ${presetName ? `${presetName} · ` : ''}${pickLabel} · ${count} 条`;
+  }
+
+  // 会话里只存线路池本身，不存「它来自哪个预设」。胶囊上要写预设名，就拿本机预设
+  // 逐个比对：线路（CLI + 线路 id + 模型）按优先级顺序完全一致才算同一个预设。
+  // 没有预设、读不到 localStorage、或有人改过池子 —— 都返回空串，胶囊照旧。
+  function candidateKey(list) {
+    return (Array.isArray(list) ? list : [])
+      .filter(item => item && item.enabled !== false)
+      .slice().sort((a, b) => (Number(a.priority) || 0) - (Number(b.priority) || 0))
+      .map(item => `${clean(item.cli)}\n${clean(item.providerId)}\n${clean(item.model)}\n${item.autoModel ? 'auto' : ''}`)
+      .join('\u0001');
+  }
+
+  function matchPresetName(selection) {
+    try {
+      const storage = scope() && scope().localStorage;
+      if (!storage || !selection) return '';
+      const raw = JSON.parse(storage.getItem(PRESET_KEY) || '[]');
+      const key = candidateKey(selection.candidates);
+      if (!key || !Array.isArray(raw)) return '';
+      const hit = raw.find(item => item && !item.recent && clean(item.name) && candidateKey(item.candidates) === key);
+      return hit ? clean(hit.name) : '';
+    } catch (_) { return ''; }
   }
 
   // 单行文案里的「车道 + 线路」两段：自持账号的车道路由名就是它的产品名，只说一遍。
@@ -978,7 +1001,10 @@
     const presetStatus = el(doc, 'p', 'rc-preset-status');
     presetStatus.setAttribute('role', 'status');
     presetForm.append(presetName, presetSave, presetCancel);
-    presetBar.append(presetField, presetOpen, presetDelete, presetForm, presetStatus);
+    // 每个预设一枚带 ✕ 的小标签：删除不必先「套用」。套用会替换草稿，还可能因线路
+    // 失效而被拒 —— 那样的预设就永远删不掉了。
+    const presetChips = el(doc, 'div', 'rc-preset-chips');
+    presetBar.append(presetField, presetOpen, presetDelete, presetForm, presetChips, presetStatus);
     show(presetForm, false);
     show(presetDelete, false);
     const pickHead = el(doc, 'div', 'air-config-section-head');
@@ -1489,6 +1515,27 @@
       presetSelect.value = activePresetId;
       presetSelect.disabled = !presets.length;
       show(presetDelete, !!activePresetId);
+      presetChips.replaceChildren(...presets.map(item => {
+        const chip = el(doc, 'span', 'rc-preset-chip');
+        const label = item.name || tt('runConfigPresetRecent', '最近用过');
+        const remove = el(doc, 'button', 'rc-preset-chip-x', '✕');
+        remove.type = 'button';
+        remove.title = remove.ariaLabel = `${tt('autoEditorPresetDelete', '删除预设')}：${label}`;
+        remove.onclick = () => deletePreset(item.id);
+        chip.append(el(doc, 'span', null, label), remove);
+        return chip;
+      }));
+      show(presetChips, presets.length > 0);
+    }
+
+    function deletePreset(id) {
+      if (!id || !scope().confirm(tt('runConfigPresetDeleteConfirm', '只删除本机预设，不会修改当前线路池。确定删除吗？'))) return;
+      if (!writePresets(readPresets().filter(item => item.id !== id))) {
+        presetStatus.textContent = tt('runConfigPresetStoreFailed', '预设未能保存到本机，请重试。'); return;
+      }
+      if (activePresetId === id) activePresetId = '';
+      renderPresets();
+      presetStatus.textContent = tt('autoEditorPresetDeleted', '预设已删除。');
     }
 
     function readPresets() {
@@ -1559,6 +1606,10 @@
     }
 
     async function renderPicker() {
+      // 弹窗本身是滚动容器：先清空 pickerHost 会让内容变短、scrollTop 被夹回去，
+      // 随后 focus() 又会把搜索框滚进视野 —— 用户看到的就是「滑着滑着弹回开头」。
+      const keepTop = dialog.scrollTop;
+      const keepFilter = pickerListHost ? pickerListHost.scrollTop : 0;
       pickerHost.replaceChildren();
       show(pickerHost, pickerOpen);
       addButton.classList.toggle('on', pickerOpen);
@@ -1575,7 +1626,10 @@
         pickerData = await loadPickerData();
       }
       renderPickerList();
-      search.focus();
+      if (pickerListHost) pickerListHost.scrollTop = keepFilter;
+      dialog.scrollTop = keepTop;
+      try { search.focus({ preventScroll: true }); } catch (_) { search.focus(); }
+      dialog.scrollTop = keepTop;
     }
 
     function loadPickerData() {
@@ -1605,6 +1659,7 @@
     function renderPickerList() {
       const host = pickerListHost;
       if (!host) return;
+      const keepScroll = host.scrollTop;
       host.replaceChildren();
       const pooled = new Set(rows.map(row => `${row.cli}\n${row.providerId}`));
       const needle = pickerFilter.trim().toLowerCase();
@@ -1642,6 +1697,7 @@
           host.append(rowNode);
         }
       }
+      host.scrollTop = keepScroll;
     }
 
     function addRow(item) {
@@ -1872,16 +1928,15 @@
     presetOpen.onclick = () => { presetStatus.textContent = ''; showPresetForm(true); };
     presetCancel.onclick = () => showPresetForm(false);
     presetSave.onclick = () => savePreset();
-    presetName.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); savePreset(); } };
-    presetDelete.onclick = () => {
-      if (!activePresetId || !scope().confirm(tt('runConfigPresetDeleteConfirm', '只删除本机预设，不会修改当前线路池。确定删除吗？'))) return;
-      if (!writePresets(readPresets().filter(item => item.id !== activePresetId))) {
-        presetStatus.textContent = tt('runConfigPresetStoreFailed', '预设未能保存到本机，请重试。'); return;
-      }
-      activePresetId = '';
-      renderPresets();
-      presetStatus.textContent = tt('autoEditorPresetDeleted', '预设已删除。');
+    // 输入法组字时按回车是「确认候选词」，不是提交：不拦的话敲一两个拼音就触发保存，
+    // 名字没打完就走了校验/保存流程。
+    presetName.onkeydown = event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return;
+      savePreset();
     };
+    presetDelete.onclick = () => deletePreset(activePresetId);
     lineSelect.onchange = () => {
       providerValue = lineSelect.value;
       modelValue = '';

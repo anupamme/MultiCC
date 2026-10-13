@@ -413,3 +413,26 @@ test('pillModel：待生效的自动池也带那句后缀', () => {
     assert.equal(model.text, '⚡ 自动 · 按难度 · 2 条 · 下一轮生效');
   });
 });
+
+test('pillModel（自动挑选）：线路池与本机某个预设一致时，胶囊带上预设名', () => {
+  const candidates = [
+    { providerId: 'zhipu', cli: 'claude', model: 'glm-5', priority: 1, enabled: true },
+    { providerId: 'deepseek', cli: 'claude', model: null, priority: 2, enabled: true },
+  ];
+  const selection = { mode: 'auto', protocol: 'anthropic', candidates };
+  const store = {
+    [run.PRESET_KEY]: JSON.stringify([
+      { id: 'r', name: '最近', recent: true, candidates },
+      { id: 'p1', name: '省钱组合', candidates: candidates.slice().reverse().map((c, i) => ({ ...c, priority: i + 1 })) },
+      { id: 'p2', name: '日常', candidates: candidates.map(({ enabled, ...rest }) => rest) },
+    ]),
+  };
+  global.window = { localStorage: { getItem: key => store[key] || null } };
+  try {
+    const hit = run.pillModel({ current: { providerSelection: selection }, next: { providerSelection: selection } });
+    assert.match(run.pillText(hit), /^⚡ 自动 · 日常 · 按顺序 · 2 条/);
+    const changed = { ...selection, candidates: candidates.slice(0, 1) };
+    const miss = run.pillModel({ current: { providerSelection: changed }, next: { providerSelection: changed } });
+    assert.equal(run.pillText(miss), '⚡ 自动 · 按顺序 · 1 条');
+  } finally { delete global.window; }
+});

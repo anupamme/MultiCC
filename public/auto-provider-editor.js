@@ -1622,7 +1622,11 @@ ${P}-more-body{display:grid;justify-items:start;gap:8px;padding:8px 0 2px}
     presetCancel.addEventListener('click', () => showPresetForm(false));
     presetSave.addEventListener('click', savePreset);
     presetName.addEventListener('keydown', event => {
-      if (event && event.key === 'Enter') savePreset();
+      if (!event || event.key !== 'Enter') return;
+      // 回车既不能让外层表单提交，也不能把输入法的「确认候选词」当成保存。
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (event.isComposing || event.keyCode === 229) return;
+      savePreset();
     });
     presetDelete.addEventListener('click', () => {
       const id = presetSelect.value;
