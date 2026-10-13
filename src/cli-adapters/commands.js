@@ -119,8 +119,14 @@ function resolveClaude(context) {
 }
 
 function resolveCodex(context) {
-  const { isWindows, env, fsImpl, homeDir } = context;
-  if (env.CODEX_CMD) return env.CODEX_CMD;
+  const { isWindows, env, fsImpl, homeDir, logger } = context;
+  // 绝对路径的 CODEX_CMD 指向不存在/不可执行的文件时不要静默返回坏路径, 回退到自动探测;
+  // 裸命令名(无路径分隔符)交给 PATH, 照旧原样返回。
+  if (env.CODEX_CMD) {
+    const pinned = env.CODEX_CMD;
+    if (!path.isAbsolute(pinned) || isRunnableFile(pinned, { isWindows, fsImpl })) return pinned;
+    logger.warn(`[multicc] WARNING: CODEX_CMD=${pinned} is not runnable, falling back to auto-detection`);
+  }
   if (isWindows && env.LOCALAPPDATA) {
     const local = path.join(env.LOCALAPPDATA, 'OpenAI', 'Codex', 'bin');
     try {
