@@ -276,7 +276,7 @@ const headerMoreController = window.MultiCCChatLiveUi.bindHeaderMoreMenu({
   wrap: document.getElementById('header-more-wrap'),
   ids: [
     'lang-btn', 'notify-btn', 's2s-btn', 'dbg-btn', 'model-btn', 'role-btn',
-    'memory-btn', 'auto-commit-btn', 'share-btn', 'restart-spawn-btn',
+    'memory-btn', 'auto-commit-btn', 'share-btn', 'restart-spawn-btn', 'doctor-btn',
     'memo-btn', 'chat-layout-btn', ...(airHostMode ? ['air-delete-task-btn'] : []),
   ].filter(headerMenuId),
   compactIds: [
@@ -2821,6 +2821,8 @@ const _chatRecovery = window.MultiCCChatRecoveryService.create({
   confirm: (message, opts) => chatLiveUi.confirm(message, opts),
   closeMoreMenu: () => closeHeaderMoreModal(),
 });
+
+window.MultiCCChatDoctor.create({ document, getSessionName: () => _sessionName, addSystemMsg, withToken, closeMoreMenu: () => closeHeaderMoreModal() });
 
 /* ── Debug panel wiring ── */
 (function initDebugPanel() {

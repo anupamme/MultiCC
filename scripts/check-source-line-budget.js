@@ -42,9 +42,10 @@ const MIGRATION_DEBT = Object.freeze({
   // 落回 <= 3000 就删条目。2026-10-10 接 /api JSON gzip（src/http/json-compression.js）时
   // 同行挂载、压注释抵偿字节，实测 3012/154975，按棘轮下调。
   // 2026-10-11 统一消息准备入口后，字节上限继续降至 154948。
+  // 会话医生（src/doctor/host.js）同行挂载，压缩迁移注释抵偿，实测 3009/154893。
   'server.js': Object.freeze({
-    ceiling: 3012,
-    byteCeiling: 154948,
+    ceiling: 3009,
+    byteCeiling: 154893,
     target: 3000,
     reason: 'over 3000 again after v2.4.1 (official-account and host-battery route additions); registered at the measured high-water mark',
   }),
