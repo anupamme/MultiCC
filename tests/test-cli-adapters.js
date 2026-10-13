@@ -509,3 +509,14 @@ assert.strictEqual(
 console.log('CLI adapter contract and decoder tests passed');
 require('./test-codex-exp-adapter');
 require('./test-claude-exp-adapter');
+
+// CODEX_CMD 指向不存在的绝对路径时回退自动探测; 可执行/裸命令名原样保留
+{
+  const assert = require('assert');
+  const { resolveCliCommands } = require('../src/cli-adapters/commands');
+  const quiet = { log() {}, warn() {} };
+  const pick = cmd => resolveCliCommands({ env: { CODEX_CMD: cmd }, homeDir: '/nonexistent-home', logger: quiet }).codex;
+  assert.notStrictEqual(pick('/nonexistent/codex'), '/nonexistent/codex');
+  assert.strictEqual(pick('/bin/ls'), '/bin/ls');
+  assert.strictEqual(pick('mycodex'), 'mycodex');
+}

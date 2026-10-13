@@ -575,6 +575,18 @@ function createCliSwitchRuntime(options) {
     if (!probed || !probed.version) return; // 探不到就不下结论
     if (cliUpstream.compareSemver(before, probed.version) !== 0) return; // 真的换掉了
     job.status = 'error';
+    // 派生路径是用户用 *_CMD 钉死的: 升级大概率装到了安装车道自己的位置, 这不是
+    // 「安装没生效」, 而是「钉住的那份本来就不归这条升级命令管」—— 如实说明, 别让用户去删旧安装。
+    const cmdEnvName = CLI_CMD_ENV[cli] || `${String(cli).toUpperCase()}_CMD`;
+    if (process.env[cmdEnvName] && process.env[cmdEnvName] === cmd) {
+      job.errorCode = 'pinned_target';
+      job.error = `升级命令已完成，但 ${cmdEnvName} 固定了 ${cmd}（v${before}），升级装到了别处，该固定路径没有变化`;
+      job.hint = `multicc 派生会话会一直使用 ${cmdEnvName} 指向的这份。`
+        + `若想用新版：取消 ${cmdEnvName}（改为注释）后重启 multicc，让它自动选择新装的那份；`
+        + `或把 ${cmdEnvName} 改指向新装的可执行文件。不要删除被固定的旧安装。`;
+      return;
+    }
+    job.errorCode = 'install_noop';
     job.error = `升级命令已完成，但 multicc 派生的 ${cmd} 仍是 v${before}`;
     job.hint = '新版本装到了另一个位置，multicc 实际派生的这个二进制没有变化。'
       + `解决办法二选一：① 设置环境变量 ${CLI_CMD_ENV[cli] || `${String(cli).toUpperCase()}_CMD`}`
