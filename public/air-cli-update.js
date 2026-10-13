@@ -157,7 +157,19 @@
     for (const engine of entry.bundled || []) {
       name.append(node('small', 'cli-update-bundled', bundledLine(engine)));
     }
+    // 升级前预检: 派生路径被 *_CMD 钉住时, 升级装到安装车道自己的位置, 钉住的这份不会变。
+    // 在用户点升级之前就说清, 并给一颗「改用新版」(点了才去改 .env, 绝不自动改)。
+    const pinned = entry.pinned && entry.pinned.env ? entry.pinned : null;
+    if (pinned) {
+      name.append(node('small', 'cli-update-pinned', t('airCliUpdatePinned', { env: pinned.env, path: pinned.path })));
+    }
     row.append(name);
+    if (pinned) {
+      const unpin = node('button', 'secondary', t('airCliUpdateUnpin'));
+      unpin.type = 'button';
+      unpin.onclick = () => { void startUnpin(cli, pinned, status, unpin); };
+      row.append(unpin);
+    }
     if (!mode) return { row, status, button: null, mode };
     const button = node('button', mode === 'install' ? 'secondary' : 'primary',
       t(mode === 'install' ? 'airCliUpdateInstall' : 'airCliUpdateUpgrade'));
@@ -286,6 +298,27 @@
     line.textContent = cli ? `[${cliLabel(cli)}] ${log}` : log;
     line.hidden = false;
     line.scrollTop = line.scrollHeight;
+  }
+
+  // 「改用新版」: 让服务端把 .env 里钉住派生路径的 *_CMD 注释掉。确认一次, 成功后重读版本。
+  async function startUnpin(cli, pinned, status, button) {
+    if (root.confirm && !root.confirm(t('airCliUpdateUnpinConfirm', { env: pinned.env }))) return;
+    button.disabled = true;
+    try {
+      const result = await raw(`/api/cli/${encodeURIComponent(cli)}/unpin`, {});
+      if (!result.ok) {
+        const data = result.data || {};
+        const detail = [data.error, data.hint].filter(Boolean).join(' ') || `HTTP ${result.status}`;
+        button.disabled = false;
+        paintProgress(cli, status, t('airCliUpdateUnpinFailed', { error: detail }), null);
+        return;
+      }
+      paintProgress(cli, status, t('airCliUpdateUnpinDone', { env: pinned.env }), null);
+      await refresh(true);
+    } catch (error) {
+      button.disabled = false;
+      paintProgress(cli, status, t('airCliUpdateUnpinFailed', { error: error.message }), null);
+    }
   }
 
   async function startUpgrade(cli, status, button, mode) {
