@@ -54,6 +54,7 @@ function validateAction(raw) {
     const problem = validateWebhookUrl(raw.url);
     if (problem) return { error: problem };
     action.url = String(raw.url).slice(0, 2000);
+    action.includeConclusion = raw.includeConclusion === true;
     if (raw.secretName != null && raw.secretName !== '') {
       if (!/^[A-Za-z0-9_.-]{1,64}$/.test(String(raw.secretName))) return { error: 'invalid secretName' };
       action.secretName = String(raw.secretName);

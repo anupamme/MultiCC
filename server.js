@@ -2325,7 +2325,6 @@ app.use('/api/feishu', feishuBridge.router);
 // Same gateway-process architecture as WeChat/Feishu; each speaks its platform
 // over a NAT-friendly long connection (Telegram long-polling, Discord Gateway
 // WS, Slack Socket Mode) and drives its own __<platform>_gateway__ chat session.
-// SDKs are lazy-loaded inside each bridge, so MultiCC boots fine without them.
 for (const [mount, bridge] of [
   ['/api/telegram', telegramBridge],
   ['/api/discord', discordBridge],
@@ -2829,7 +2828,7 @@ const triggerRuntime = createSessionTriggers({
   logger,
 });
 triggerRuntime.mountRoutes(app);
-const eventsHost = require('./src/events/host').createEventsHost({ bus, app, persistedSessions, chatSessions, saveBestEffort: savePersistedSessionsBestEffort, rulesFile: MULTICC_PATHS.eventRulesFile, secretsVault, notify: (...a) => pushRuntime.notify(...a), logger });
+const eventsHost = require('./src/events/host').createEventsHost({ bus, app, persistedSessions, chatSessions, saveBestEffort: savePersistedSessionsBestEffort, rulesFile: MULTICC_PATHS.eventRulesFile, secretsVault, loadChatHistory, notify: (...a) => pushRuntime.notify(...a), logger });
 const teardownTriggers = triggerRuntime.teardownSession;
 
 const ensureFirstRunDirectory = async () => {

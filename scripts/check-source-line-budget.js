@@ -43,10 +43,10 @@ const MIGRATION_DEBT = Object.freeze({
   // 同行挂载、压注释抵偿字节，实测 3012/154975，按棘轮下调。
   // 2026-10-11 统一消息准备入口后，字节上限继续降至 154948。
   // 会话医生（src/doctor/host.js）同行挂载，压缩迁移注释抵偿，实测 3009/154893。
-  // 2026-10-14 事件层（src/events/host.js）同行挂载并压缩 setTaskState 注释，实测 3005/154883。
+  // 2026-10-14 事件层（src/events/host.js）同行挂载并压缩 setTaskState 注释，实测 3005/154883；事件信封接 loadChatHistory 并压缩 bridge 注释后 3004/154820。
   'server.js': Object.freeze({
-    ceiling: 3005,
-    byteCeiling: 154883,
+    ceiling: 3004,
+    byteCeiling: 154820,
     target: 3000,
     reason: 'over 3000 again after v2.4.1 (official-account and host-battery route additions); registered at the measured high-water mark',
   }),

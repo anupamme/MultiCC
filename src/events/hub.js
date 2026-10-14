@@ -12,6 +12,7 @@
 const { deriveTaskEvents, segmentKey, letterOf } = require('./task-transitions');
 const { EVENT_TYPES } = require('./catalog');
 const { isTerminalLetter } = require('../classify/vocab');
+const { CONCLUSION_EVENTS, summaryOf } = require('./envelope');
 
 const MAX_RECENT = 200;
 
@@ -24,6 +25,7 @@ function createEventHub(deps = {}) {
   const randomUUID = deps.randomUUID || require('crypto').randomUUID;
   const logger = deps.logger || console;
   const resolveDir = typeof deps.dirIdOf === 'function' ? deps.dirIdOf : () => null;
+  const readConclusion = typeof deps.conclusionOf === 'function' ? deps.conclusionOf : () => '';
 
   const subscribers = new Set();
   const goalMemory = new Map(); // sessionId -> `${segment}:${goalState}`
@@ -67,6 +69,7 @@ function createEventHub(deps = {}) {
     catch (error) { return emitted; }
     const after = letterOf(next);
     if (!isTerminalLetter(after)) goalMemory.delete(sessionId);
+    let conclusion = null; // read the history at most once per transition
     for (const item of derived) {
       if (item.type === 'task.goal_resolved' || item.type === 'task.achieved' || item.type === 'task.needs_interaction') {
         const key = `${segmentKey(next)}:${item.type}:${item.data.to}`;
@@ -75,7 +78,14 @@ function createEventHub(deps = {}) {
         memo.add(key);
         goalMemory.set(sessionId, memo);
       }
-      const event = emit(item.type, sessionId, item.data);
+      let data = item.data;
+      if (CONCLUSION_EVENTS.has(item.type)) {
+        if (conclusion === null) {
+          try { conclusion = readConclusion(sessionId) || ''; } catch (_) { conclusion = ''; }
+        }
+        data = { ...data, conclusion, summary: summaryOf(next) };
+      }
+      const event = emit(item.type, sessionId, data);
       if (event) emitted.push(event);
     }
     return emitted;

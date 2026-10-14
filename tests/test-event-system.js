@@ -192,7 +192,8 @@ test('engine: inject loop latch - the turn we caused does not re-trigger inject'
   h.bus.emit('task:state-changed', 's1', base, toD());
   await h.settle();
   assert.equal(h.calls.inject.length, 1);
-  assert.deepEqual(h.calls.inject[0], ['s1', 'review']);
+  assert.equal(h.calls.inject[0][0], 's1');
+  assert.ok(h.calls.inject[0][1].trimEnd().endsWith('你的指令：review'));
   // the injected turn runs and ends: terminal event must not inject again
   h.bus.emit('task:state-changed', 's1', toD(), base);
   h.bus.emit('task:state-changed', 's1', base, toD());
@@ -303,4 +304,83 @@ test('session triggers accept type:event and reject bad event rules', () => {
   assert.equal(ok.trigger.id, 'gen');
   assert.ok(runtime.validateTrigger({ type: 'event', on: ['zzz.x'], action: { kind: 'notify' } }).error);
   assert.equal(runtime.triggerLabel(ok.trigger), '事件 task.attention');
+});
+
+// ── event envelope ──────────────────────────────────────────────────────────
+const envelope = require('../src/events/envelope');
+
+test('envelope: conclusion = last non-empty assistant reply, clipped and redacted', () => {
+  const history = [
+    { role: 'user', content: 'go' },
+    { role: 'assistant', content: 'old answer' },
+    { role: 'assistant', content: [{ type: 'text', text: 'done, key sk-abcdefghijklmnop1234 ok' }, { type: 'tool_use' }] },
+    { role: 'assistant', content: '   ' },
+    { role: 'user', content: 'thanks' },
+  ];
+  assert.equal(envelope.conclusionFromHistory(history), 'done, key *** ok');
+  assert.equal(envelope.conclusionFromHistory([]), '');
+  assert.equal(envelope.conclusionFromHistory(null), '');
+  const long = envelope.conclusionFromHistory([{ role: 'assistant', content: 'x'.repeat(5000) }]);
+  assert.ok(long.length <= envelope.CONCLUSION_MAX + 1);
+  assert.match(envelope.redactText('Authorization: Bearer abcdefghijklmnopqrstuvwxyz'), /\*\*\*/);
+});
+
+test('envelope: injection text carries fixed fields and ends with the user instruction', () => {
+  const text = envelope.renderInjection({
+    type: 'task.achieved', sessionId: 's1',
+    data: { goal: 'ship', goalState: 'achieved', summary: 'sum', conclusion: 'all green' },
+  }, '部署到测试环境');
+  assert.match(text, /事件 task\.achieved/);
+  assert.match(text, /来源会话：s1/);
+  assert.match(text, /达成目标/);
+  assert.match(text, /上一轮结论[\s\S]*all green/);
+  assert.ok(text.trimEnd().endsWith('你的指令：部署到测试环境'));
+  const failed = envelope.renderInjection({ type: 'task.failed', sessionId: 's1', data: { errorCategory: 'rate_limit', cancelled: true } }, '');
+  assert.match(failed, /错误类别：rate_limit（用户主动停止）/);
+  assert.match(failed, /你的指令：请根据以上信息/);
+});
+
+test('hub: terminal events carry conclusion+summary once-read; running does not', () => {
+  const bus = new EventEmitter();
+  let reads = 0;
+  const hub = createEventHub({ bus, conclusionOf: () => { reads += 1; return 'final words'; } });
+  hub.start();
+  const log = [];
+  hub.subscribe((event) => log.push(event));
+  bus.emit('task:state-changed', 's1', base, { ...base, classifyState: 'D', goalState: 'achieved', lastSummary: 'brief' });
+  const types = log.map((e) => e.type);
+  assert.deepEqual(types, ['task.finished', 'task.goal_resolved', 'task.achieved']);
+  assert.ok(log.every((e) => e.data.conclusion === 'final words' && e.data.summary === 'brief'));
+  assert.equal(reads, 1);
+  bus.emit('task:state-changed', 's1', { ...base, classifyState: 'D' }, base);
+  assert.equal(log.at(-1).type, 'task.running');
+  assert.ok(!('conclusion' in log.at(-1).data));
+});
+
+test('hub: a throwing conclusion reader never blocks the event', () => {
+  const bus = new EventEmitter();
+  const hub = createEventHub({ bus, conclusionOf: () => { throw new Error('disk'); } });
+  hub.start();
+  const log = [];
+  hub.subscribe((event) => log.push(event));
+  bus.emit('task:state-changed', 's1', base, { ...base, classifyState: 'E' });
+  assert.equal(log[0].type, 'task.failed');
+  assert.equal(log[0].data.conclusion, '');
+});
+
+test('webhook: conclusion only with includeConclusion; inject uses the envelope', async () => {
+  const { webhookBody } = require('../src/events/actions');
+  const event = { eventId: 'e', seq: 1, ts: 1, type: 'task.achieved', sessionId: 's1', dirId: 'd', data: { goal: 'g', goalState: 'achieved', conclusion: 'secret-ish reply', summary: 's' } };
+  assert.ok(!('conclusion' in JSON.parse(webhookBody(event)).data));
+  assert.equal(JSON.parse(webhookBody(event, true)).data.conclusion, 'secret-ish reply');
+  assert.equal(validateEventRule({ on: ['task.failed'], action: { kind: 'webhook', url: 'https://a.io/x', includeConclusion: true } }, { idFactory: () => 'r', nowIso: () => 'n' }).rule.action.includeConclusion, true);
+  assert.equal(validateEventRule({ on: ['task.failed'], action: { kind: 'webhook', url: 'https://a.io/x' } }, { idFactory: () => 'r', nowIso: () => 'n' }).rule.action.includeConclusion, false);
+
+  const h = engineHarness();
+  h.engine.addGlobal({ on: ['task.achieved'], action: { kind: 'inject-prompt', prompt: '继续部署' } });
+  h.hub.emit('task.achieved', 's1', { goal: 'ship', goalState: 'achieved', conclusion: 'all green' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1);
+  assert.match(h.calls.inject[0][1], /all green/);
+  assert.ok(h.calls.inject[0][1].trimEnd().endsWith('你的指令：继续部署'));
 });
