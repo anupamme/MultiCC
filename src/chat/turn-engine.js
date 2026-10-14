@@ -2877,6 +2877,14 @@ function createChatTurnEngine(deps) {
         if (ws._sharePerm === 'view') return;
         if (ws._sharePerm === 'operate' && !['user_message', 'cancel', 'typing'].includes(msg.type)) return;
         if ((taskContextHost?.requiresTaskShell?.(sessionName) || taskContextHost?.ownsTaskShell?.(sessionName)) && msg.type !== 'typing') {
+          // The task-shell entry is where this gate sends users, so its own display
+          // controls (clear display / rotate native context) must get through.
+          if (!ws._sharePerm && shellId && msg.type === 'clear_history') {
+            if (msg.preserveHistory === true) await getChatHistoryRuntime().clearHistory(sessionName, msg, cs);
+            else chatBroadcast(sessionName, { type: 'chat_history_reset', shellId, displayOnly: true, ...taskContextHost
+              .clearTaskShellHistory(shellId, sessionName, Math.max(0, parseInt(msg.keep, 10) || 0), { limit: CHAT_HISTORY_PAGE }) });
+            return;
+          }
           if (!ws._sharePerm && msg.taskShell === true && ['user_message', 'cancel'].includes(msg.type)) {
             try {
               const result = await taskContextHost.sendTaskShellInput(sessionName, msg, shellId);

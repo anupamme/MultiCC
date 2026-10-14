@@ -944,3 +944,16 @@ test('legacy empty history remains deletable without weakening durable delivery 
   board.tasks.keep = { id: 'keep', refs: [{ sessionId: 'empty' }] };
   assert.equal(policy.canDeleteSession('empty'), false);
 });
+
+test('quiet bulk hide writes visibility once, broadcasts nothing and counts only newly hidden IDs', () => {
+  const fx = fixture({ initial: { s1: [
+    { id: 'm1', role: 'user', content: 'one' },
+    { id: 'm2', role: 'assistant', content: 'two' },
+    { id: 'm3', role: 'user', content: 'three' },
+  ] } });
+  fx.events.length = 0;
+  assert.equal(fx.runtime.hideMessages('s1', ['m1', 'm2', 'm1', 'missing', ''], { quiet: true }), 2);
+  assert.deepEqual(eventNames(fx.events), ['visibility:s1']);
+  assert.equal(fx.runtime.hideMessages('s1', ['m1', 'm2'], { quiet: true }), 0, 'already hidden is not hidden again');
+  assert.deepEqual(fx.runtime.projectedMessages('s1').map(m => m.id), ['m3']);
+});

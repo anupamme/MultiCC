@@ -685,7 +685,8 @@ const chatTransport = window.MultiCCChatTransport.createTransport({
       }
       for (const event of routed.events) {
         if (HISTORY_ARCHIVE && event.displayOnly && ['chat_history_reset', 'chat_msg_deleted'].includes(event.type)) continue;
-        if (shellChatView.shellId && event.type === 'chat_history_reset') {
+        // A shell-wide clear carries this shell's own merged page: render it as is.
+        if (shellChatView.shellId && event.type === 'chat_history_reset' && event.shellId !== shellChatView.shellId) {
           chatHistoryView.clearSource(_sessionName);
           resetHistoryPagination();
           chatTransport.forceReconnect('shell history changed');

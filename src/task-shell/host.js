@@ -10,7 +10,7 @@ const {
   renderLazyContextPrompt, snapshotHistory, renderSnapshots, verifySnapshot,
 } = require('./context');
 const { mountTaskShellRoutes } = require('./routes');
-const { shellHistoryPage, watchShellHistory } = require('./chat-history');
+const { clearShellHistory, shellHistoryPage, watchShellHistory } = require('./chat-history');
 const { createAttributionSettingsFromEnv } = require('./attribution-settings');
 const { isTerminalLetter } = require('../classify/vocab');
 
@@ -439,6 +439,14 @@ function createTaskShellHost(deps) {
     chatScope: (id, sessionId) => getRuntime().chatScope(id, sessionId),
     chatHistory: (id, options) => shellHistoryPage(getRuntime().chatScope(id, options.activeSessionId),
       deps.displayHistory || deps.loadHistory, deps.getChatState, { ...options, overlay: taskOperations().overlay.apply }),
+    clearChatHistory: (id, activeSessionId, keep, options = {}) => {
+      const scope = getRuntime().chatScope(id, activeSessionId);
+      const readMessages = deps.displayHistory || deps.loadHistory;
+      const result = clearShellHistory(scope, readMessages, (sessionId, ids) => deps.hideHistory(sessionId, ids, { quiet: true }), keep);
+      const page = shellHistoryPage(scope, readMessages, deps.getChatState,
+        { ...options, activeSessionId, overlay: taskOperations().overlay.apply });
+      return { ...result, messages: page.messages, hasMore: page.hasMore };
+    },
     watchChatHistory: (id, activeSessionId, emit) => watchShellHistory(getRuntime().chatScope(id, activeSessionId), activeSessionId,
       { subscribe: deps.subscribeChat, readMessages: deps.displayHistory || deps.loadHistory, getState: deps.getChatState, emit }),
     guardAdmission: (id, text, options = {}) => {

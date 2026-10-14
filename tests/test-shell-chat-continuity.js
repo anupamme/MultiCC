@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { fixture } = require('./helpers/task-shell');
 const { handoffSnapshot, contextPage } = require('../src/task-shell/history-context');
-const { shellHistoryPage, watchShellHistory } = require('../src/task-shell/chat-history');
+const { clearShellHistory, shellHistoryPage, watchShellHistory } = require('../src/task-shell/chat-history');
 const { createShellView } = require('../public/chat-shell-entry');
 
 test('X1 executes in B, classifies to C despite partial failure, then continues C with X1 evidence', async t => {
@@ -154,4 +154,27 @@ test('passive shell subscription delivers background progress and releases liste
   listener('a', { type: 'result' }); stop();
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(events.length, 1); assert.equal(removed, true);
+});
+
+test('shell clear keeps the latest N of the merged timeline and hides the rest per source', () => {
+  const histories = new Map([
+    ['a', [{ id: 'a1', ts: 1 }, { id: 'a2', ts: 3 }, { id: 'a3', ts: 5 }, { id: 'live', ts: 6, _interim: true }]],
+    ['b', [{ id: 'b1', ts: 2 }, { id: 'b2', ts: 4 }, { id: 'b3', ts: 7 }]],
+  ]);
+  const hidden = new Map();
+  const read = id => (histories.get(id) || []).filter(m => !(hidden.get(id) || new Set()).has(m.id));
+  const hide = (id, ids) => {
+    const set = hidden.get(id) || new Set();
+    ids.forEach(x => set.add(x));
+    hidden.set(id, set);
+    return ids.length;
+  };
+  const scope = { sessionIds: ['a', 'b'] };
+  const result = clearShellHistory(scope, read, hide, 2);
+  assert.deepEqual(result, { keep: 2, removedCount: 4, retainedCount: 2 });
+  assert.deepEqual([...hidden.get('a')], ['a1', 'a2']);
+  assert.deepEqual([...hidden.get('b')], ['b1', 'b2']);
+  assert.deepEqual(shellHistoryPage(scope, read, null, { limit: 5 }).messages.map(m => m.id),
+    ['a:a3', 'a:live', 'b:b3'], 'the in-flight interim survives a clear');
+  assert.deepEqual(clearShellHistory(scope, read, hide, 0), { keep: 0, removedCount: 2, retainedCount: 0 });
 });
