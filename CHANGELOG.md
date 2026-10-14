@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.5.2 — Event triggers, a clearer re-login path, and a human-handoff README (2026-10-14)
+
+### Highlights
+
+- **Event triggers (hooks) turn "when X happens, do Y" into a rule** — a new events engine (`src/events/`) watches catalogued events (turn finished, task transition, schedule, push, …), evaluates rules against a fixed envelope, and runs actions (notify, dispatch, run a session turn). One shared form drives both entry points — the 🪝 button in a chat header (scoped to that session) and the **Triggers** tab in the schedule center (global or a specific session) — so the form, validation and "test" flow can't drift (`public/hook-editor.js`, `public/air-trigger-center.js`, `public/chat-hooks.js`).
+- **The same triggers live in the App** — the schedule screen gains a **Trigger tasks** tab that mirrors the web trigger center: list global + per-session rules, create/edit in a bottom sheet, and test them (`app/lib/widgets/hook_list_view.dart`, `app/lib/services/event_trigger_service.dart`).
+- **A 401 now tells you where to fix it** — an authentication failure points at the **model lines** panel to sign in again, and the panel grows a re-login button for official lines that were logged in from the terminal (`claude-official` / `codex-official`) and previously had no re-login entry at all (`0534b70b`, `24a1cc95`).
+- **The macOS agent stops mistaking its own events for a human** — events the agent posts itself no longer count as human input, so an automation no longer pauses against itself during a drag or key hold (`scripts/macos-agent/MultiCCAgent.swift`).
+- **README leads with the human-handoff workflow** — the intro and a new "Step in, then let the agent continue" section explain the assign → help-request → take-over → continue loop (with the platform support matrix), instead of burying it below the feature list (`README.md`, `README.zh.md`).
+- **App icons are regenerated from the branding SVG** — the icon generator's background-strip regex still matched the old 1024 background rect and threw against the current 512-viewBox SVG, so it could not run at all; it now matches any `fill=url(#bg)` rect and every iOS/Android launcher slot is rasterised from the single agent-chips source again (`scripts/generate-app-icons.js`).
+
 ## v2.5.1 — Session doctor, faster chat search, and a run-config cleanup (2026-10-13)
 
 ### Highlights
