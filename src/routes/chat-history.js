@@ -362,9 +362,12 @@ function createChatHistoryRuntime(rawDeps) {
 
   // Bulk display-level removal for moves (e.g. task separation): the canonical
   // transcript is kept, the messages just stop rendering in the default view —
-  // the same semantics as the single-message DELETE route.
-  function hideMessages(sessionId, ids) {
+  // the same semantics as the single-message DELETE route. `quiet` writes the
+  // batch once without per-message broadcasts; the caller publishes one
+  // authoritative page afterwards (task-shell "keep the latest N").
+  function hideMessages(sessionId, ids, { quiet = false } = {}) {
     const key = String(sessionId);
+    if (quiet) return visibility.removeMany(key, (Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && id)).length;
     let hidden = 0;
     for (const id of Array.isArray(ids) ? ids : []) {
       if (typeof id !== 'string' || !id) continue;

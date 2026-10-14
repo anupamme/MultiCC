@@ -39,6 +39,23 @@ function shellHistoryPage(scope, readMessages, getState, options = {}) {
     ...(options.around ? { found: true, hasNewer: end < messages.length } : {}) };
 }
 
+// "Keep the latest N" in a shell means the latest N of the merged timeline the
+// user is looking at, not N per execution. Each source still owns its own
+// visibility record, so the cut is written back per source session.
+function clearShellHistory(scope, readMessages, hide, keep = 0) {
+  const visible = projectShellMessages(scope, readMessages, null)
+    .filter(m => !m._interim && m.sourceMessageId && !String(m.sourceMessageId).startsWith('live-'));
+  const removed = visible.slice(0, Math.max(0, visible.length - Math.max(0, keep)));
+  const bySession = new Map();
+  for (const m of removed) {
+    if (!bySession.has(m.sourceSessionId)) bySession.set(m.sourceSessionId, []);
+    bySession.get(m.sourceSessionId).push(m.sourceMessageId);
+  }
+  let removedCount = 0;
+  for (const [sessionId, ids] of bySession) removedCount += Number(hide(sessionId, ids)) || 0;
+  return { keep, removedCount, retainedCount: visible.length - removedCount };
+}
+
 function watchShellHistory(scope, activeSessionId, { subscribe, readMessages, getState, emit }) {
   if (!subscribe) return () => {};
   const pending = new Set();
@@ -66,4 +83,4 @@ function watchShellHistory(scope, activeSessionId, { subscribe, readMessages, ge
   return () => { unsubscribe(); clearTimeout(timer); pending.clear(); };
 }
 
-module.exports = { projectShellMessages, shellHistoryPage, watchShellHistory };
+module.exports = { clearShellHistory, projectShellMessages, shellHistoryPage, watchShellHistory };

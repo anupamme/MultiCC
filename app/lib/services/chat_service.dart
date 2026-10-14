@@ -502,8 +502,14 @@ class ChatService {
         break;
 
       case 'chat_history_reset':
-        _emit('chat_history_reset', {...msg, 'shellHistory': hasShellHistory});
-        if (hasShellHistory) _scheduleReconnect();
+        // A shell-wide clear carries this shell's own merged page, so it is
+        // applied as is; any other reset in a shell waits for the replay.
+        final ownPage = hasShellHistory && msg['shellId'] == shellId;
+        _emit('chat_history_reset', {
+          ...msg,
+          'shellHistory': hasShellHistory && !ownPage,
+        });
+        if (hasShellHistory && !ownPage) _scheduleReconnect();
         break;
 
       case 'chat_history_annotation':

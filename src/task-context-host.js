@@ -251,6 +251,7 @@ function createTaskContextHost(options = {}) {
     sendTaskShellInput: (id, message, shellId) => getTaskShells().sendClientInput(id, message, shellId),
     taskShellChatScope: (id, sessionId) => getTaskShells().chatScope(id, sessionId),
     taskShellChatHistory: (id, options) => getTaskShells().chatHistory(id, options),
+    clearTaskShellHistory: (id, sessionId, keep, options) => getTaskShells().clearChatHistory(id, sessionId, keep, options),
     watchTaskShellChat: (id, sessionId, emit) => getTaskShells().watchChatHistory(id, sessionId, emit),
     taskShellContextSeed: (id, fallback, first) => getTaskShells()?.contextSeed(id, fallback, first) ?? fallback,
     prepareTaskContext: (id, options) => getTaskShells()?.prepareContext(id, options),

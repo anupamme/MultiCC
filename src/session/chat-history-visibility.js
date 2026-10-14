@@ -42,7 +42,16 @@ function createChatHistoryVisibility({ history, service, limitFor }) {
     hide(sessionId, [messageId]);
     return true;
   }
-  return Object.freeze({ filter, clear, remove, invalidate: id => cache.delete(String(id)) });
+  // Batch form of remove(): one visibility write for many IDs. Returns only the
+  // IDs this call newly hid, so callers can report an honest count.
+  function removeMany(sessionId, messageIds) {
+    const known = new Set(service.view(sessionId).map(message => message.id));
+    const already = hidden(sessionId);
+    const fresh = [...new Set(messageIds)].filter(id => known.has(id) && !already.has(id));
+    if (fresh.length) hide(sessionId, fresh);
+    return fresh;
+  }
+  return Object.freeze({ filter, clear, remove, removeMany, invalidate: id => cache.delete(String(id)) });
 }
 
 module.exports = { createChatHistoryVisibility };
