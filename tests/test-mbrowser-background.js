@@ -161,7 +161,8 @@ test('page commands keep a live headed browser and its connection unchanged', as
 
 // Focus is the one thing the user feels: a listing that reports the saved config
 // instead of the live browser would hide a window sitting on their screen, and a
-// stopped profile would look like it is about to open one.
+// stopped profile would look like it is about to open one. The note is there so
+// callers keep away from those windows — not so they close or restart them.
 test('listings name the profiles that really have a window on screen', async t => {
   isolate(t);
   // Live and headed: the only case that can steal focus.
@@ -174,7 +175,7 @@ test('listings name the profiles that really have a window on screen', async t =
   P.writeJson(P.configPath('stopped'), { name: 'stopped', headed: true });
   P.writeJson(P.statePath('stopped'), { chromePid: 458, headed: true, owned: true });
   // Attached to an external browser: a window exists, but it is not ours to
-  // hand back, so it must never appear in the handback list.
+  // touch, so it must never appear in the note that names our own windows.
   P.writeJson(P.configPath('external'), {
     name: 'external', headed: true, attachOnly: true, cdpUrl: 'http://127.0.0.1:12345',
   });
@@ -196,7 +197,10 @@ test('listings name the profiles that really have a window on screen', async t =
   assert.equal((listed.text.match(/\[window on screen\]/g) || []).length, 1,
     'only the live headed browser may be reported as a window');
   assert.match(listed.text, /headed windows \(1\): window/);
-  assert.match(listed.text, /mbrowser start NAME --headless/);
+  assert.match(listed.text, /reuse them in place/);
+  // Nothing in a listing may suggest handing a running browser back to the
+  // background by restarting it: the window is not the problem, focus is.
+  assert.doesNotMatch(listed.text, /--headless|mbrowser start NAME/);
 
   const report = await lifecycle.doctor({});
   assert.match(report.text, /window: headed[\s\S]*\[window on screen\]/);
@@ -205,12 +209,36 @@ test('listings name the profiles that really have a window on screen', async t =
 });
 
 // The default has to be readable from the skill itself: an agent that only reads
-// the contract must still learn that windows are the exception and temporary.
+// the contract must learn that focus is what is forbidden — not the window, and
+// never "restart it headless to be quiet".
 test('the skill states the background-first focus contract', async () => {
   const skill = fs.readFileSync(
     path.join(__dirname, '..', 'skills', 'multicc-browser', 'SKILL.md'), 'utf8');
   assert.match(skill, /焦点契约|focus contract/);
   assert.match(skill, /默认全程后台|background by default|background-first/i);
+  assert.match(skill, /不激活、不置前/);
+  assert.match(skill, /不改模式、不重启/);
   assert.match(skill, /必须由用户亲手完成[\s\S]{0,40}扫码/);
-  assert.match(skill, /mbrowser start NAME --headless/);
+  // No handback ritual: nothing may send a running browser back to headless, and
+  // the login flow must end in the same window rather than in a restart.
+  assert.doesNotMatch(skill, /交回后台/);
+  assert.doesNotMatch(skill, /start "?\$?\{?PROFILE\}?"? --headless/);
+});
+
+// The login flow is the one place that really opens a window, so it is where a
+// "hand it back" habit would come from: it must end by staying put instead.
+test('login keeps its headed window instead of handing the profile back', async t => {
+  isolate(t);
+  t.mock.method(client, 'ensureDaemon', async () => ({ pid: 123, version: 'test' }));
+  t.mock.method(client, 'call', async (name, command) => {
+    if (command === 'open') return { shortId: 't1' };
+    if (command === 'set-mode') return { changed: true, headed: true };
+    return {
+      headed: true, chromePid: 456, userDataDir: P.profileDir(name), socket: P.socketPath(name),
+    };
+  });
+  const result = await lifecycle.login({ name: 'work', url: 'https://site.example/login' });
+  assert.match(result.text, /keep working in this same window/);
+  assert.match(result.text, /do not restart or close this browser/);
+  assert.doesNotMatch(result.text, /--headless|--mode|hand it back/);
 });

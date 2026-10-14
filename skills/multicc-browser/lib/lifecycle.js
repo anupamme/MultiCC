@@ -66,7 +66,8 @@ function describeProfiles() {
       exists: Boolean(profileConfig(name)) || fs.existsSync(userDataDir),
       mode: attachOnly ? (config.headed ? 'headed' : 'headless') : (headed ? 'headed' : 'headless'),
       // A window on screen right now that we opened — the only thing that can
-      // steal focus and the only thing we can hand back.
+      // steal focus. It is reported so callers keep away from it, not so they
+      // close it: an idle window does not disturb anyone, activation does.
       headed: attachOnly ? false : headed,
       live,
       browser: config.browser || null,
@@ -82,16 +83,17 @@ function describeProfiles() {
   });
 }
 
-// Foreground windows are the one thing in this executor that can interrupt the
-// user, so every listing names them explicitly and repeats the command that
-// hands the profile back to the background.
+// A window on screen is the one thing in this executor that can interrupt the
+// user, so every listing names those profiles. It is a keep-away list, not a
+// cleanup list: working a headed browser from the background needs no mode
+// change and no restart, and closing a window nobody is touching gains nothing.
 function headedWindowNote(profiles) {
   const open = profiles.filter(profile => profile.headed);
   if (!open.length) return [];
   return [
     `headed windows (${open.length}): ${open.map(profile => profile.name).join(', ')}`,
-    '  these have a visible window on screen; hand each back when it is no longer ' +
-    'needed: `mbrowser start NAME --headless` (login state stays in the profile)',
+    '  a window is on screen for these; reuse them in place — never activate, move, ' +
+    'restart or close them (background work needs no focus, an idle window harms nothing)',
   ];
 }
 
@@ -233,10 +235,10 @@ async function login(args) {
     started.text,
     opened ? `opened ${args.url} in background tab ${opened.shortId}; switch to that browser window and tab to log in`
       : `switch to the browser window to log in: ${url}`,
-    `this window is temporary: as soon as the manual step is done, hand it back with ` +
-      `\`mbrowser start ${name} --headless\` (the profile keeps its login data).`,
-    'If other sessions hold tabs on this profile, do not force the restart — tell the user instead.',
-    'If the browser exits on its own, the next page command starts it headless again.',
+    `this window sits where it is and mbrowser never activates it; once the manual step ` +
+      `is done, keep working in this same window — no mode change, no restart, no need to close it.`,
+    'If other sessions hold tabs on this profile, do not restart or close this browser — tell the user instead.',
+    'If the browser exits on its own, the next page command cold-starts it headless (a cold start opens no window).',
   ];
   return { text: lines.join('\n'), started, opened };
 }
