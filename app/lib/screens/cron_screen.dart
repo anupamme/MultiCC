@@ -7,6 +7,7 @@ import '../services/settings_service.dart';
 import '../theme.dart';
 import '../utils/cli_display.dart';
 import '../widgets/cron_run_history.dart';
+import '../widgets/hook_list_view.dart';
 
 /// 定时任务 (Cron) 管理。镜像网页管理台的「定时任务」面板：列出、新建、编辑、
 /// 启停、立即运行、删除 multicc 原生定时任务（到点向目标目录的专属会话发 prompt）。
@@ -18,7 +19,15 @@ class CronScreen extends StatefulWidget {
   State<CronScreen> createState() => _CronScreenState();
 }
 
-class _CronScreenState extends State<CronScreen> {
+class _CronScreenState extends State<CronScreen>
+    with SingleTickerProviderStateMixin {
+  // 第二个 tab「触发器任务」：事件 → 动作规则，列表与编辑器在 hook_list_view.dart。
+  late final TabController _tabs = TabController(length: 2, vsync: this)
+    ..addListener(() {
+      if (!_tabs.indexIsChanging && mounted) setState(() {});
+    });
+  final GlobalKey<HookListViewState> _hooks = GlobalKey<HookListViewState>();
+
   late final ManageService _manage = ManageService(settings: widget.settings);
   late final SessionService _sessions = SessionService(
     settings: widget.settings,
@@ -34,6 +43,14 @@ class _CronScreenState extends State<CronScreen> {
     super.initState();
     _refresh();
   }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  bool get _onHooks => _tabs.index == 1;
 
   Future<void> _refresh() async {
     setState(() {
@@ -138,21 +155,43 @@ class _CronScreenState extends State<CronScreen> {
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         title: const Text('定时任务'),
+        bottom: TabBar(
+          controller: _tabs,
+          tabs: const [
+            Tab(text: '定时任务'),
+            Tab(text: '触发器任务'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded, color: AppColors.muted),
-            onPressed: _loading ? null : _refresh,
+            onPressed: _onHooks
+                ? () => _hooks.currentState?.refresh()
+                : (_loading ? null : _refresh),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openEditor(),
+        onPressed: _onHooks
+            ? () => _hooks.currentState?.openEditor()
+            : () => _openEditor(),
         backgroundColor: AppColors.accentDark,
         foregroundColor: const Color(0xFFffffff),
-        icon: const Icon(Icons.add_alarm_rounded),
-        label: const Text('新建'),
+        icon: Icon(_onHooks ? Icons.webhook_outlined : Icons.add_alarm_rounded),
+        label: Text(_onHooks ? '新建触发器' : '新建'),
       ),
-      body: _loading
+      body: TabBarView(
+        controller: _tabs,
+        children: [
+          _cronBody(),
+          HookListView(key: _hooks, settings: widget.settings),
+        ],
+      ),
+    );
+  }
+
+  Widget _cronBody() {
+    return _loading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.accent),
             )
@@ -185,8 +224,7 @@ class _CronScreenState extends State<CronScreen> {
                         onDelete: () => _delete(_tasks[i]),
                       ),
                     ),
-            ),
-    );
+            );
   }
 }
 
