@@ -384,3 +384,22 @@ test('webhook: conclusion only with includeConclusion; inject uses the envelope'
   assert.match(h.calls.inject[0][1], /all green/);
   assert.ok(h.calls.inject[0][1].trimEnd().endsWith('你的指令：继续部署'));
 });
+
+test('engine.listAll merges global + session event rules with last run; skips other trigger types', async () => {
+  const h = engineHarness();
+  h.persistedSessions.get('s1').label = 'My chat';
+  const mine = validateEventRule({ on: ['task.failed'], action: { kind: 'notify' } }, { idFactory: () => 'mine', nowIso: () => 'n', scope: 'session' }).rule;
+  h.persistedSessions.get('s1').triggers.push(mine, { id: 'x', type: 'post-turn', enabled: true });
+  const global = h.engine.addGlobal({ on: ['task.achieved'], action: { kind: 'notify' } }).rule;
+  h.bus.emit('task:state-changed', 's1', base, { ...base, classifyState: 'E' });
+  await h.settle();
+  const all = h.engine.listAll();
+  assert.equal(all.length, 2);
+  const session = all.find((item) => item.scope === 'session');
+  assert.equal(session.sessionId, 's1');
+  assert.equal(session.sessionLabel, 'My chat');
+  assert.equal(session.lastRun.ok, true);
+  const globalItem = all.find((item) => item.scope === 'global');
+  assert.equal(globalItem.rule.id, global.id);
+  assert.equal(globalItem.lastRun, null);
+});

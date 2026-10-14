@@ -2459,6 +2459,7 @@
     <button class="hdr-btn session-only" id="provider-btn" data-hdr-icon="🔌" data-i18n-title="switchProvider" title="切换该会话使用的 Provider（下一轮对话生效）" style="display:none"></button>
     <button class="hdr-btn session-only" id="role-btn" data-hdr-icon="🎭" data-i18n-title="editRolePrompt" title="设置该会话的角色提示词（下一轮对话生效）" data-i18n="role">角色</button>
     <button class="hdr-btn session-only" id="memory-btn" data-hdr-icon="🧠" data-i18n-title="openMemoryLibrary" title="会话记忆库" data-i18n="memory">记忆</button>
+    <button class="hdr-btn session-only" id="hook-btn" data-hdr-icon="🪝" data-i18n-title="hookBtnTitle" title="钩子：任务完成、出错等事件发生时自动执行动作" data-i18n="hookTitle">钩子</button>
     <button class="hdr-btn session-only" id="auto-commit-btn" data-hdr-icon="🚀" data-i18n-title="autoCommitTitle" title="每轮执行成功后自动提交代码并合并回基分支" data-i18n="autoCommit">自动提交</button>
     <button class="hdr-btn session-only" id="share-btn" data-hdr-icon="🔗" data-i18n-title="shareSessionHint" title="把此会话分享到外部" data-i18n="share">分享</button>
     <button class="hdr-btn session-only" id="restart-spawn-btn" data-hdr-icon="♻️" data-i18n-title="restartSpawnHint" title="进程级重启：杀掉并重建该会话的 CLI 进程，保留对话上下文（↻ 重连无效时用）" data-i18n="restartSpawn">重启进程</button>
@@ -2940,6 +2941,8 @@
   <!-- 通知偏好的统一 key（与 Air 外壳同源）：chat-notifications 的铃声与朗读读它。 -->
   <script src="shared/notify-prefs.js"></script>
   <script src="chat-notifications.js"></script>
+  <script src="hook-editor.js"></script>
+  <script src="chat-hooks.js"></script>
   <script src="voice-composer.js"></script>
   <script src="chat-composer.js"></script>
   <script src="chat-live-ui.js"></script>

@@ -1460,11 +1460,18 @@ button.admin-stat:hover { transform: translateY(-1px); }
 #service-close { min-width: 38px; padding: 4px; color: #718398; border-color: transparent; background: transparent; font-size: 23px; }
 
 #schedule-center { min-height: 0; flex: 1; overflow: auto; padding: 34px 38px 48px; background: linear-gradient(145deg, #fff, #f7faff); }
-#schedule-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 17px; }
-#schedule-summary span { padding: 5px 9px; color: #58718b; border: 1px solid #d9e7f4; border-radius: 20px; background: rgba(255, 255, 255, .7); font-size: 10px; }
+#schedule-summary, #hook-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 17px; }
+#schedule-summary span, #hook-summary span { padding: 5px 9px; color: #58718b; border: 1px solid #d9e7f4; border-radius: 20px; background: rgba(255, 255, 255, .7); font-size: 10px; }
 #schedule-summary span.healthy { color: #247b5b; border-color: #c9e8dc; background: #f0faf6; }
 #schedule-summary span.warning { color: #a4512b; border-color: #efd6ca; background: #fff6f1; }
 #schedule-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px; }
+/* 定时任务中心的两个 tab（定时 / 触发器任务）与触发器卡片的“事件 → 动作”一行 */
+.schedule-tabs { display: flex; gap: 6px; margin-bottom: 14px; border-bottom: 1px solid #e1eaf3; }
+.schedule-tabs button { padding: 7px 14px; color: #6b7f93; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 12px; cursor: pointer; }
+.schedule-tabs button.active { color: #146dcc; border-bottom-color: #146dcc; font-weight: 600; }
+#hook-list { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.hook-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #294760; font-size: 12px; }
+.hook-flow b { color: #8aa0b6; }
 .schedule-card { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid #d8e5f2; border-radius: 17px; background: rgba(255, 255, 255, .92); box-shadow: 0 10px 32px #35577d0b; }
 .schedule-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .schedule-card-head h3 { margin-top: 3px; color: #294760; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }

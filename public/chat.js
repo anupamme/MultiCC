@@ -276,7 +276,7 @@ const headerMoreController = window.MultiCCChatLiveUi.bindHeaderMoreMenu({
   wrap: document.getElementById('header-more-wrap'),
   ids: [
     'lang-btn', 'notify-btn', 's2s-btn', 'dbg-btn', 'model-btn', 'role-btn',
-    'memory-btn', 'auto-commit-btn', 'share-btn', 'restart-spawn-btn', 'doctor-btn',
+    'memory-btn', 'hook-btn', 'auto-commit-btn', 'share-btn', 'restart-spawn-btn', 'doctor-btn',
     'memo-btn', 'chat-layout-btn', ...(airHostMode ? ['air-delete-task-btn'] : []),
   ].filter(headerMenuId),
   compactIds: [
@@ -1637,6 +1637,7 @@ async function loadSessionModel() {
   safe('role-btn', updateRoleBtn);
   _sessionMemory = memoryToText(info.memory);
   safe('memory-btn', updateMemoryBtn);
+  safe('hook-btn', () => window.MultiCCChatHooks?.refresh(_sessionName));
   safe('cli-ui', () => applyCliUi(info.cli || 'claude'));
   _sessionCliStates = info.cliStates || {}; _cliAvailability = info.cliAvailability || _cliAvailability;
   _pendingCliHandoff = info.pendingCliHandoff || null;

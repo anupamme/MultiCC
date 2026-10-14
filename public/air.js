@@ -2857,6 +2857,7 @@
     mode: () => mode,
     laneRouteLabel, cliOffersInChat, firstChatCli, cliOptionLabel,
   });
+  window.MultiCCAirHooks?.bind({ notice });
   // 侧栏那颗「＋ 新任务」开的不是一张表单，是把目录首页那个统一输入框模块搬进
   // 弹窗（见 openNewTaskComposer）—— 任务名取正文第一行，创建完直接执行。
   $('create').onclick = openNewTaskComposer;
