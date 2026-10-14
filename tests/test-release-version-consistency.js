@@ -245,15 +245,24 @@ test('core runner covers every selected path and expands declared variants', () 
   //     嵌套追踪、心跳静默与超时回收、Agent 工具卡片与中文状态。完全 hermetic：
   //     注入 timer/now/emit，fixture 驱动，不碰网络、端口、真进程。
   // 会话医生（tests/test-doctor.js）：312 + 1 = 313，deterministic 266 + 1 = 267，commands 294 + 1 = 295。
-  assert.equal(core.length, 313, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 313);
+  // 2026-10-14 v2.5.2 发版复核：+2 core（1 deterministic + 1 non-UI flutter）。
+  //   - tests/test-event-system.js（deterministic）：事件触发器引擎（src/events/ 的
+  //     catalog/hub/engine/rules/actions + src/triggers）的契约——事件匹配与已知模式、
+  //     任务状态派生事件、规则校验、私网地址判定与签名。完全 hermetic：EventEmitter +
+  //     注入 randomUUID/now/dirIdOf，不碰网络、端口、真进程。
+  //   - app/test/event_trigger_service_test.dart（flutter，非 UI）：触发器 wire contract
+  //     （GET /api/event-triggers、POST/PUT/DELETE 规则路由、draft body、校验）。plain
+  //     test()，MockClient + mock SharedPreferences，无 widget 树/模拟器/真 socket。
+  // 313 + 2 = 315，deterministic 267 + 1 = 268，flutter 21 + 1 = 22，commands 295 + 1 = 296。
+  assert.equal(core.length, 315, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 315);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 267);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 268);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
-  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 21,
+  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 22,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
 
   const expectedPaths = core.flatMap(entry => Array.from(
@@ -261,8 +270,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 295,
-    '290 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 296,
+    '291 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],
