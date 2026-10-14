@@ -48,11 +48,15 @@ function fixture(session, {
   backgroundActive = false,
   synchronizeCodexSessionRoute = () => ({ synchronized: false }),
   validProviderId = (_cli, id) => ({ ok: true, value: id || null }),
+  createSessionRecord = async () => ({ ok: false, error: 'unused' }),
+  extraSessions = [],
+  loadChatHistory = () => [],
+  replaceHistory = () => {},
 } = {}) {
   const workspace = [];
   const chat = [];
   const effects = [];
-  const persistedSessions = new Map([['s1', session]]);
+  const persistedSessions = new Map([['s1', session], ...extraSessions.map(record => [record.id, record])]);
   const providerRouterRuntime = { getProviderSummary: () => null };
   const sessionPolicy = createSessionPolicy({
     providerRouter: providerRouterRuntime,
@@ -94,16 +98,100 @@ function fixture(session, {
     cliStateSummary: () => ({}),
     cliAvailabilitySummary: () => ({}),
     cliHandoffSummary: () => null,
-    createSessionRecord: async () => ({ ok: false, error: 'unused' }),
-    loadChatHistory: () => [],
+    createSessionRecord,
+    loadChatHistory,
     newChatMsgId: () => 'm1',
-    getChatHistoryService: () => ({ replace() {} }),
+    getChatHistoryService: () => ({ replace: replaceHistory }),
     getFolderMemory: () => ({ sessionDir: () => path.join(tmpRoot, 'mem') }),
     getCliSwitchGitSnapshot: () => async () => ({}),
   }).mountRoutes(app);
   return { session, handler: app.routes.get('PATCH /api/sessions/:id'), workspace, chat, effects,
+    forkHandler: app.routes.get('POST /api/sessions/:id/fork'),
     applySessionPatch: mounted.applySessionPatch };
 }
+
+async function forkFixture(source, { current = null, body = {}, validProviderId, ...options } = {}) {
+  const attempts = [], histories = [];
+  const before = structuredClone(source);
+  const history = [{ id: 'old-message', role: 'assistant', content: 'historical answer', provider: 'removed-provider', taskId: 'old-task' }];
+  const { forkHandler } = fixture(source, {
+    extraSessions: current ? [current] : [],
+    loadChatHistory: () => history,
+    replaceHistory: (id, messages) => histories.push({ id, messages }),
+    validProviderId: validProviderId || ((_cli, id) => id === 'removed-provider' ? { ok: false } : { ok: true, value: id || null }),
+    createSessionRecord: async input => {
+      attempts.push(input);
+      assert.notEqual(input.provider, 'removed-provider');
+      return { ok: true, id: 'new-session', session: { ...input, id: 'new-session' } };
+    },
+    ...options,
+  });
+  const response = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+  await forkHandler({ params: { id: 's1' }, body: { atMessageId: 'old-message', includeMemory: false, ...body } }, response);
+  assert.deepEqual(source, before, 'fork must not mutate historical execution settings');
+  return { response, attempts, histories };
+}
+
+const forkSource = () => ({ id: 's1', dirId: 'd1', cli: 'codex', kind: 'chat', provider: 'removed-provider', model: 'old-model' });
+
+test('fork copies history with a deleted provider using defaults for the new idle session', async () => {
+  const { response, attempts, histories } = await forkFixture(forkSource());
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].provider, undefined);
+  assert.equal(attempts[0].model, null);
+  assert.equal(attempts[0].providerSelection, null);
+  assert.match(histories[0].messages[0].content, /reset to defaults/);
+  const inherited = histories[0].messages[1];
+  assert.equal(inherited.content, 'historical answer');
+  assert.equal(inherited.provider, 'removed-provider', 'historical metadata is preserved, never validated as a live route');
+  assert.equal(inherited.inheritedFrom.sessionId, 's1');
+  assert.equal(inherited.inheritedFrom.taskId, 'old-task');
+  assert.equal(inherited.taskId, undefined);
+});
+
+test('fork uses current composer settings even when the selected message belongs to an old execution', async () => {
+  const current = { ...forkSource(), id: 'current', cli: 'claude', provider: 'selected-provider', model: 'selected-model', subagent: null };
+  const { response, attempts, histories } = await forkFixture(forkSource(), { current, body: { configurationSessionId: current.id } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(attempts[0].provider, 'selected-provider');
+  assert.equal(attempts[0].model, 'selected-model');
+  assert.equal(attempts[0].cli, 'claude');
+  assert.equal(response.body.forkedFrom.sessionId, 's1');
+  assert.equal(histories[0].messages[1].provider, 'removed-provider');
+});
+
+test('fork honors saved next-turn CLI/provider/model/subagent settings', async () => {
+  const source = forkSource();
+  source.subagent = { providerId: 'removed-provider', model: 'old-model' };
+  source.pendingConfiguration = { cli: 'claude', profile: {
+    provider: 'next-provider', model: 'next-model', subagent: null, providerSelection: null,
+  } };
+  const { response, attempts } = await forkFixture(source);
+  assert.equal(response.statusCode, 200);
+  assert.equal(attempts[0].provider, 'next-provider');
+  assert.equal(attempts[0].model, 'next-model');
+  assert.equal(attempts[0].cli, 'claude');
+  assert.equal(response.body.session.subagent, null, 'must not restore the historical subagent after creation');
+});
+
+test('fork rejects missing and cross-directory configuration sessions before creating anything', async () => {
+  for (const current of [null, { ...forkSource(), id: 'other', dirId: 'other-directory' }]) {
+    const { response, attempts, histories } = await forkFixture(forkSource(), { current, body: { configurationSessionId: 'other' } });
+    assert.equal(response.statusCode, 400);
+    assert.equal(attempts.length, 0);
+    assert.equal(histories.length, 0);
+  }
+});
+
+test('fork drops an unavailable subagent without losing the valid main route', async () => {
+  const source = { ...forkSource(), provider: 'valid-provider', subagent: { providerId: 'removed-provider', model: 'old-model' } };
+  const { response, attempts } = await forkFixture(source);
+  assert.equal(response.statusCode, 200);
+  assert.equal(attempts[0].provider, 'valid-provider');
+  assert.equal(attempts[0].subagent, null);
+});
 
 test('label PATCH broadcasts session_updated on both workspace and chat planes', () => {
   const { session, handler, workspace, chat } = fixture({

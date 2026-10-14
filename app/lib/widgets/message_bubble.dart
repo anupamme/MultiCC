@@ -519,6 +519,7 @@ Future<void> _forkFromMessage(BuildContext context, ChatMessage message) async {
   try {
     final newId = await SessionService(settings: settings).forkSession(
       shellMessageOwner(provider.executionSessionName, msgId).sessionId,
+      configurationSessionId: provider.executionSessionName,
       atMessageId: shellMessageOwner(
         provider.executionSessionName,
         msgId,
