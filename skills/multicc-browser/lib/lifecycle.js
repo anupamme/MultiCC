@@ -51,12 +51,26 @@ function describeProfiles() {
     const config = profileConfig(name) || {};
     const state = runtimeState(name);
     const userDataDir = config.userDataDir || P.profileDir(name);
+    // Only a live browser can put a window on the user's screen, so live state
+    // beats the saved config: a profile whose last login was headed is still
+    // background-only while it actually runs headless. A profile with no live
+    // browser reports headless because that is what its next start does.
+    const live = Boolean(state && state.chromeAlive);
+    const headed = live && state.headed === true;
+    // An attach-only profile mirrors an external browser mbrowser never opened
+    // and never hands back, so it keeps the configured mode and is never
+    // counted as one of our windows.
+    const attachOnly = Boolean(config.attachOnly);
     return {
       name,
       exists: Boolean(profileConfig(name)) || fs.existsSync(userDataDir),
-      mode: config.headed ? 'headed' : 'headless',
+      mode: attachOnly ? (config.headed ? 'headed' : 'headless') : (headed ? 'headed' : 'headless'),
+      // A window on screen right now that we opened — the only thing that can
+      // steal focus and the only thing we can hand back.
+      headed: attachOnly ? false : headed,
+      live,
       browser: config.browser || null,
-      attachOnly: Boolean(config.attachOnly),
+      attachOnly,
       cdpUrl: config.cdpUrl || null,
       mockKeychain: Boolean(config.mockKeychain) || fs.existsSync(path.join(userDataDir, P.MOCK_KEYCHAIN_MARKER)),
       userDataDir,
@@ -66,6 +80,19 @@ function describeProfiles() {
       socket: fs.existsSync(P.socketPath(name)),
     };
   });
+}
+
+// Foreground windows are the one thing in this executor that can interrupt the
+// user, so every listing names them explicitly and repeats the command that
+// hands the profile back to the background.
+function headedWindowNote(profiles) {
+  const open = profiles.filter(profile => profile.headed);
+  if (!open.length) return [];
+  return [
+    `headed windows (${open.length}): ${open.map(profile => profile.name).join(', ')}`,
+    '  these have a visible window on screen; hand each back when it is no longer ' +
+    'needed: `mbrowser start NAME --headless` (login state stays in the profile)',
+  ];
 }
 
 async function doctor(args) {
@@ -112,9 +139,11 @@ async function doctor(args) {
   for (const profile of profiles) {
     lines.push(`  ${profile.name}: ${profile.mode}${profile.attachOnly ? ' attach-only' : ''}` +
       ` chrome=${profile.chromePid || '-'}${profile.chromeAlive ? ' alive' : ''}` +
+      `${profile.headed ? ' [window on screen]' : ''}` +
       ` daemon=${profile.socket ? 'up' : 'down'} dir=${profile.userDataDir}`);
   }
   if (!profiles.length) lines.push('  (none)');
+  lines.push(...headedWindowNote(profiles));
   return {
     text: lines.join('\n'),
     os: { platform: process.platform, version: osVersion, tier, arch: process.arch },
@@ -132,8 +161,10 @@ function profiles() {
   const lines = list.length
     ? list.map(profile => `${profile.name}: ${profile.mode}${profile.attachOnly ? ' attach-only' : ''}` +
       ` daemon=${profile.socket ? 'up' : 'down'} chrome=${profile.chromePid || '-'}` +
-      `${profile.chromeAlive ? ' (alive)' : ''} ${profile.userDataDir}`)
+      `${profile.chromeAlive ? ' (alive)' : ''}${profile.headed ? ' [window on screen]' : ''}` +
+      ` ${profile.userDataDir}`)
     : ['(no profiles yet; create one with `mbrowser start NAME --create`)'];
+  lines.push(...headedWindowNote(list));
   return { text: lines.join('\n'), profiles: list };
 }
 
@@ -202,8 +233,10 @@ async function login(args) {
     started.text,
     opened ? `opened ${args.url} in background tab ${opened.shortId}; switch to that browser window and tab to log in`
       : `switch to the browser window to log in: ${url}`,
-    `Log in there, then run \`mbrowser start ${name} --headless\` to continue headless.`,
-    'The profile keeps its login data; if the browser exits, the next page command starts it headless.',
+    `this window is temporary: as soon as the manual step is done, hand it back with ` +
+      `\`mbrowser start ${name} --headless\` (the profile keeps its login data).`,
+    'If other sessions hold tabs on this profile, do not force the restart — tell the user instead.',
+    'If the browser exits on its own, the next page command starts it headless again.',
   ];
   return { text: lines.join('\n'), started, opened };
 }
@@ -284,9 +317,13 @@ async function status(args) {
     return { text, running: true, ping, status: detail, config, state };
   }
   const lines = [`profile ${name}: daemon down`];
-  if (config) lines.push(`config: ${config.headed ? 'headed' : 'headless'}` +
-    `${config.browser ? ` browser=${config.browser}` : ''}${config.attachOnly ? ` attach-only=${config.cdpUrl}` : ''}`);
+  if (config) lines.push(`config: ${config.headed ? 'headed was last requested (e.g. a manual login)' : 'headless'}` +
+    `${config.attachOnly ? ` attach-only=${config.cdpUrl}` : ''}` +
+    `${config.browser ? ` browser=${config.browser}` : ''}`);
   else lines.push('config: (none)');
+  // A cold start is always headless, whatever the config last asked for: no
+  // window opens unless someone passes --headed on purpose.
+  lines.push(`next start: ${config && config.attachOnly ? 'the attached browser, untouched' : 'headless (background, no window)'}`);
   if (state) {
     lines.push(`last chrome pid ${state.chromePid || '-'}${state.chromeAlive ? ' (still alive)' : ' (gone)'}` +
       ` port ${state.port || '-'}`);

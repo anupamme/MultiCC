@@ -158,3 +158,59 @@ test('page commands keep a live headed browser and its connection unchanged', as
   assert.equal(daemon.headed, true);
   assert.equal(daemon.cdp, connection);
 });
+
+// Focus is the one thing the user feels: a listing that reports the saved config
+// instead of the live browser would hide a window sitting on their screen, and a
+// stopped profile would look like it is about to open one.
+test('listings name the profiles that really have a window on screen', async t => {
+  isolate(t);
+  // Live and headed: the only case that can steal focus.
+  P.writeJson(P.configPath('window'), { name: 'window', headed: true });
+  P.writeJson(P.statePath('window'), { chromePid: 456, headed: true, owned: true });
+  // Live but headless: config says headed from an old login, the browser does not.
+  P.writeJson(P.configPath('quiet'), { name: 'quiet', headed: true });
+  P.writeJson(P.statePath('quiet'), { chromePid: 457, headed: false, owned: true });
+  // Stopped: config says headed, the next start is still background.
+  P.writeJson(P.configPath('stopped'), { name: 'stopped', headed: true });
+  P.writeJson(P.statePath('stopped'), { chromePid: 458, headed: true, owned: true });
+  // Attached to an external browser: a window exists, but it is not ours to
+  // hand back, so it must never appear in the handback list.
+  P.writeJson(P.configPath('external'), {
+    name: 'external', headed: true, attachOnly: true, cdpUrl: 'http://127.0.0.1:12345',
+  });
+  t.mock.method(CH, 'processAlive', pid => Number(pid) !== 458);
+
+  const byName = Object.fromEntries(lifecycle.describeProfiles().map(profile => [profile.name, profile]));
+  assert.equal(byName.window.mode, 'headed');
+  assert.equal(byName.window.headed, true);
+  assert.equal(byName.quiet.mode, 'headless');
+  assert.equal(byName.quiet.headed, false);
+  assert.equal(byName.stopped.headed, false, 'a stopped browser has no window');
+  assert.equal(byName.stopped.mode, 'headless', 'a cold start is always headless');
+  assert.equal(byName.external.mode, 'headed', 'an attached browser is headed');
+  assert.equal(byName.external.headed, false, 'an attached browser is not our window');
+
+  const listed = lifecycle.profiles();
+  assert.match(listed.text, /quiet: headless/);
+  assert.match(listed.text, /window: headed[\s\S]*\[window on screen\]/);
+  assert.equal((listed.text.match(/\[window on screen\]/g) || []).length, 1,
+    'only the live headed browser may be reported as a window');
+  assert.match(listed.text, /headed windows \(1\): window/);
+  assert.match(listed.text, /mbrowser start NAME --headless/);
+
+  const report = await lifecycle.doctor({});
+  assert.match(report.text, /window: headed[\s\S]*\[window on screen\]/);
+  assert.match(report.text, /headed windows \(1\): window/);
+  assert.equal(report.profiles.find(profile => profile.name === 'window').headed, true);
+});
+
+// The default has to be readable from the skill itself: an agent that only reads
+// the contract must still learn that windows are the exception and temporary.
+test('the skill states the background-first focus contract', async () => {
+  const skill = fs.readFileSync(
+    path.join(__dirname, '..', 'skills', 'multicc-browser', 'SKILL.md'), 'utf8');
+  assert.match(skill, /焦点契约|focus contract/);
+  assert.match(skill, /默认全程后台|background by default|background-first/i);
+  assert.match(skill, /必须由用户亲手完成[\s\S]{0,40}扫码/);
+  assert.match(skill, /mbrowser start NAME --headless/);
+});
