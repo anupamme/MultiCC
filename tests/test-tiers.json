@@ -395,6 +395,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/event_trigger_service_test.dart",
+      "tier": "core",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/fcm_service_test.dart",
       "tier": "core",
       "lane": "flutter"
@@ -422,6 +427,11 @@
     {
       "path": "app/test/graph_canvas_test.dart",
       "tier": "other",
+      "lane": "flutter"
+    },
+    {
+      "path": "app/test/hook_list_view_test.dart",
+      "tier": "flow",
       "lane": "flutter"
     },
     {
@@ -2856,6 +2866,15 @@
       ]
     },
     {
+      "path": "tests/test-event-system.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-fcm-push.js",
       "tier": "core",
       "lane": "deterministic"
@@ -3022,6 +3041,15 @@
       "owner": "npm:test:security",
       "entrypoints": [
         "npm:test:security"
+      ]
+    },
+    {
+      "path": "tests/test-hooks-ui-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
       ]
     },
     {
