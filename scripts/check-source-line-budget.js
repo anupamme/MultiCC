@@ -392,8 +392,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +20 键（doctor*）：会话医生按钮、异常处一键诊断与诊断进度/报告文案，生成器实测 8990/570883。
     // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
     // +5 键（airCliUpdatePinned/Unpin*）：*_CMD 钉住派生路径时的升级前提示与「改用新版」，实测 9014/573401。
-    maxLines: 9014,
-    maxBytes: 573401,
+    // +62 键（hook*）：钩子/触发器 UI（会话页头 🪝、触发器任务 tab、共用规则表单），实测 9138/579516。
+    maxLines: 9138,
+    maxBytes: 579516,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

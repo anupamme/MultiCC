@@ -163,6 +163,23 @@ function createEventRuleEngine(deps) {
   return Object.freeze({
     start, stop, load, addGlobal, updateGlobal, removeGlobal,
     listGlobal: () => globalRules.map((rule) => ({ ...rule })),
+    // Every event rule (global + all sessions) with its last run, for the UI list.
+    listAll() {
+      const lastRun = new Map();
+      for (const run of results) lastRun.set(run.ruleId, run);
+      const view = (rule, owner, label) => ({
+        scope: owner ? 'session' : 'global', sessionId: owner || null, sessionLabel: label || null,
+        rule: { ...rule }, lastRun: lastRun.get(rule.id) || null,
+      });
+      const items = globalRules.map((rule) => view(rule, null, null));
+      for (const [id, persisted] of persistedSessions) {
+        if (!Array.isArray(persisted.triggers)) continue;
+        for (const trigger of persisted.triggers) {
+          if (trigger.type === 'event') items.push(view(trigger, id, persisted.label || id));
+        }
+      }
+      return items;
+    },
     recentResults: () => results.slice(),
     // exposed for tests / manual-test route
     handle: onEvent,

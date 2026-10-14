@@ -246,8 +246,15 @@
     </section>
 
     <section id="schedule-center" hidden>
+      <!-- 两个 tab：定时任务（原内容）/ 触发器任务（事件 → 动作，air-trigger-center.js）。 -->
+      <div id="schedule-tabs" class="schedule-tabs" role="tablist">
+        <button type="button" role="tab" class="active" aria-selected="true" data-schedule-tab="cron" data-i18n="hookTabCron">定时任务</button>
+        <button type="button" role="tab" aria-selected="false" data-schedule-tab="hooks" data-i18n="hookTabHooks">触发器任务</button>
+      </div>
       <div id="schedule-summary" aria-live="polite"></div>
       <div id="schedule-list"></div>
+      <div id="hook-summary" class="schedule-summary-like" aria-live="polite" hidden></div>
+      <div id="hook-list" hidden></div>
     </section>
 
     <!-- 控制台：和目录首页、定时任务同级的一页，就开在右边这块主区域里。
@@ -801,6 +808,8 @@
   <!-- 定时任务中心（列表 + 唯一那张表单 + 四个动作）本体。排在 air.js 前面：air.js
        启动时调 MultiCCAirSchedules.bind() 把「通知/跳转/刷新/目录快照」递进去。 -->
   <script src="air-schedule-center.js"></script>
+  <script src="hook-editor.js"></script>
+  <script src="air-trigger-center.js"></script>
   <!-- 目录首页任务清单的分页（上一页 / 第 x / y 页 / 下一页）。自持 DOM 与页码状态，
        只把「换了一页」回调给 air.js 重画列表；页码状态不能被 air.js 的重渲染重置，
        所以它必须活在 air.js 之外。排在 air.js 前面：air.js 启动时调它的 bind()。 -->
