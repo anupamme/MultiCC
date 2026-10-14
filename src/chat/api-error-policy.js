@@ -474,7 +474,7 @@ function textFallbackCategory(message) {
 
 function userAction(category, retryAfterMs) {
   switch (category) {
-    case 'authentication_permission': return '重新登录、更新 API 凭据或补足权限后重试';
+    case 'authentication_permission': return '重新登录、更新 API 凭据或补足权限后重试（官方账号可在「模型线路」面板点「重新登录」）';
     case 'billing_quota': return retryAfterMs != null ? '等待额度重置后重试' : '检查账单、额度或用量上限';
     case 'rate_limit': return '等待服务端限流窗口结束';
     case 'context_token_limit': return '压缩或裁剪上下文，或开启新会话';
