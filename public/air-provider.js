@@ -282,7 +282,7 @@
     actions.append(button(t('airProviderEdit'), () => openEditor(provider)));
     // 终端登录的内置官方线路（无账号库条目）同样要能重登：401 时最常见的就是这一条，
     // 用 'global' 走 /api/<vendor>/oauth/login，开出终端会话完成 CLI 登录。
-    if (provider.isOfficial && (account || terminal)) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, account ? provider.officialAccountId : 'global')));
+    if (account || terminal) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, account ? provider.officialAccountId : 'global')));
     // 生成一份带独立令牌的借道分享码（manage-provider-relay.js，弹层自带样式）。
     // 官方 Provider 同样可借道：出借方在本机用官方登录 / OAuth 凭证代发请求，
     // 接收方只拿到分享码里的 provider 范围凭据，永远看不到上游 key 或 OAuth token
