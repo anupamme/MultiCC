@@ -280,7 +280,9 @@
     // （openEditor 的 locked 分支，服务端 updateProvider 的官方分支同样只收这一项）。
     // 去掉它，官方线路就再也够不到出口 IP 白名单 —— 而官方账号恰恰是最需要它的。
     actions.append(button(t('airProviderEdit'), () => openEditor(provider)));
-    if (provider.isOfficial && account) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, provider.officialAccountId)));
+    // 终端登录的内置官方线路（无账号库条目）同样要能重登：401 时最常见的就是这一条，
+    // 用 'global' 走 /api/<vendor>/oauth/login，开出终端会话完成 CLI 登录。
+    if (provider.isOfficial && (account || terminal)) actions.append(button(t('airProviderRelogin'), () => root.MultiCCOfficialAccounts?.relogin(provider.appType, account ? provider.officialAccountId : 'global')));
     // 生成一份带独立令牌的借道分享码（manage-provider-relay.js，弹层自带样式）。
     // 官方 Provider 同样可借道：出借方在本机用官方登录 / OAuth 凭证代发请求，
     // 接收方只拿到分享码里的 provider 范围凭据，永远看不到上游 key 或 OAuth token
