@@ -48,6 +48,11 @@ mtrigger remove  <id>
 mtrigger test    <id>
 ```
 
+# 事件触发：任务状态变化时执行动作（见下方「事件触发」）
+mtrigger add --type event --on task.attention --action notify
+mtrigger add --type event --on task.achieved --action webhook \
+  --url https://example.com/hook --secret MY_HOOK_SECRET
+
 参数说明：
 - `--prompt` 可省略；省略时触发会注入一段默认的「检查 git + 提醒提交/测试」指令。
 - `--paths` 仅 `file-change` 用，至少一个 glob；支持 `*`（不含 `/`）、`**`（任意层）、`?`。相对会话 worktree 根目录匹配，已自动忽略 `.git/node_modules/.multicc-worktrees`。
@@ -56,6 +61,26 @@ mtrigger test    <id>
 - `--cron`：标准 5 段表达式；写之前可口算确认含义并向用户复述。
 
 登记成功后，向用户复述这条规则（人话），并附上 `id`，方便日后删改。
+
+---
+
+## 事件触发（type=event）
+
+规则 = 订阅哪些事件 + 可选过滤 + 一个动作。事件按任务状态（classify 字母）派生，`D` 的子状态可能**晚于 D 才出现**（自动细化或人工标记），所以有两层事件：
+
+| 事件 | 含义 |
+|---|---|
+| `task.running` / `task.waiting_user` / `task.waiting_background` / `task.failed` | P / W / B / E；`failed` 带 `cancelled`（用户中止）与 `errorCategory` |
+| `task.finished` | 进入 D（goalState 可能还没有） |
+| `task.goal_resolved` | D 的 goalState 变化，`source` = classify / refine / manual |
+| `task.achieved` / `task.needs_interaction` | goalState 变为 achieved / interact（同一任务段只触发一次） |
+| `task.restarted`、`turn.completed`、`trigger.fired` | 新任务段、轮次完成、规则已执行 |
+
+别名（只在匹配时展开）：`task.attention` = needs_interaction + waiting_user + failed；`task.done` = achieved + needs_interaction。也支持 `task.*`、`*`。
+
+动作：`inject-prompt`（向会话注入提示；自己引起的那一轮不会再触发注入，冷却下限 10 秒）、`webhook`（可选 HMAC-SHA256 签名，密钥放保险箱用 `--secret` 引用；只允许公网地址，超时 5 秒、5xx 重试）、`notify`（走现有推送）。
+
+全局规则（不绑会话）用 HTTP：`GET/POST /api/event-rules`、`PUT/DELETE /api/event-rules/:id`；`GET /api/events/catalog` 看事件清单，`GET /api/events/recent` 看最近事件与执行结果，`POST /api/events/test {type}` 空跑一个事件。
 
 ---
 

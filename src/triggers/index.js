@@ -1,12 +1,13 @@
 'use strict';
 
 const { sanitizePublicText } = require('../http/public-safety');
+const { validateEventRule } = require('../events/rules');
 
 const DEFAULT_TRIGGER_PROMPT =
   '【multicc 自动触发】请使用 multicc-trigger skill 执行检查流程：查看当前 git 改动（git status/diff），' +
   '提醒我该提交或该补/跑测试的地方；简短汇报即可，不要擅自修改代码或提交。';
 
-const TRIGGER_TYPES = Object.freeze(['post-turn', 'file-change', 'schedule']);
+const TRIGGER_TYPES = Object.freeze(['post-turn', 'file-change', 'schedule', 'event']);
 const WATCH_IGNORED = /(^|[\/\\])(\.git|node_modules|\.multicc-worktrees|\.DS_Store)([\/\\]|$)/;
 
 function assertDependencies(deps) {
@@ -91,12 +92,22 @@ function createSessionTriggers(rawDeps) {
   function triggerLabel(trigger) {
     if (trigger.type === 'file-change') return `文件变更 ${(trigger.paths || []).join(',')}`;
     if (trigger.type === 'schedule') return `定时 ${trigger.cron}`;
+    if (trigger.type === 'event') return `事件 ${(trigger.on || []).join(',')}`;
     return '每轮结束';
   }
 
   function validateTrigger(body = {}) {
     const type = String(body.type || '');
     if (!TRIGGER_TYPES.includes(type)) return { error: 'invalid type' };
+    if (type === 'event') {
+      // Event rules share one schema with global rules (src/events/rules.js).
+      const result = validateEventRule(body, {
+        idFactory: () => deps.crypto.randomUUID(),
+        nowIso: () => new Date(now()).toISOString(),
+        scope: 'session',
+      });
+      return result.error ? { error: result.error } : { trigger: result.rule };
+    }
     const trigger = {
       id: body.id || deps.crypto.randomUUID(),
       type,
@@ -444,6 +455,7 @@ function createSessionTriggers(rawDeps) {
       if (!session || !Array.isArray(session.triggers)) return res.status(404).json({ error: 'not found' });
       const trigger = session.triggers.find((candidate) => candidate.id === req.params.tid);
       if (!trigger) return res.status(404).json({ error: 'trigger not found' });
+      if (trigger.type === 'event') return res.status(400).json({ error: 'use POST /api/events/test for event rules' });
       fireTrigger(session.id, { ...trigger, enabled: true, cooldownMs: 0 }, 'manual-test', {
         persistence: 'required',
       });

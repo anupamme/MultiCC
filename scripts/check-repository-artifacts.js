@@ -13,7 +13,7 @@ const RUNTIME_BASENAMES = new Set([
   'sessions.json', 'directories.json', 'scheduled_tasks.json', 'shares.json',
   'fleet-shares.json', 'external-fleets.json',
   'aux-config.json', 'goal-config.json', 'notes.json', 'push_subscriptions.json',
-  'push_notification_receipts.json',
+  'push_notification_receipts.json', 'event_rules.json',
   'token_usage.json', 'token_daily.json', 'token_by_role.json', 'providers.json',
   'official-provider-selection.json', 'provider-defaults.json', 'voice_examples.json', 'whisper_vocab.json',
   'tunnel-config.json', 'tunnel-repair-ledger.json', 'orchestration.json', 'orchestration.sqlite',

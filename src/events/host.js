@@ -1,0 +1,63 @@
+'use strict';
+
+// Composition for the event system: hub + rule engine + routes, wired to the
+// real host effects (fs store, http transport, dns, secrets vault, push, chat).
+// server.js only calls createEventsHost(...) once and start()/stop().
+
+const dns = require('dns');
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { atomicWriteJson } = require('../runtime-security');
+const { createEventHub } = require('./hub');
+const { createEventRuleEngine } = require('./engine');
+const { mountEventRoutes } = require('./routes');
+
+function readJsonFile(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch (error) {
+    if (error && error.code === 'ENOENT') return null;
+    throw error; // corrupt/unreadable: fail closed, do not overwrite with empty rules
+  }
+}
+
+function postJson(url, headers, body, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const transport = url.protocol === 'https:' ? https : http;
+    const req = transport.request(url, {
+      method: 'POST', headers: { ...headers, 'Content-Length': Buffer.byteLength(body) }, timeout: timeoutMs,
+    }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('timeout', () => req.destroy(Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' })));
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+function createEventsHost(deps) {
+  const { bus, app, persistedSessions, chatSessions, saveBestEffort, rulesFile, logger } = deps;
+  const hub = createEventHub({ bus, logger, dirIdOf: (id) => (persistedSessions.get(id) || {}).dirId });
+  const engine = createEventRuleEngine({
+    hub, persistedSessions, saveBestEffort, logger,
+    store: { read: () => readJsonFile(rulesFile), write: (value) => atomicWriteJson(rulesFile, value) },
+    notify: (...args) => deps.notify(...args),
+    resolveSecret: (name) => { const result = deps.secretsVault.reveal(name); return result && result.entry ? result.entry.value : null; },
+    lookup: (host) => dns.promises.lookup(host, { all: true }),
+    httpPost: postJson,
+    allowPrivateWebhooks: process.env.MULTICC_EVENT_WEBHOOK_ALLOW_PRIVATE === '1',
+    injectPrompt: (sessionId, prompt) => {
+      const chat = chatSessions.get(sessionId);
+      if (!persistedSessions.has(sessionId) || (chat && chat.isStreaming)) return false;
+      bus.emit('chat:run', sessionId, prompt, { originTrigger: true });
+      return true;
+    },
+  });
+  if (app) mountEventRoutes(app, { hub, engine });
+  return Object.freeze({
+    hub, engine,
+    start() { hub.start(); engine.start(); },
+    async stop() { engine.stop(); hub.stop(); },
+    forgetSession(id) { hub.forgetSession(id); engine.forgetSession(id); },
+  });
+}
+
+module.exports = { createEventsHost, readJsonFile };

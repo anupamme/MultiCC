@@ -2392,8 +2392,7 @@ function getTaskState(persisted) {
   return { ...TASK_STATE_DEFAULTS, ...ts };
 }
 
-// Merge a patch into persisted.taskState and persist. Best-effort save: callers
-// may pass {save:false} to batch updates. Always returns the new state.
+// Merge a patch into persisted.taskState; {save:false} batches. Returns the new state.
 function setTaskState(sessionId, patch, opts = {}) {
   const persisted = persistedSessions.get(sessionId);
   if (!persisted) return null;
@@ -2406,25 +2405,21 @@ function setTaskState(sessionId, patch, opts = {}) {
     ...(classifyChanged && !Object.prototype.hasOwnProperty.call(patch, 'classifyUpdatedAt')
       ? { classifyUpdatedAt: Date.now() } : {}),
   };
-  persisted.taskState = next;
+  persisted.taskState = next; bus.emit('task:state-changed', sessionId, cur, next);
   if (opts.save !== false) savePersistedSessionsBestEffort('runtime.task-state');
-  // Push the aux classify result to the chat client so it can show what the
-  // assistant currently thinks this session's goal/phase is. Cheap; only fires
-  // when a chat WS is connected for this session.
+  // Push classify goal/phase to connected chat clients.
   const classifyPayload = {
     type: 'task_state',
     goal: next.goal || '', taskShortCode: taskShortCode(next.taskId),
     phase: next.phase || 'idle',
     classifyState: next.classifyState || null, apiError: next.apiError || null, goalState: isGoalState(next.goalState) ? next.goalState : null,
-    // A frozen judgement must not read as a live one: every verdict carries
-    // whether Aux is still answering. See src/classify/aux-verdict-health.js.
+    // Verdicts carry whether Aux is still answering (src/classify/aux-verdict-health.js).
     ...auxVerdictStaleness(),
   };
   try {
     chatBroadcast(sessionId, classifyPayload);
   } catch (_) {}
-  // Also broadcast to workspace subscribers so fleet cards / Active sessions
-  // reflect classify state changes in real time without a page refresh.
+  // Also to workspace subscribers (fleet cards / Active sessions).
   if (persisted.dirId) {
     try {
       workspaceBroadcast(persisted.dirId, { ...classifyPayload, sessionId });
@@ -2834,6 +2829,7 @@ const triggerRuntime = createSessionTriggers({
   logger,
 });
 triggerRuntime.mountRoutes(app);
+const eventsHost = require('./src/events/host').createEventsHost({ bus, app, persistedSessions, chatSessions, saveBestEffort: savePersistedSessionsBestEffort, rulesFile: MULTICC_PATHS.eventRulesFile, secretsVault, notify: (...a) => pushRuntime.notify(...a), logger });
 const teardownTriggers = triggerRuntime.teardownSession;
 
 const ensureFirstRunDirectory = async () => {
@@ -2906,7 +2902,7 @@ const { shutdownCoordinator, trackServiceTimer, gracefulShutdown } = createHostL
   cronTasks,
   tunnel,
   skillSyncRuntime,
-  triggerRuntime,
+  triggerRuntime, eventsHost,
   pushRuntime,
   lanDiscovery,
   wechatBridge,
@@ -2967,7 +2963,7 @@ app.use(safeErrorHandler(logger));
     seedTokenUsageFromHistory();
     backfillReportedModels();                       // recover runtime model for pre-upgrade sessions
     skillSyncRuntime.start();
-    triggerRuntime.start();
+    triggerRuntime.start(); eventsHost.start();
     sessionHibernationRuntime.start();
     worktreeOrphanScanner = require('./src/workspace/orphan-scan').createWorktreeOrphanScanner({
       records: persistedSessions, directories, repoActor: defaultRepoActor, logger,

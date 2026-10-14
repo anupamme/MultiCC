@@ -121,6 +121,7 @@ function createPaths({ dataDir } = {}) {
     fleetSharesFile: path.join(root, 'fleet-shares.json'),
     externalFleetsFile: path.join(root, 'external-fleets.json'),
     pushSubscriptionsFile: path.join(root, 'push_subscriptions.json'),
+    eventRulesFile: path.join(root, 'event_rules.json'),
     pushNotificationReceiptsFile: path.join(root, 'push_notification_receipts.json'),
     tunnelConfigFile: path.join(root, 'tunnel-config.json'),
     tunnelRepairLedgerFile: path.join(root, 'tunnel-repair-ledger.json'),
