@@ -12,7 +12,7 @@
 - CLI 通过 **0600 的 unix socket** 连接守护进程；状态在 `${MULTICC_DATA_DIR:-~/.multicc}/browser/` 下。
 - 多个 profile（多账号）可同时运行，各自一台 Chrome + 一个守护进程。
 - 每个 MultiCC 会话（`MULTICC_SESSION_ID`）在同一 profile 的 Chrome 里拥有自己的后台标签，会话之间互不可见。
-- 先用 `profiles` 选已有账号目录，运行中直接后台复用；停止的托管 profile 用 `start NAME --headless`。**冷启动（浏览器没在跑）永远无头**，上次 `login` 留下的有头设置不会让它弹窗；只有正在运行的有头浏览器按原模式继续。`login` 是有头的一次性入口，人工步骤一结束就 `start NAME --headless` 交回后台。`profiles` / `doctor` 会把**当前真的在屏幕上开着窗口**的 profile 标成 `[window on screen]` 并给出交回命令，收尾时不要留下自己开的有头窗口。
+- 先用 `profiles` 选已有账号目录，运行中直接后台复用，**不管它是有头还是无头都不切模式、不重启**。**冷启动（浏览器没在跑）永远无头**，上次 `login` 留下的有头设置不会让它弹窗；正在运行的有头浏览器按原模式继续，原地后台操作即可。「后台」= 不激活、不置前，不是「关窗口」：窗口留在屏幕原处不算打扰，抢焦点才算。`profiles` / `doctor` 会把**当前真的在屏幕上开着窗口**的 profile 标成 `[window on screen]`——那是避让清单（别激活、别重启、别关别人的），不是清理清单。
 - 输入是真实 CDP 输入（元素中心 `Input.dispatchMouseEvent`，文本/按键走 `Input.insertText` / `dispatchKeyEvent`，带 JS 回退）；**不聚焦窗口**，需要焦点时用 `Emulation.setFocusEmulationEnabled`，不会把窗口拉到前台。
 
 ## 全局参数
@@ -35,7 +35,7 @@
 | `sites [DOMAIN_OR_URL]` | 查哪些 profile 曾访问某个域名（登录态须在页面核对）（按最近使用排序，带账号标签）；不带参数时列出所有已记录的域名。数据来自站点登记表，`open` 成功后自动写入 |
 | `tag NAME --domain D [--label L]` | 给 profile `NAME` 在域名 `D` 下打一个人类可读的账号标签（如邮箱/用户名），写进站点登记表；重复打标签会更新而不是追加 |
 | `start [NAME] [--create] [--headed\|--headless] [--browser PATH] [--mock-keychain] [--startup-timeout S] [--force]` | 启动或复用 profile。不指定模式时，沿用正在运行的浏览器；已停止的托管 profile 默认无头启动，忽略上次人工登录留下的有头配置。`start` 只对**已存在**的 profile 生效，新建必须加 `--create`；页面类命令只会自动启动**已存在**的 profile。显式 `--headed` / `--headless` 可切换模式并重启 Chrome；其它会话持有标签时默认拒绝，普通自动化不要用 `--force` 绕过 |
-| `login NAME [URL]` | 必要时把该 profile 切成有头模式，在后台标签打开 URL；用户自行切到窗口和标签登录/扫码。窗口是临时的，人工步骤做完就 `start NAME --headless` 交回后台 |
+| `login NAME [URL]` | 只有必须用户亲手操作时才用：把该 profile 切成有头模式（会重启 Chrome），在后台标签打开 URL；用户自行切到窗口和标签登录/扫码。做完保持现状继续后台操作，不切回无头、不重启、不关窗口 |
 | `attach NAME --cdp-url http://127.0.0.1:PORT` | 登记一台外部启动的调试 Chrome；mbrowser 不启动也不杀它。换一个 `--cdp-url` 会先退休旧守护进程（它只为启动时的那个端点服务）：旧守护进程本来就不拥有那台 Chrome，会原样留着；如果旧守护进程自己起过 Chrome，则会把那台停掉（新配置里已经没有它的把手了）。端点连不上就报错，不会拿旧浏览器冒充 |
 | `status [NAME]` | 守护进程/Chrome/端口/标签状态（`--all` 等价于 `profiles`） |
 | `stop [NAME\|--all] [--keep-chrome]` | 停掉 profile 的守护进程和它自己启动的 Chrome（外部 `attach` 的不动）；`--keep-chrome` 只退守护进程、Chrome 留着，下一条命令会**重新接管同一台** Chrome |
@@ -72,7 +72,7 @@ profile 目录：macOS 是 `~/Library/Application Support/MultiCC/browser-use/<n
 | `close [TARGET]` | 关闭本会话的标签（默认当前） |
 | `dialog accept\|dismiss [PROMPT_TEXT]` | 处理 JS 对话框；有待处理对话框时其它命令会先警告 |
 
-后台操作不调用窗口置前或标签激活。已运行的有头浏览器可直接后台操作，无须为了后台执行强制重启。只有人工流程确实需要窗口时才使用 `login`（那是个临时窗口：用户做完就跟一句 `start NAME --headless` 交回后台）；扫码截图能完成时优先保持无头模式。
+后台操作不调用窗口置前或标签激活，也不改模式：已运行的有头浏览器就在它原来的窗口和位置上直接后台操作，任何情况下都不要为了「后台执行」强制重启或切成无头。只有人工流程确实需要用户亲手操作时才使用 `login`（它会重启 Chrome，所以别当「看一眼」用）；做完继续在同一个窗口后台干活，不切回无头、不关窗口。扫码截图能完成时优先保持当前模式不动。
 
 ## 快照格式与引用语义
 
