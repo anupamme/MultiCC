@@ -167,7 +167,7 @@ function findChrome() {
 // launcher supplies its own background and parallaxes the layers separately).
 function renderMasters(svgPath) {
   const svg = fs.readFileSync(svgPath, 'utf8');
-  const foreground = svg.replace(/\n *<rect width="1024" height="1024" fill="url\(#bg\)"\/>/, '');
+  const foreground = svg.replace(/\n *<rect\b[^>]*fill="url\(#bg\)"[^>]*\/>/, '');
   if (foreground === svg) {
     throw new Error('could not strip the background rect; did icon.svg change shape?');
   }
