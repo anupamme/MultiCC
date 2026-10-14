@@ -242,8 +242,16 @@ const rows = () => fs.existsSync(invocations) ? fs.readFileSync(invocations, 'ut
     assert.ok(shellPage.messages.some(m => m.sourceSessionId === first.sessionId));
     assert.ok(shellPage.messages.some(m => m.sourceSessionId === second.sessionId));
     assert.equal((await api(`/api/task-shells/${sb.id}/chat`)).activeSessionId, second.sessionId);
-    for (const type of ['user_message', 'cancel', 'clear_history']) socket.send(JSON.stringify({ type, text: 'BYPASS', clientMsgId: 'bypass' }));
-    await wait(() => events.filter(e => e.code === 'task_shell_route_required').length >= 3, 'native WS bypass must reject');
+    // A raw user_message/cancel without the taskShell flag is still a bypass and
+    // must be rejected. clear_history is deliberately NOT a bypass anymore: for a
+    // task-shell entry it is the shell's own display control and is handled above
+    // this gate (display-only reset), so it is checked separately below.
+    for (const type of ['user_message', 'cancel']) socket.send(JSON.stringify({ type, text: 'BYPASS', clientMsgId: 'bypass' }));
+    await wait(() => events.filter(e => e.code === 'task_shell_route_required').length >= 2, 'native WS bypass must reject');
+    const resetBefore = events.filter(e => e.type === 'chat_history_reset').length;
+    socket.send(JSON.stringify({ type: 'clear_history', keep: 1000, clientMsgId: 'clear-display' }));
+    await wait(() => events.filter(e => e.type === 'chat_history_reset' && e.shellId === sb.id).length > resetBefore,
+      'task-shell clear_history must reset the display instead of being rejected');
     socket.close(); socket = null;
     fs.writeFileSync(release, 'done');
     await wait(async () => (await api(`/api/task-shells/${sa.id}/tasks/${first.taskId}`)).messages.some(m => m.role === 'assistant'), 'original never completed');
