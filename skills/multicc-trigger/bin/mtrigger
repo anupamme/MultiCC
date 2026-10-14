@@ -103,6 +103,7 @@ async function main() {
         if (f.prompt) body.action.prompt = f.prompt;
         if (f.url) body.action.url = f.url;
         if (f.secret) body.action.secretName = f.secret;
+        if (f['include-conclusion'] === 'true') body.action.includeConclusion = true;
         if (f.message) body.action.message = f.message;
         const filter = {};
         if (f['goal-state']) filter.goalState = f['goal-state'];

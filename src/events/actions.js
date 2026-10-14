@@ -5,6 +5,7 @@
 
 const crypto = require('crypto');
 const net = require('net');
+const { renderInjection } = require('./envelope');
 
 const WEBHOOK_TIMEOUT_MS = 5000;
 const WEBHOOK_ATTEMPTS = 3;
@@ -35,7 +36,9 @@ function isPrivateAddress(address) {
 }
 
 // Webhook body: whitelisted event fields only (no paths, no stderr, no env).
-function webhookBody(event) {
+// conclusion/summary are opt-in per rule (includeConclusion) so a full reply
+// never leaves the machine by accident.
+function webhookBody(event, includeConclusion = false) {
   return JSON.stringify({
     eventId: event.eventId,
     seq: event.seq,
@@ -54,6 +57,7 @@ function webhookBody(event) {
       source: event.data.source || null,
       cancelled: event.data.cancelled === true,
       errorCategory: event.data.errorCategory || null,
+      ...(includeConclusion ? { conclusion: event.data.conclusion || '', summary: event.data.summary || '' } : {}),
     },
   }).slice(0, MAX_BODY_BYTES);
 }
@@ -79,7 +83,7 @@ async function runWebhook(event, rule, ctx) {
   const url = new URL(action.url);
   const blocked = await checkWebhookTarget(url, ctx);
   if (blocked) return { ok: false, error: blocked };
-  const body = webhookBody(event);
+  const body = webhookBody(event, action.includeConclusion === true);
   const timestamp = String(Math.floor(ctx.now() / 1000));
   const headers = {
     'Content-Type': 'application/json',
@@ -121,8 +125,7 @@ async function runNotify(event, rule, ctx) {
 async function runInject(event, rule, ctx) {
   const target = rule.action.targetSessionId || event.sessionId;
   if (!target) return { ok: false, error: 'no target session' };
-  const prompt = (rule.action.prompt || '').trim()
-    || `【multicc 自动触发】事件 ${event.type} 已发生，请根据当前任务状态简短汇报并给出下一步建议。`;
+  const prompt = renderInjection(event, rule.action.prompt);
   const accepted = ctx.injectPrompt(target, prompt);
   return accepted ? { ok: true, target } : { ok: false, error: 'target busy or missing' };
 }

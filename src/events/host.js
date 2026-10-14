@@ -12,6 +12,7 @@ const { atomicWriteJson } = require('../runtime-security');
 const { createEventHub } = require('./hub');
 const { createEventRuleEngine } = require('./engine');
 const { mountEventRoutes } = require('./routes');
+const { conclusionFromHistory } = require('./envelope');
 
 function readJsonFile(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -35,7 +36,11 @@ function postJson(url, headers, body, timeoutMs) {
 
 function createEventsHost(deps) {
   const { bus, app, persistedSessions, chatSessions, saveBestEffort, rulesFile, logger } = deps;
-  const hub = createEventHub({ bus, logger, dirIdOf: (id) => (persistedSessions.get(id) || {}).dirId });
+  const hub = createEventHub({
+    bus, logger,
+    dirIdOf: (id) => (persistedSessions.get(id) || {}).dirId,
+    conclusionOf: (id) => (deps.loadChatHistory ? conclusionFromHistory(deps.loadChatHistory(id)) : ''),
+  });
   const engine = createEventRuleEngine({
     hub, persistedSessions, saveBestEffort, logger,
     store: { read: () => readJsonFile(rulesFile), write: (value) => atomicWriteJson(rulesFile, value) },

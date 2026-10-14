@@ -80,6 +80,8 @@ mtrigger add --type event --on task.achieved --action webhook \
 
 动作：`inject-prompt`（向会话注入提示；自己引起的那一轮不会再触发注入，冷却下限 10 秒）、`webhook`（可选 HMAC-SHA256 签名，密钥放保险箱用 `--secret` 引用；只允许公网地址，超时 5 秒、5xx 重试）、`notify`（走现有推送）。
 
+**传给下一个动作的固定信封**（用户不用定义变量，只写指令）：`sessionId`（来源会话，想看全文就用它读历史）、`event`、`goal`、`goalState`、`conclusion`（来源会话最后一条回复，截断到约 2000 字并脱敏）、`summary`、`error`（仅失败，只含类别）、`taskId`、`ts`。`inject-prompt` 会把这些拼成一段固定文本，指令放最后；`webhook` 默认只发 sessionId/goal/goalState 等，要带 `conclusion`/`summary` 必须在动作里设 `includeConclusion: true`（命令行加 `--include-conclusion`）。
+
 全局规则（不绑会话）用 HTTP：`GET/POST /api/event-rules`、`PUT/DELETE /api/event-rules/:id`；`GET /api/events/catalog` 看事件清单，`GET /api/events/recent` 看最近事件与执行结果，`POST /api/events/test {type}` 空跑一个事件。
 
 ---
