@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { readConfiguration, desiredSession, configurationBusy, stageConfiguration } = require('../session/pending-configuration');
 const { normalizeSubagentInput } = require('../session/subagent');
+const { forkConfiguration } = require('../session/fork-configuration');
 const { selectionKey } = require('../chat/auto-provider-selection-key');
 const fs = require('fs');
 const path = require('path');
@@ -483,14 +484,17 @@ function createSessionProfileRoutes(rawDeps) {
         sliced = history.slice(0, idx + 1).map(m => ({ ...m }));
       }
 
-      // Create the forked session record, inheriting the source's CLI/provider/model/
-      // effort/native-agent/rolePrompt so it continues from the same backend.
+      // History may belong to an older shell execution than the composer. Read
+      // the composer's saved desired configuration, including next-turn edits.
+      const configSource = b.configurationSessionId == null ? src : persistedSessions.get(b.configurationSessionId);
+      if (!configSource || configSource.dirId !== src.dirId || configSource.kind !== 'chat'
+          || ['aux', 'gateway'].includes(configSource.type)) {
+        return res.status(400).json({ error: 'invalid fork configuration session' });
+      }
+      const { configuration, reset } = forkConfiguration(configSource, { validProviderId, validateProviderSelection, providers });
       const dir = directories.get(src.dirId);
       const r = await createSessionRecord({
-        dir, cli: src.cli, kind: 'chat', label: label || `${src.label || src.id} · fork`,
-        provider: src.provider == null ? undefined : src.provider,
-        providerSelection: providerSelectionDto(src.providerSelection),
-        model: src.model, effort: src.effort, agent: src.agent, rolePrompt: src.rolePrompt,
+        ...configuration, dir, kind: 'chat', label: label || `${src.label || src.id} · fork`,
         persistence: 'required', persistenceSource: 'http.fork-session-create',
       });
       if (!r.ok) return res.status(400).json({ error: r.error });
@@ -503,7 +507,8 @@ function createSessionProfileRoutes(rawDeps) {
         role: 'system',
         content: `Forked from session \`${src.id}\` (label: ${src.label || '—'}) at message \`${atMessageId || 'latest'}\`. ` +
                  `This session continues from that point; prior context above is the replayed transcript, ` +
-                 `and the source session's distilled memory has been copied into this session's memory folder.`,
+                 `and the source session's distilled memory has been copied into this session's memory folder.` +
+                 (reset ? ' Unavailable saved provider settings were reset to defaults for this new session.' : ''),
         ts: Date.now(),
         forkedFrom: { sessionId: src.id, atMessageId: atMessageId || null, atTs: sliced.length ? sliced[sliced.length - 1].ts : null },
       };
@@ -527,9 +532,6 @@ function createSessionProfileRoutes(rawDeps) {
         git: forkGitSnapshot,
       });
       sessionPersistence.mutate('http.fork-session-finalize', () => {
-        if (src.subagent && src.subagent.providerId && src.subagent.model) {
-          r.session.subagent = { providerId: src.subagent.providerId, model: src.subagent.model };
-        }
         r.session.pendingCliHandoff = {
           id: `fork_${crypto.randomBytes(8).toString('hex')}`,
           fromCli: src.cli,

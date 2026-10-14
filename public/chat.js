@@ -844,7 +844,7 @@ function attachForkButton(msgEl) {
     try {
       const owner = shellMessageOwner(msgEl);
       const d = await chatApi.json(withToken(`/api/sessions/${encodeURIComponent(owner.sessionId)}/fork`), {
-        method: 'POST', json: { atMessageId: owner.messageId },
+        method: 'POST', json: { atMessageId: owner.messageId, configurationSessionId: _sessionName },
       });
       const newId = d.sessionId;
       const n = d.replayedMessages || 0;
