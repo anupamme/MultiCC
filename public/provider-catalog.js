@@ -596,6 +596,8 @@
       builtinOfficial: value.builtinOfficial === true,
       isDefaultOfficial: value.isDefaultOfficial === true,
       needsLogin: value.needsLogin === true,
+      // 账号库条目 id：面板据此判断「账号线路」并给出重新登录入口。
+      officialAccountId: text(value.officialAccountId, 80) || null,
       limit: normalizeProviderLimit(value.limit),
     });
   }
