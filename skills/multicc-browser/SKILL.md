@@ -1,6 +1,6 @@
 ---
 name: multicc-browser
-description: 当用户需要 browser-use、网页交互或登录时，用 MultiCC 自带的 mbrowser 优先后台操作，复用已有 profile 和登录态，不抢前台焦点（专用 Chrome + 常驻 CDP 守护进程，多账号多会话隔离）；探测系统档位后可退到 BrowserAct/OpenClaw/Browser Harness 等只在用户明确点名时才用的备选。
+description: 当用户需要 browser-use、网页交互或登录时，用 MultiCC 自带的 mbrowser 优先后台操作，复用已有 profile 和登录态，默认不开窗口、不抢前台焦点（只有登录/扫码/授权对话框这类必须用户亲手做的步骤才给窗口，做完就交回后台）；专用 Chrome + 常驻 CDP 守护进程，多账号多会话隔离；探测系统档位后可退到 BrowserAct/OpenClaw/Browser Harness 等只在用户明确点名时才用的备选。
 ---
 
 # MultiCC 浏览器操控（mbrowser）
@@ -9,13 +9,32 @@ description: 当用户需要 browser-use、网页交互或登录时，用 MultiC
 
 `<skill_dir>` 指安装目录（通常是 `~/.agents/skills/multicc-browser`）。
 
+## 焦点契约：默认后台，只有必要时才出现窗口
+
+默认全程后台：启动、打开、点击、输入、截图、验证都不需要前台，也不需要看到窗口。抢焦点不是排错手段——页面不响应就查加载状态、重取快照。
+
+**只有两种情况允许出现可见窗口**，其余一律后台：
+
+1. 某一步必须由用户亲手完成：输入凭据、扫码、应答钥匙串/系统授权对话框；
+2. 用户明确说要看。
+
+想看页面就 `screenshot`；不要为了「看得清楚」而切有头、开窗口或置前。
+
+**用完立刻交回后台**，不要把窗口留在用户屏幕上：
+
+- 必要步骤一结束就 `mbrowser start NAME --headless`（登录态存在 profile 里，不会丢）；同一 profile 有其它会话的标签时不要强制重启，改为告知用户。
+- 收尾时自己开的有头窗口一律 `mbrowser stop NAME`；不要 `--all`，也不要动别的会话/别的任务留下的窗口。
+- 动手前先跑 `mbrowser doctor`：它标出**当前真的在屏幕上开着窗口**的 profile（`[window on screen]`）并给出交回命令；与本任务无关的不要碰。
+
+绝不做任何置前/激活动作：`Page.bringToFront`、`Target.activateTarget`、`/json/activate`、AppleScript `activate`、`open -a`、`cliclick`。
+
 ## 先选已有 profile，再后台操作
 
 1. 先运行 `mbrowser doctor` 和 `mbrowser profiles`，只读核对现有 profile、浏览器进程及路径。优先使用用户指定的身份/profile，其次本任务已确认的 profile 或 `MBROWSER_PROFILE`。不要每个任务都新建空 profile。
 2. 若 `mbrowser --help` 列出 `sites`，先用 `mbrowser sites <域名或URL>` 查已有站点记录；没有该命令时用 `profiles` 和已有任务信息判断，不要编造命令。站点记录只表示曾访问，不证明仍登录；进入页面后核对账号和登录状态。
 3. 优先复用符合目标账号的运行中 profile/CDP 连接；未运行时启动同一持久目录。多个候选且无法确定账号才请用户选择，不按“最近使用”盲选，也不遍历无关账号。只有确实没有合适的 profile 时才新建；个人 Chrome 的迁移规则见下文。
 4. profile 已运行时直接在本会话后台标签操作，不为切成 headless 重启它。未运行的托管 profile 默认无头启动，即使上次人工登录留下了有头配置；普通 `start NAME` 和页面命令都遵循这一规则。外部 `attach-only` 连接沿用原模式，不强制重启。不要 `--force`、杀进程或删锁来夺取在用目录。
-5. 自动化中不得调用 `Page.bringToFront`、`Target.activateTarget`、`/json/activate`、AppleScript `activate`、`open -a` 或其它置前/聚焦窗口动作。后台 CDP 截图、DOM 与输入不需要前台桌面；页面不响应时先检查加载状态、重取快照，不用抢焦点来“修复”。
+5. 前台与窗口的默认、例外和收尾义务见上「焦点契约」：默认后台，只有用户亲手完成的步骤（登录/扫码/授权弹窗）或用户明确要求时才出现窗口，用完交回后台。
 
 ## 快速开始
 
@@ -57,16 +76,16 @@ $MB text -p "$PROFILE"
 
 ## 登录与扫码
 
-先在已有 profile 中核对站点是否已登录；已登录就继续，不默认运行 `login`。扫码等可以通过后台截图完成时，按人工协助流程展示截图，保持当前浏览器模式。确实需要可见窗口时才使用 `login`，并只在已授权的流程中切换。已有可用窗口直接复用，让用户自行切到窗口和登录标签，不代为置前。
+先在已有 profile 中核对站点是否已登录；已登录就继续，不默认运行 `login`。扫码等可以通过后台截图完成时，按人工协助流程展示截图，保持当前浏览器模式。确实需要可见窗口时才使用 `login`（这是「必需」的一步，先跟用户说清为什么需要），并只在已授权的流程中切换。已有可用窗口直接复用，让用户自行切到窗口和登录标签，不代为置前。
 
 ```bash
 $MB login "$PROFILE" https://site.example/login   # 必须可见窗口时才执行
 # 登录页仍为后台标签，请用户自行切到窗口和该标签
-# 登录后可直接继续后台 CDP 操作，无须重启；只有确认可重启且无其它会话使用时才切无头
+# 用户说登录完成后立刻按焦点契约交回后台：
 $MB start "$PROFILE" --headless
 ```
 
-切换 headless/有头会重启 Chrome；共享 profile 或有其它会话标签时不要强制切换。人工步骤按 `../multicc-human-assist/SKILL.md` 保存截图并等待用户处理；同一步失败两次就请求协助，不循环开窗口。
+`login` 留下的窗口是临时的：用户一确认登录完成就 `start --headless` 交回后台（登录态在 profile 里，不丢）；同一 profile 有其它会话的标签时不要强制重启，改为告知用户。切换 headless/有头会重启 Chrome；人工步骤按 `../multicc-human-assist/SKILL.md` 保存截图并等待用户处理；同一步失败两次就请求协助，不循环开窗口。
 
 登录态保存在 profile 目录（macOS：`~/Library/Application Support/MultiCC/browser-use/<name>`，与旧的本地 Browser Use 同一批目录），重启 MultiCC、守护进程升级都不丢。登录、导入登录态、提交表单、上传文件、购买、对外发布前，都要按具体动作取得用户确认。
 
@@ -96,7 +115,7 @@ $MB start "$PROFILE" --headless
 
 ## MultiCC Agent 桌面后备（须明确同意）
 
-MultiCC Agent 能截图、按 AX 元素点击/输入，但没有网页 DOM，不能证明网页操作成功，也不改变浏览器内核的最低系统要求。**只有用户明确同意转为前台桌面操作**时才改用 `multicc-computer-use`，不要把它当成 CDP 失败的静默回退。细节见 [本地 Browser Use 适配](references/browser-use-local.md)。
+MultiCC Agent 能截图、按 AX 元素点击/输入，但没有网页 DOM，不能证明网页操作成功，也不改变浏览器内核的最低系统要求。**只有用户明确同意转为前台桌面操作**时才改用 `multicc-computer-use`（前台操作会占住用户的屏幕和输入，属于「必需」之外的最后手段），不要把它当成 CDP 失败的静默回退。细节见 [本地 Browser Use 适配](references/browser-use-local.md)。
 
 ## 安全红线
 
