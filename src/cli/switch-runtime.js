@@ -421,6 +421,9 @@ function createCliSwitchRuntime(options) {
     const name = CLI_CMD_ENV[cli];
     const value = name ? String(pinEnv[name] || '').trim() : '';
     if (!value || (cmd && value !== cmd)) return null;
+    // 固定的路径本身就是官方原生安装(如 ~/.local/bin/claude 软链): 升级走它自带的
+    // `<path> update`, 作用到的正是这份, 软链随之改指新版 —— 这种固定无害, 不提示「取消固定」。
+    if (nativeSelfUpgradeCommand(value, cli)) return null;
     return { env: name, path: value };
   }
 

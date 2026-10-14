@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -1457,6 +1458,20 @@ test('versions reports a pinned *_CMD so the panel can warn before upgrading', a
   const { harness } = pinHarness();
   const res = await harness.invokeVersions();
   assert.deepEqual(res.body.versions.codex.pinned, { env: 'CODEX_CMD', path: '/bin/codex' });
+});
+
+test('a *_CMD pin on the official native install is harmless, so versions does not report it as pinned', async () => {
+  const native = path.join(os.homedir(), '.local', 'bin', 'claude');
+  const harness = createHarness({
+    env: { CLAUDE_CMD: native },
+    cliCommands: { claude: native },
+    execFileVersion: (cmd, args, _o, cb) => cb(null, '2.1.296 (Claude Code)', ''),
+    fetchLatestVersion: async () => '2.1.299',
+    availability: { claude: { available: true } },
+  });
+  const res = await harness.invokeVersions();
+  assert.equal(res.body.versions.claude.pinned, null);
+  assert.equal(res.body.versions.claude.updateAvailable, true);
 });
 
 test('an upgrade that lands elsewhere is attributed to the pin, not to a failed install', async () => {
