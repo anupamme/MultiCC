@@ -54,7 +54,7 @@ aux_runs/
 notes.json
 ui-layout.json
 chat_history/
-events/
+/events/
 logs/
 artifacts/
 detached/
@@ -78,6 +78,7 @@ token_by_role.json
 push_subscriptions.json
 bark-devices.json
 push_notification_receipts.json
+event_rules.json
 voice_examples.json
 wechat-config.json
 phtunnel-monitor.sh
