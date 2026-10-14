@@ -96,7 +96,9 @@ func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
 let automationEventSource = CGEventSource(stateID: .privateState)
 
 func deliverAutomationEvent(_ e: CGEvent, pid: pid_t?) {
+  humanInput.notePosted(at: inputClock())
   if let pid = pid { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
+  humanInput.notePosted(at: inputClock())
 }
 
 func post(_ e: CGEvent?, pid: pid_t? = nil, flags: CGEventFlags = []) {
@@ -991,6 +993,7 @@ final class HumanInputGate {
   private var held = Set<Int>()
   private var active = false
   private var visibleUntil = -Double.infinity
+  private var lastSelfPost = -Double.infinity
   static let quietSeconds = 0.8
   static let countdownSeconds = 3.0
   var isActive: Bool { lock.lock(); defer { lock.unlock() }; return active }
@@ -1002,6 +1005,10 @@ final class HumanInputGate {
       if down { held.insert(token) } else { held.remove(token) }
     }
   }
+  // Events this agent posted to the HID tap also advance the hardware idle
+  // clock and key/button state, so without a taps they look like the user.
+  func notePosted(at now: Double) { lock.lock(); lastSelfPost = now; lock.unlock() }
+  func selfPostAge(at now: Double) -> Double { lock.lock(); defer { lock.unlock() }; return now - lastSelfPost }
   func begin(at now: Double) { lock.lock(); active = true; visibleUntil = now; lock.unlock() }
   func end(at now: Double) { lock.lock(); active = false; visibleUntil = now + 1; lock.unlock() }
   func releaseMissing(_ isDown: (Int) -> Bool) {
@@ -1081,9 +1088,15 @@ func sampleHumanInput() {
   // An event can remain held without producing new events (e.g. mouse down).
   let heldButton = (0...2).contains { CGEventSource.buttonState(.hidSystemState, button: CGMouseButton(rawValue: UInt32($0))!) }
   let heldKey = (0..<128).contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
-  if heldButton || heldKey { humanInput.input(at: now); return }
+  // Our own HID-tap posts move the hardware clock and key state too. Without
+  // taps (which filter by EVENT_MARK) attribute that to us, else the AI's own
+  // click/typing in apps like WeChat pauses it forever waiting on itself.
+  let selfAge = humanInput.selfPostAge(at: now)
+  if (heldButton || heldKey) && selfAge >= 1.0 { humanInput.input(at: now); return }
+  if heldButton || heldKey { return }
   guard !escTaps.contains(where: { $0.port.map { CGEvent.tapIsEnabled(tap: $0) } ?? false }) else { return }
   let age = HUMAN_EVENT_TYPES.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
+  if age >= selfAge - 0.25 { return }  // newest hardware event is ours
   if age < HumanInputGate.quietSeconds + HumanInputGate.countdownSeconds { humanInput.input(at: now - age) }
 }
 
