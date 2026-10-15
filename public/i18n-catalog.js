@@ -4574,7 +4574,8 @@ window.MULTICC_I18N_CATALOG = {
     "hookNewTitle": "新会话标题（可选，默认用规则名称）",
     "hookNewHint": "每次触发都会新建一个会话，并把下面的指令连同来源信息发给它。",
     "hookTargetNew": "新建会话",
-    "hookTargetSession": "会话 {id}"
+    "hookTargetSession": "会话 {id}",
+    "hookSessionSearch": "搜索会话（标题或工作区名）"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9150,6 +9151,7 @@ window.MULTICC_I18N_CATALOG = {
     "hookNewTitle": "Title of the new session (optional; defaults to the rule name)",
     "hookNewHint": "Each firing creates a new session and sends it the instruction below with the source details.",
     "hookTargetNew": "new session",
-    "hookTargetSession": "session {id}"
+    "hookTargetSession": "session {id}",
+    "hookSessionSearch": "Search sessions (title or workspace)"
   }
 };

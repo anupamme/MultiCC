@@ -96,7 +96,9 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
       h('div', { class: 'hook-head' }, h('h2', { id: 'hook-title' }),
         h('button', { type: 'button', id: 'hook-close', 'aria-label': tr('airDlgClose') }, '×')),
       h('label', { id: 'hook-scope-row' }, h('span', { text: tr('hookScope') }),
-        h('select', { name: 'scope' }), h('select', { name: 'scopeSession' })),
+        h('select', { name: 'scope' }),
+        h('input', { type: 'search', name: 'scopeFilter', placeholder: tr('hookSessionSearch'), autocomplete: 'off' }),
+        h('select', { name: 'scopeSession' })),
       h('label', {}, h('span', { text: tr('hookName') }), h('input', { type: 'text', name: 'name', maxlength: '80' })),
       h('fieldset', {}, h('legend', { text: tr('hookWhen') }), events,
         h('label', { class: 'hook-check' }, h('input', { type: 'checkbox', name: 'skipCancelled' }),
@@ -112,7 +114,9 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
         h('label', { class: 'hook-check' }, h('input', { type: 'checkbox', name: 'includeConclusion' }),
           h('span', { text: tr('hookIncludeConclusion') }))),
       h('div', { 'data-kind': 'inject-prompt' },
-        h('label', {}, h('span', { text: tr('hookInjectTarget') }), h('select', { name: 'target' })),
+        h('label', {}, h('span', { text: tr('hookInjectTarget') }),
+          h('input', { type: 'search', name: 'targetFilter', placeholder: tr('hookSessionSearch'), autocomplete: 'off' }),
+          h('select', { name: 'target' })),
         h('div', { 'data-newsession': true },
           h('label', {}, h('span', { text: tr('hookNewDir') }), h('select', { name: 'newDir' })),
           h('label', {}, h('span', { text: tr('hookNewCli') }), h('select', { name: 'newCli' })),
@@ -134,6 +138,8 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
 
     form.elements.kind.onchange = syncKind;
     form.elements.target.onchange = syncTarget;
+    form.elements.targetFilter.oninput = () => renderFiltered(form.elements.target);
+    form.elements.scopeFilter.oninput = () => renderFiltered(form.elements.scopeSession);
     form.elements.scope.onchange = syncScope;
     form.querySelector('#hook-close').onclick = () => dialog.close();
     form.querySelector('#hook-cancel').onclick = () => dialog.close();
@@ -153,7 +159,9 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
   }
 
   function syncScope() {
-    form.elements.scopeSession.hidden = form.elements.scope.value !== 'session' || Boolean(session);
+    const scoped = form.elements.scope.value === 'session' && !session;
+    form.elements.scopeSession.hidden = !scoped;
+    form.elements.scopeFilter.hidden = !scoped || (form.elements.scopeSession._rest || []).length < 2;
   }
 
   function fillOptions(select, options, selected) {
@@ -165,7 +173,6 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
 
   // 能接收注入的是聊天会话：它们是任务专属会话（task.sessionId），不在 /api/sessions 里；
   // 那里只有终端 / 登录终端 / aux，终端收不了指令，所以不能拿它当来源。
-  const MAX_SESSION_CHOICES = 80;
   async function loadSessions() {
     try {
       const air = await request('/api/air');
@@ -173,7 +180,6 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
       return ((air && air.tasks) || [])
         .filter(task => task && task.sessionId && !task.readOnly && task.status !== 'archived')
         .sort((a, b) => (b.lastMessageAt || b.updatedAt || 0) - (a.lastMessageAt || a.updatedAt || 0))
-        .slice(0, MAX_SESSION_CHOICES)
         .map(task => ({ id: task.sessionId, label: `${task.title || task.sessionId}（${dirName.get(task.dirId) || '—'}）` }));
     } catch (_) { return []; }
   }
@@ -190,6 +196,25 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
       const catalog = await request('/api/events/catalog');
       return Array.isArray(catalog && catalog.clis) ? catalog.clis : [];
     } catch (_) { return []; }
+  }
+
+  // 会话很多时靠过滤框找：固定项（沿用 / 新建 / 全局）与当前选中项永远保留，其余按
+  // 标题或工作区名做不区分大小写的子串匹配。选项全集挂在 select 上，输入时重建。
+  function fillFiltered(select, filter, pinned, rest, selected) {
+    select._pinned = pinned;
+    select._rest = rest;
+    filter.value = '';
+    fillOptions(select, [...pinned, ...rest], selected);
+    filter.hidden = rest.length < 2;
+  }
+
+  function renderFiltered(select) {
+    const filter = form.elements[select.name === 'target' ? 'targetFilter' : 'scopeFilter'];
+    const query = filter.value.trim().toLowerCase();
+    const current = select.value;
+    const matched = (select._rest || []).filter(([value, label]) =>
+      !query || value === current || String(label).toLowerCase().includes(query));
+    fillOptions(select, [...(select._pinned || []), ...matched], current);
   }
 
   async function loadSecrets() {
@@ -221,16 +246,18 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     scopeRow.hidden = Boolean(session);
     fillOptions(form.elements.scope, [['global', tr('hookScopeGlobal')], ['session', tr('hookScopeSession')]],
       item ? item.scope : 'global');
-    fillOptions(form.elements.scopeSession, sessionChoices, item && item.sessionId ? item.sessionId : '');
+    fillFiltered(form.elements.scopeSession, form.elements.scopeFilter, [], sessionChoices, item && item.sessionId ? item.sessionId : '');
     form.elements.scope.disabled = Boolean(item);
     form.elements.scopeSession.disabled = Boolean(item);
 
-    const targets = [['', tr('hookInjectSource')], [NEW_SESSION, tr('hookInjectNew')], ...sessionChoices];
     // 编辑时目标会话可能已被删除：保留它的 id 当选项，免得静默改成“触发事件的会话”。
-    if (action.targetSessionId && !targets.some(([value]) => value === action.targetSessionId)) {
-      targets.push([action.targetSessionId, action.targetSessionId]);
+    const rest = sessionChoices.slice();
+    if (action.targetSessionId && !rest.some(([value]) => value === action.targetSessionId)) {
+      rest.push([action.targetSessionId, action.targetSessionId]);
     }
-    fillOptions(form.elements.target, targets, action.newSession ? NEW_SESSION : (action.targetSessionId || ''));
+    fillFiltered(form.elements.target, form.elements.targetFilter,
+      [['', tr('hookInjectSource')], [NEW_SESSION, tr('hookInjectNew')]], rest,
+      action.newSession ? NEW_SESSION : (action.targetSessionId || ''));
     const spec = action.newSession || {};
     fillOptions(form.elements.newDir, [['', tr('hookNewDirSource')], ...dirChoices], spec.dirId || '');
     fillOptions(form.elements.newCli, [['', tr('hookNewCliSource')], ...cliChoices.map(cli => [cli, cli])], spec.cli || '');

@@ -14,11 +14,9 @@ import 'settings_service.dart';
 /// 「注入到 / 作用范围」下拉的一个选项。
 typedef HookChoice = ({String id, String label});
 
-/// 下拉里最多列多少个会话（按最近活动倒序），其余靠已选目标保留。
-const int kHookMaxSessionChoices = 80;
-
 /// 能接收注入的是聊天会话 = 任务专属会话（有 sessionId）。终端、登录终端、aux 收不了
 /// 指令，已归档 / 只读的历史任务也不该出现；快照里的 `sessions` 只有终端，不能当来源。
+/// 按最近活动倒序，全部列出；数量多靠选择器里的搜索框找。
 List<HookChoice> hookSessionChoices(AirSnapshot snapshot) {
   final dirName = {for (final d in snapshot.directories) d.id: d.name};
   final tasks =
@@ -29,7 +27,7 @@ List<HookChoice> hookSessionChoices(AirSnapshot snapshot) {
           .toList()
         ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
   return [
-    for (final t in tasks.take(kHookMaxSessionChoices))
+    for (final t in tasks)
       (
         id: t.sessionId!,
         label:

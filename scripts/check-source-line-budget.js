@@ -393,9 +393,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
     // +5 键（airCliUpdatePinned/Unpin*）：*_CMD 钉住派生路径时的升级前提示与「改用新版」，实测 9014/573401。
     // +62 键（hook*）：钩子/触发器 UI（会话页头 🪝、触发器任务 tab、共用规则表单），实测 9138/579516。
-    // +9 键（hookInject*/hookNew*/hookTarget*）：触发器注入目标可选「指定会话 / 新建会话」，实测 9156/580615。
-    maxLines: 9156,
-    maxBytes: 580615,
+    // +10 键（hookInject*/hookNew*/hookTarget*/hookSessionSearch）：触发器注入目标可选「指定会话 / 新建会话」并可搜索，实测 9158/580724。
+    maxLines: 9158,
+    maxBytes: 580724,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
