@@ -189,6 +189,7 @@ void main() {
     WidgetTester tester, {
     HookItem? item,
     required EventTriggerService svc,
+    List<HookChoice> sessions = const [(id: 's2', label: '测试会话（营销仓）')],
   }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -199,7 +200,7 @@ void main() {
           body: HookEditor(
             service: svc,
             item: item,
-            sessions: const [(id: 's2', label: '测试会话')],
+            sessions: sessions,
             dirs: const [(id: 'd2', label: '营销仓')],
             clis: const ['claude', 'codex'],
           ),
@@ -229,7 +230,7 @@ void main() {
       expect(find.text('新会话使用的 CLI'), findsOneWidget);
       await pick(tester, '触发事件所在的工作区', '营销仓');
       await pick(tester, '与触发事件的会话相同', 'codex');
-        await tapVisible(tester, find.text('保存'));
+      await tapVisible(tester, find.text('保存'));
 
       final post = calls.firstWhere((c) => c.method == 'POST');
       expect(post.url.path, '/api/event-rules');
@@ -252,7 +253,7 @@ void main() {
     await openSheet(tester, svc: svc);
     await tapVisible(tester, find.text('出错或被中止'));
     await pick(tester, '通知我', '给会话注入指令');
-    await pick(tester, '触发事件的会话', '测试会话');
+    await pick(tester, '触发事件的会话', '测试会话（营销仓）');
     expect(find.text('新会话所在工作区'), findsNothing);
     await tapVisible(tester, find.text('保存'));
     final post = calls.firstWhere((c) => c.method == 'POST');
@@ -341,4 +342,91 @@ void main() {
     expect(find.text('注入到：会话 s7'), findsOneWidget);
     expect(find.text('注入到：触发事件的会话'), findsOneWidget, reason: '最初那条没指定目标');
   });
+
+  List<HookChoice> many() => [
+    for (var n = 0; n < 120; n++)
+      (id: 's$n', label: '会话-$n（${n.isOdd ? '主仓' : '营销仓'}）'),
+  ];
+
+  testWidgets(
+    'session picker: search by title or workspace, pinned stay, pick posts the id',
+    (tester) async {
+      final svc = await service();
+      await openSheet(tester, svc: svc, sessions: many());
+      await tapVisible(tester, find.text('出错或被中止'));
+      await pick(tester, '通知我', '给会话注入指令');
+
+      await tapVisible(tester, find.text('触发事件的会话'));
+      expect(find.text('搜索会话（标题或工作区名）'), findsOneWidget);
+      expect(find.text('新建会话（每次触发新建一个）'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).last, '会话-11');
+      await tester.pumpAndSettle();
+      expect(find.text('会话-11（主仓）'), findsOneWidget);
+      expect(find.text('会话-110（营销仓）'), findsOneWidget);
+      expect(find.text('会话-5（主仓）'), findsNothing, reason: '不匹配的被过滤');
+      expect(find.text('触发事件的会话'), findsWidgets, reason: '固定项搜索时也保留');
+
+      await tester.enterText(find.byType(TextField).last, '营销仓');
+      await tester.pumpAndSettle();
+      expect(find.text('会话-0（营销仓）'), findsOneWidget);
+      expect(find.text('会话-1（主仓）'), findsNothing, reason: '按工作区名搜');
+
+      await tester.enterText(find.byType(TextField).last, '会话-40');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('会话-40（营销仓）'));
+      await tester.pumpAndSettle();
+      expect(find.text('会话-40（营销仓）'), findsOneWidget, reason: '选中后字段显示它');
+
+      await tapVisible(tester, find.text('保存'));
+      final post = calls.firstWhere((c) => c.method == 'POST');
+      final action =
+          (jsonDecode(post.body) as Map<String, dynamic>)['action'] as Map;
+      expect(action['targetSessionId'], 's40');
+    },
+  );
+
+  test(
+    'filterHookChoices keeps the selected item even when it does not match',
+    () {
+      final all = many();
+      expect(filterHookChoices(all, '', selected: 's3'), hasLength(120));
+      final out = filterHookChoices(all, 'zzz', selected: 's3');
+      expect(out.map((c) => c.id), ['s3']);
+      expect(
+        filterHookChoices(all, '  营销仓 ').every((c) => c.label.contains('营销仓')),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'editing with a deleted target session keeps its id instead of resetting',
+    (tester) async {
+      final svc = await service();
+      final item = HookItem.fromJson({
+        'scope': 'global',
+        'sessionId': null,
+        'rule': {
+          'id': 'g8',
+          'enabled': true,
+          'on': ['task.done'],
+          'filter': {},
+          'action': {
+            'kind': 'inject-prompt',
+            'prompt': 'p',
+            'targetSessionId': 'gone-1',
+          },
+        },
+        'lastRun': null,
+      });
+      await openSheet(tester, item: item, svc: svc);
+      expect(find.text('gone-1'), findsOneWidget);
+      await tapVisible(tester, find.text('保存'));
+      final put = calls.firstWhere((c) => c.method == 'PUT');
+      final action =
+          (jsonDecode(put.body) as Map<String, dynamic>)['action'] as Map;
+      expect(action['targetSessionId'], 'gone-1');
+    },
+  );
 }

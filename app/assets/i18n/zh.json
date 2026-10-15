@@ -4572,5 +4572,6 @@
   "hookNewTitle": "新会话标题（可选，默认用规则名称）",
   "hookNewHint": "每次触发都会新建一个会话，并把下面的指令连同来源信息发给它。",
   "hookTargetNew": "新建会话",
-  "hookTargetSession": "会话 {id}"
+  "hookTargetSession": "会话 {id}",
+  "hookSessionSearch": "搜索会话（标题或工作区名）"
 }

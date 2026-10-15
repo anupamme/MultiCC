@@ -271,6 +271,61 @@ test('hook form: inject into a specific session, and blank new-session follows t
   });
 });
 
+test('hook form: many sessions are searchable by title or workspace; pinned and selected stay', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  const routes = staticRoutes();
+  // 120 个会话：序号 0..119，奇数在「主仓」、偶数在「营销仓」，标题 会话-<n>。
+  routes['/api/air'] = () => json({
+    ok: true, directories: [{ id: 'd1', name: '主仓' }, { id: 'd2', name: '营销仓' }], clis: [], migration: { errors: [] },
+    tasks: Array.from({ length: 120 }, (_, n) => ({ id: `t${n}`, sessionId: `s${n}`, title: `会话-${n}`,
+      dirId: n % 2 ? 'd1' : 'd2', status: 'active', readOnly: false, lastMessageAt: 1000 - n })),
+    sessions: [],
+  });
+  routes['/api/sessions/s0/triggers'] = () => json({ triggers: [] });
+  routes['POST /api/sessions/s0/triggers'] = () => json({ id: 't9' });
+  routes['/stub.html'] = { headers: { 'content-type': 'text/html' }, body: `<!doctype html><meta charset="utf-8"><body>
+    <button id="hook-btn">钩子</button>
+    <script src="/i18n-catalog.js"></script><script src="/i18n.js"></script><script src="/error-envelope.js"></script>
+    <script src="/api-client.js"></script><script src="/hook-editor.js"></script><script src="/chat-hooks.js"></script></body>` };
+  await withCdpHarness({ routes, screenshotDir: path.join(os.tmpdir(), 'multicc-hooks-ui') }, async page => {
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await page.navigate('/stub.html?session=s0');
+    await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    const F = `document.querySelector('.hook-dialog form')`;
+    const options = () => page.evaluate(`[...${F}.elements.target.options].map(o => o.value)`);
+    const filter = text => page.evaluate(`(() => { const f = ${F}; f.elements.targetFilter.value = ${JSON.stringify(text)}; f.elements.targetFilter.oninput(); })()`);
+    await page.evaluate(`(() => { const f = ${F}; f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); })()`);
+
+    assert.equal((await options()).length, 122, '不再截断：120 个会话 + 沿用 + 新建');
+    assert.equal(await page.evaluate(`getComputedStyle(${F}.elements.targetFilter).display`) === 'none', false, '会话多时露出搜索框');
+
+    await filter('会话-11');   // 会话-11 / 会话-110..119
+    const hit = await options();
+    assert.deepEqual(hit.slice(0, 2), ['', '__new__'], '沿用 / 新建 始终保留在最前');
+    assert.deepEqual(hit.slice(2), ['s11', ...Array.from({ length: 10 }, (_, n) => `s${110 + n}`)]);
+
+    await filter('营销仓');    // 按工作区名搜：偶数序号
+    assert.equal((await options()).length, 2 + 60);
+    await filter('不存在的词');
+    assert.deepEqual(await options(), ['', '__new__'], '没有匹配时只剩固定项');
+
+    // 先选中再收窄：当前选中项不会被过滤掉。
+    await filter('');
+    await page.evaluate(`(() => { const f = ${F}; f.elements.target.value = 's5'; })()`);
+    await filter('营销仓');
+    assert.ok((await options()).includes('s5'), '当前选中的 s5 在「营销仓」过滤下仍保留');
+    assert.equal(await page.evaluate(`${F}.elements.target.value`), 's5');
+
+    // 过滤后选另一项并保存：请求体里是它的 id。
+    await page.evaluate(`(() => { const f = ${F}; f.querySelectorAll('input[name=ev]').forEach(b => { b.checked = b.value === 'task.failed'; });
+      f.elements.prompt.value = 'p'; f.elements.target.value = 's40'; })()`);
+    await click(page, `document.getElementById('hook-save')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog').open === false`));
+    assert.equal(JSON.parse(requestsOf(page, 'POST', '/api/sessions/s0/triggers')[0].body).action.targetSessionId, 's40');
+  });
+});
+
 test('chat.html and chat.js wire the hook button, scripts and refresh call', () => {
   const html = fs.readFileSync(path.join(PUBLIC, 'chat.html'), 'utf8');
   const chat = fs.readFileSync(path.join(PUBLIC, 'chat.js'), 'utf8');

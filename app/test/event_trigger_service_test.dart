@@ -384,16 +384,16 @@ void main() {
     ]);
   });
 
-  test('hookSessionChoices caps the list at the most recent sessions', () {
-    final snapshot = AirSnapshot.fromJson({
-      'tasks': [
-        for (var i = 0; i < kHookMaxSessionChoices + 20; i++)
-          task('t$i', 's$i', last: i),
-      ],
-    });
-    final choices = hookSessionChoices(snapshot);
-    expect(choices, hasLength(kHookMaxSessionChoices));
-    expect(choices.first.id, 's${kHookMaxSessionChoices + 19}');
-    expect(choices.last.label, contains('（—）'), reason: '没有工作区名时用 —');
-  });
+  test(
+    'hookSessionChoices lists every session, no cap (search narrows it)',
+    () {
+      final snapshot = AirSnapshot.fromJson({
+        'tasks': [for (var i = 0; i < 300; i++) task('t$i', 's$i', last: i)],
+      });
+      final choices = hookSessionChoices(snapshot);
+      expect(choices, hasLength(300));
+      expect(choices.first.id, 's299', reason: '最近活动在前');
+      expect(choices.last.label, contains('（—）'), reason: '没有工作区名时用 —');
+    },
+  );
 }

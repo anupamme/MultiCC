@@ -554,23 +554,65 @@ class _HookEditorState extends State<HookEditor> {
     ),
   );
 
+  /// 会话很多时用的选择器：点一下弹出带搜索框的列表，按标题或工作区名过滤。
+  Widget _choiceField({
+    required String title,
+    required String value,
+    required List<HookChoice> pinned,
+    required List<HookChoice> choices,
+    required ValueChanged<String> onChanged,
+  }) {
+    final all = [...pinned, ...choices];
+    final current = all.where((c) => c.id == value);
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () async {
+        final picked = await showHookChoicePicker(
+          context,
+          title: title,
+          pinned: pinned,
+          choices: choices,
+          selected: value,
+        );
+        if (picked != null) onChanged(picked);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.panel2,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                current.isEmpty ? value : current.first.label,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const Icon(Icons.search_rounded, size: 18, color: AppColors.faint),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
-    final sessionItems = <DropdownMenuItem<String>>[
-      for (final s in widget.sessions)
-        DropdownMenuItem(
-          value: s.id,
-          child: Text(s.label, overflow: TextOverflow.ellipsis),
-        ),
-    ];
-    // 编辑时目标会话可能不在列表里（已删除）；保持当前值，免得 Dropdown 断言。
-    final targetValue =
-        _target.isEmpty ||
-            _target == kHookNewSession ||
-            sessionItems.any((i) => i.value == _target)
-        ? _target
-        : '';
+    // 作用范围 / 注入目标的会话选项。编辑时目标会话可能已被删除：把它的 id 当选项保留，
+    // 免得静默改成“触发事件的会话”（与网页一致）。
+    final sessionChoices = <HookChoice>[...widget.sessions];
+    if (_target.isNotEmpty &&
+        _target != kHookNewSession &&
+        !sessionChoices.any((c) => c.id == _target)) {
+      sessionChoices.add((id: _target, label: _target));
+    }
+    if (_scopeSession.isNotEmpty &&
+        !sessionChoices.any((c) => c.id == _scopeSession)) {
+      sessionChoices.add((id: _scopeSession, label: _scopeSession));
+    }
     // 工作区 / CLI 在列表里找不到（已删除、后端版本较旧）时回退到“沿用”，免得 Dropdown 断言。
     final dirValue = widget.dirs.any((d) => d.id == _newDir) ? _newDir : '';
     final cliValue = widget.clis.contains(_newCli) ? _newCli : '';
@@ -603,12 +645,11 @@ class _HookEditorState extends State<HookEditor> {
             const SizedBox(height: 16),
             if (_editing == null) ...[
               _label('作用范围'),
-              _dropdown(
+              _choiceField(
+                title: '作用范围',
                 value: _scopeSession,
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('全局（所有会话）')),
-                  ...sessionItems,
-                ],
+                pinned: const [(id: '', label: '全局（所有会话）')],
+                choices: sessionChoices,
                 onChanged: (v) => setState(() => _scopeSession = v),
               ),
               const SizedBox(height: 14),
@@ -674,16 +715,14 @@ class _HookEditorState extends State<HookEditor> {
               ),
             ] else ...[
               _label('注入到'),
-              _dropdown(
-                value: targetValue,
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('触发事件的会话')),
-                  const DropdownMenuItem(
-                    value: kHookNewSession,
-                    child: Text('新建会话（每次触发新建一个）'),
-                  ),
-                  ...sessionItems,
+              _choiceField(
+                title: '注入到',
+                value: _target,
+                pinned: const [
+                  (id: '', label: '触发事件的会话'),
+                  (id: kHookNewSession, label: '新建会话（每次触发新建一个）'),
                 ],
+                choices: sessionChoices,
                 onChanged: (v) => setState(() => _target = v),
               ),
               if (_target == kHookNewSession) ...[
@@ -775,6 +814,143 @@ class _HookEditorState extends State<HookEditor> {
                   child: Text(_saving ? '保存中…' : '保存'),
                 ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 过滤：固定项永远保留；会话按标题或工作区名做不区分大小写的子串匹配，当前选中项
+/// 即使不匹配也保留（与网页 hook-editor.js 一致）。
+List<HookChoice> filterHookChoices(
+  List<HookChoice> choices,
+  String query, {
+  String selected = '',
+}) {
+  final q = query.trim().toLowerCase();
+  if (q.isEmpty) return choices;
+  return [
+    for (final c in choices)
+      if (c.id == selected || c.label.toLowerCase().contains(q)) c,
+  ];
+}
+
+/// 弹出搜索选择器；返回选中的 id，取消返回 null。
+Future<String?> showHookChoicePicker(
+  BuildContext context, {
+  required String title,
+  required List<HookChoice> pinned,
+  required List<HookChoice> choices,
+  required String selected,
+}) {
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.panel,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+    ),
+    builder: (_) => _HookChoicePicker(
+      title: title,
+      pinned: pinned,
+      choices: choices,
+      selected: selected,
+    ),
+  );
+}
+
+class _HookChoicePicker extends StatefulWidget {
+  final String title;
+  final List<HookChoice> pinned;
+  final List<HookChoice> choices;
+  final String selected;
+  const _HookChoicePicker({
+    required this.title,
+    required this.pinned,
+    required this.choices,
+    required this.selected,
+  });
+
+  @override
+  State<_HookChoicePicker> createState() => _HookChoicePickerState();
+}
+
+class _HookChoicePickerState extends State<_HookChoicePicker> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    final matched = filterHookChoices(
+      widget.choices,
+      _query,
+      selected: widget.selected,
+    );
+    final rows = [...widget.pinned, ...matched];
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottom),
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      color: AppColors.textBright,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    autofocus: false,
+                    onChanged: (v) => setState(() => _query = v),
+                    decoration: InputDecoration(
+                      hintText: '搜索会话（标题或工作区名）',
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      isDense: true,
+                      filled: true,
+                      fillColor: AppColors.panel2,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: AppColors.line),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: rows.length,
+                itemBuilder: (_, i) {
+                  final c = rows[i];
+                  final on = c.id == widget.selected;
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      c.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: on
+                        ? const Icon(
+                            Icons.check_rounded,
+                            size: 18,
+                            color: AppColors.accent,
+                          )
+                        : null,
+                    onTap: () => Navigator.pop(context, c.id),
+                  );
+                },
+              ),
             ),
           ],
         ),
