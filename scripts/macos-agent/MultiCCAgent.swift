@@ -1081,7 +1081,7 @@ final class ComputerUseHUD: NSObject {
 
   func update() {
     let state = humanInput.snapshot(at: inputClock())
-    guard state.visible else { panel?.orderOut(nil); previous = ""; return }
+    guard state.visible || control.automationLeaseActive else { panel?.orderOut(nil); previous = ""; return }
     if panel == nil { build() }
     let halted = control.isHalted
     let text = halted ? "已取消 · 自动操作已停止" : (state.phase == "paused" ? "已暂停" : "AI 正在操作")
@@ -1141,6 +1141,14 @@ final class Control {
     lock.lock(); defer { lock.unlock() }
     if !halted { log("cancelled from the control bar: computer use stopped") }
     halted = true; haltedAt = Date()
+  }
+  // An AI session still holds the lease (renewed by each operation, dropped by
+  // release): the control bar stays up through the model's thinking time between
+  // operations instead of flashing like a toast. Manual remote control is not AI.
+  var automationLeaseActive: Bool {
+    lock.lock(); defer { lock.unlock() }
+    if let h = leaseHolder, h != "remote-screen", leaseUntil > Date() { return true }
+    return false
   }
   func resume(_ session: String) { lock.lock(); halted = false; lock.unlock(); log("resumed by \(session)") }
 
@@ -2708,7 +2716,10 @@ func serve() -> Never {
     computerUseHUD.update()
   }
   Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in installEscMonitor() }
-  RunLoop.main.run()
+  // Must be AppKit's loop, not a bare RunLoop: only NSApplication.run() pulls
+  // mouse events off the queue and hands them to windows, which the control
+  // bar's buttons and dragging depend on. Timers and event taps keep working.
+  NSApp.run()
   exit(0)
 }
 
