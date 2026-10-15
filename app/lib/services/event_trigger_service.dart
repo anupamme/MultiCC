@@ -86,6 +86,11 @@ class HookRule {
 
   String get kind => (action['kind'] ?? '').toString();
   bool get skipCancelled => filter['cancelled'] == false;
+  HookNewSession? get newSession => action['newSession'] is Map
+      ? HookNewSession.fromJson(
+          (action['newSession'] as Map).cast<String, dynamic>(),
+        )
+      : null;
 
   factory HookRule.fromJson(Map<String, dynamic> j) => HookRule(
     id: (j['id'] ?? '').toString(),
@@ -127,6 +132,26 @@ class HookItem {
   );
 }
 
+/// 「新建会话」目标：工作区 / CLI 留空 = 沿用触发事件的会话，标题留空 = 规则名称。
+class HookNewSession {
+  final String dirId;
+  final String cli;
+  final String title;
+  const HookNewSession({this.dirId = '', this.cli = '', this.title = ''});
+
+  factory HookNewSession.fromJson(Map<String, dynamic> j) => HookNewSession(
+    dirId: (j['dirId'] ?? '').toString(),
+    cli: (j['cli'] ?? '').toString(),
+    title: (j['title'] ?? '').toString(),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'dirId': dirId,
+    'cli': cli,
+    'title': title.trim(),
+  };
+}
+
 /// 编辑器提交的规则草稿。[toJson] 即后端期望的请求体。
 class HookDraft {
   final String name;
@@ -139,6 +164,10 @@ class HookDraft {
   final bool includeConclusion;
   final String prompt;
   final String targetSessionId;
+
+  /// 非 null = 每次触发新建一个会话再注入（与 [targetSessionId] 互斥）。
+  /// dirId / cli 为空串 = 沿用触发事件的会话。
+  final HookNewSession? newSession;
   final int cooldownSeconds;
   final bool enabled;
   final Map<String, dynamic> baseFilter;
@@ -154,6 +183,7 @@ class HookDraft {
     this.includeConclusion = false,
     this.prompt = '',
     this.targetSessionId = '',
+    this.newSession,
     this.cooldownSeconds = 0,
     this.enabled = true,
     this.baseFilter = const {},
@@ -176,7 +206,9 @@ class HookDraft {
       action['includeConclusion'] = includeConclusion;
     } else {
       action['prompt'] = prompt.trim();
-      if (targetSessionId.isNotEmpty) {
+      if (newSession != null) {
+        action['newSession'] = newSession!.toJson();
+      } else if (targetSessionId.isNotEmpty) {
         action['targetSessionId'] = targetSessionId;
       }
     }
@@ -216,18 +248,22 @@ class EventTriggerService {
     final c = httpClient;
     final encoded = body == null ? null : jsonEncode(body);
     final call = switch (method) {
-      'GET' => c == null
-          ? http.get(uri, headers: _headers)
-          : c.get(uri, headers: _headers),
-      'POST' => c == null
-          ? http.post(uri, headers: _headers, body: encoded)
-          : c.post(uri, headers: _headers, body: encoded),
-      'PUT' => c == null
-          ? http.put(uri, headers: _headers, body: encoded)
-          : c.put(uri, headers: _headers, body: encoded),
-      'DELETE' => c == null
-          ? http.delete(uri, headers: _headers)
-          : c.delete(uri, headers: _headers),
+      'GET' =>
+        c == null
+            ? http.get(uri, headers: _headers)
+            : c.get(uri, headers: _headers),
+      'POST' =>
+        c == null
+            ? http.post(uri, headers: _headers, body: encoded)
+            : c.post(uri, headers: _headers, body: encoded),
+      'PUT' =>
+        c == null
+            ? http.put(uri, headers: _headers, body: encoded)
+            : c.put(uri, headers: _headers, body: encoded),
+      'DELETE' =>
+        c == null
+            ? http.delete(uri, headers: _headers)
+            : c.delete(uri, headers: _headers),
       _ => throw ArgumentError.value(method, 'method', '不支持的方法'),
     };
     return call.timeout(const Duration(seconds: 10));
@@ -251,6 +287,17 @@ class EventTriggerService {
   String _itemPath(HookItem item) => item.sessionId != null
       ? '/api/sessions/${Uri.encodeComponent(item.sessionId!)}/triggers/${Uri.encodeComponent(item.rule.id)}'
       : '/api/event-rules/${Uri.encodeComponent(item.rule.id)}';
+
+  /// 后端支持新建会话的 CLI 清单；取不到时返回空（编辑器只留「同来源会话」）。
+  Future<List<String>> fetchClis() async {
+    try {
+      final data = _json(await _send('GET', '/api/events/catalog'));
+      final list = (data is Map ? data['clis'] : null) as List? ?? const [];
+      return list.map((e) => e.toString()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   /// 全局 + 各会话的事件触发器，含最近一次执行结果。
   Future<List<HookItem>> fetchAll() async {
@@ -284,15 +331,22 @@ class EventTriggerService {
   /// 空跑：发一个模拟事件，让这条规则真的走一遍匹配与动作。
   Future<void> test(HookItem item) async {
     final type = hookExpandedType(item.rule.on.first);
-    final goalState = item.rule.filter['goalState'] ??
+    final goalState =
+        item.rule.filter['goalState'] ??
         (type == 'task.achieved'
             ? 'achieved'
             : (type == 'task.needs_interaction' ? 'interact' : null));
-    _json(await _send('POST', '/api/events/test', body: {
-      'type': type,
-      if (item.sessionId != null) 'sessionId': item.sessionId,
-      'goalState': goalState,
-      'goal': '（测试事件）',
-    }));
+    _json(
+      await _send(
+        'POST',
+        '/api/events/test',
+        body: {
+          'type': type,
+          if (item.sessionId != null) 'sessionId': item.sessionId,
+          'goalState': goalState,
+          'goal': '（测试事件）',
+        },
+      ),
+    );
   }
 }

@@ -184,4 +184,161 @@ void main() {
     expect(body['on'], ['task.failed']);
     expect(body['enabled'], false);
   });
+
+  Future<void> openSheet(
+    WidgetTester tester, {
+    HookItem? item,
+    required EventTriggerService svc,
+  }) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: HookEditor(
+            service: svc,
+            item: item,
+            sessions: const [(id: 's2', label: '测试会话')],
+            dirs: const [(id: 'd2', label: '营销仓')],
+            clis: const ['claude', 'codex'],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> pick(WidgetTester tester, String current, String option) async {
+    await tapVisible(tester, find.text(current));
+    await tester.tap(find.text(option).last);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'inject target: new session reveals workspace/CLI/title and posts newSession',
+    (tester) async {
+      final svc = await service();
+      await openSheet(tester, svc: svc);
+      await tapVisible(tester, find.text('出错或被中止'));
+      await pick(tester, '通知我', '给会话注入指令');
+      expect(find.text('新会话所在工作区'), findsNothing, reason: '默认注入到触发事件的会话');
+
+      await pick(tester, '触发事件的会话', '新建会话（每次触发新建一个）');
+      expect(find.text('新会话所在工作区'), findsOneWidget);
+      expect(find.text('新会话使用的 CLI'), findsOneWidget);
+      await pick(tester, '触发事件所在的工作区', '营销仓');
+      await pick(tester, '与触发事件的会话相同', 'codex');
+        await tapVisible(tester, find.text('保存'));
+
+      final post = calls.firstWhere((c) => c.method == 'POST');
+      expect(post.url.path, '/api/event-rules');
+      final action =
+          (jsonDecode(post.body) as Map<String, dynamic>)['action'] as Map;
+      expect(action['kind'], 'inject-prompt');
+      expect(action['newSession'], {
+        'dirId': 'd2',
+        'cli': 'codex',
+        'title': '',
+      });
+      expect(action.containsKey('targetSessionId'), isFalse);
+    },
+  );
+
+  testWidgets('inject target: a specific session posts targetSessionId', (
+    tester,
+  ) async {
+    final svc = await service();
+    await openSheet(tester, svc: svc);
+    await tapVisible(tester, find.text('出错或被中止'));
+    await pick(tester, '通知我', '给会话注入指令');
+    await pick(tester, '触发事件的会话', '测试会话');
+    expect(find.text('新会话所在工作区'), findsNothing);
+    await tapVisible(tester, find.text('保存'));
+    final post = calls.firstWhere((c) => c.method == 'POST');
+    final action =
+        (jsonDecode(post.body) as Map<String, dynamic>)['action'] as Map;
+    expect(action['targetSessionId'], 's2');
+    expect(action.containsKey('newSession'), isFalse);
+  });
+
+  testWidgets(
+    'editing a new-session rule keeps its settings and shows the target on the card',
+    (tester) async {
+      final svc = await service();
+      final item = HookItem.fromJson({
+        'scope': 'global',
+        'sessionId': null,
+        'rule': {
+          'id': 'g9',
+          'name': '汇总',
+          'enabled': true,
+          'on': ['task.done'],
+          'filter': {},
+          'action': {
+            'kind': 'inject-prompt',
+            'prompt': '整理',
+            'newSession': {'dirId': 'd2', 'cli': 'codex', 'title': '发布说明'},
+          },
+        },
+        'lastRun': null,
+      });
+      await openSheet(tester, item: item, svc: svc);
+      expect(find.text('新建会话（每次触发新建一个）'), findsOneWidget);
+      expect(find.text('营销仓'), findsOneWidget);
+      expect(find.text('codex'), findsOneWidget);
+      expect(find.text('发布说明'), findsOneWidget);
+      await tapVisible(tester, find.text('保存'));
+      final put = calls.firstWhere((c) => c.method == 'PUT');
+      expect(put.url.path, '/api/event-rules/g9');
+      final action =
+          (jsonDecode(put.body) as Map<String, dynamic>)['action'] as Map;
+      expect(action['newSession'], {
+        'dirId': 'd2',
+        'cli': 'codex',
+        'title': '发布说明',
+      });
+    },
+  );
+
+  testWidgets('list card says where the instruction goes', (tester) async {
+    items.addAll([
+      {
+        'scope': 'global',
+        'sessionId': null,
+        'rule': {
+          'id': 'n1',
+          'enabled': true,
+          'on': ['task.done'],
+          'filter': {},
+          'action': {
+            'kind': 'inject-prompt',
+            'prompt': 'a',
+            'newSession': {'dirId': '', 'cli': '', 'title': ''},
+          },
+        },
+        'lastRun': null,
+      },
+      {
+        'scope': 'global',
+        'sessionId': null,
+        'rule': {
+          'id': 'n2',
+          'enabled': true,
+          'on': ['task.done'],
+          'filter': {},
+          'action': {
+            'kind': 'inject-prompt',
+            'prompt': 'b',
+            'targetSessionId': 's7',
+          },
+        },
+        'lastRun': null,
+      },
+    ]);
+    await pump(tester);
+    expect(find.text('注入到：新建会话'), findsOneWidget);
+    expect(find.text('注入到：会话 s7'), findsOneWidget);
+    expect(find.text('注入到：触发事件的会话'), findsOneWidget, reason: '最初那条没指定目标');
+  });
 }

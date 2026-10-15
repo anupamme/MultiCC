@@ -5,6 +5,9 @@ import '../services/session_service.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
 
+/// 「注入到」里代表“每次触发新建一个会话”的哨兵值（与网页 hook-editor.js 一致）。
+const String kHookNewSession = '__new__';
+
 /// 「触发器任务」列表 + 新建/编辑底部弹层 — 定时任务页的第二个 tab，镜像网页
 /// air-trigger-center.js。规则 = 「当 [事件…] 发生时 → 执行 [动作]」，全局规则
 /// 与各会话的规则放在同一张表里。
@@ -107,10 +110,7 @@ class HookListViewState extends State<HookListView> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              '删除',
-              style: TextStyle(color: AppColors.danger),
-            ),
+            child: const Text('删除', style: TextStyle(color: AppColors.danger)),
           ),
         ],
       ),
@@ -120,18 +120,23 @@ class HookListViewState extends State<HookListView> {
 
   /// 外部（FAB）调用：新建；[item] 非空 = 编辑。
   Future<void> openEditor({HookItem? item}) async {
-    List<({String id, String label})> sessions = const [];
-    try {
-      final list = await SessionService(settings: widget.settings)
-          .fetchSessions();
-      sessions = [
-        for (final s in list)
-          if (!s.id.startsWith('__'))
-            (id: s.id, label: (s.label ?? '').isEmpty ? s.id : s.label!),
-      ];
-    } catch (_) {
-      // 会话列表取不到时只能建全局规则；不阻塞编辑器。
-    }
+    final sessionSvc = SessionService(settings: widget.settings);
+    // 三份选项互不依赖，任何一份取不到都只是少几个选项，不阻塞编辑器。
+    final results = await Future.wait([
+      sessionSvc.fetchSessions().then<List<({String id, String label})>>(
+        (list) => [
+          for (final s in list)
+            if (!s.id.startsWith('__'))
+              (id: s.id, label: (s.label ?? '').isEmpty ? s.id : s.label!),
+        ],
+        onError: (_) => <({String id, String label})>[],
+      ),
+      sessionSvc.fetchDirectories().then<List<({String id, String label})>>(
+        (list) => [for (final d in list) (id: d.id, label: d.name)],
+        onError: (_) => <({String id, String label})>[],
+      ),
+      _svc.fetchClis(),
+    ]);
     if (!mounted) return;
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -140,7 +145,13 @@ class HookListViewState extends State<HookListView> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
-      builder: (_) => HookEditor(service: _svc, item: item, sessions: sessions),
+      builder: (_) => HookEditor(
+        service: _svc,
+        item: item,
+        sessions: results[0] as List<({String id, String label})>,
+        dirs: results[1] as List<({String id, String label})>,
+        clis: results[2] as List<String>,
+      ),
     );
     if (saved == true) await refresh();
   }
@@ -291,6 +302,17 @@ class HookCard extends StatelessWidget {
             '${rule.on.map(hookEventLabel).join(' · ')}  →  ${hookActionLabel(rule.kind)}',
             style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
           ),
+          if (rule.kind == 'inject-prompt') ...[
+            const SizedBox(height: 4),
+            Text(
+              rule.newSession != null
+                  ? '注入到：新建会话'
+                  : ((rule.action['targetSessionId'] ?? '').toString().isEmpty
+                        ? '注入到：触发事件的会话'
+                        : '注入到：会话 ${rule.action['targetSessionId']}'),
+              style: const TextStyle(color: AppColors.faint, fontSize: 12),
+            ),
+          ],
           if (rule.kind == 'inject-prompt' &&
               (rule.action['prompt'] ?? '').toString().isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -371,11 +393,15 @@ class HookEditor extends StatefulWidget {
   final EventTriggerService service;
   final HookItem? item;
   final List<({String id, String label})> sessions;
+  final List<({String id, String label})> dirs;
+  final List<String> clis;
   const HookEditor({
     super.key,
     required this.service,
     this.item,
     this.sessions = const [],
+    this.dirs = const [],
+    this.clis = const [],
   });
 
   @override
@@ -394,7 +420,10 @@ class _HookEditorState extends State<HookEditor> {
   late bool _skipCancelled;
   late bool _includeConclusion;
   String _scopeSession = ''; // '' = 全局（仅新建）
-  String _target = '';
+  String _target = ''; // '' = 触发事件的会话；kHookNewSession = 新建；否则是会话 id
+  String _newDir = '';
+  String _newCli = '';
+  late final TextEditingController _newTitle;
   bool _saving = false;
   String? _err;
 
@@ -421,11 +450,16 @@ class _HookEditorState extends State<HookEditor> {
     _skipCancelled = r?.skipCancelled ?? false;
     _includeConclusion = r?.action['includeConclusion'] == true;
     _target = (r?.action['targetSessionId'] ?? '').toString();
+    final spec = r?.newSession;
+    if (spec != null) _target = kHookNewSession;
+    _newDir = spec?.dirId ?? '';
+    _newCli = spec?.cli ?? '';
+    _newTitle = TextEditingController(text: spec?.title ?? '');
   }
 
   @override
   void dispose() {
-    for (final c in [_name, _message, _url, _prompt, _cooldown]) {
+    for (final c in [_name, _message, _url, _prompt, _cooldown, _newTitle]) {
       c.dispose();
     }
     super.dispose();
@@ -448,7 +482,10 @@ class _HookEditorState extends State<HookEditor> {
     secretName: (_editing?.rule.action['secretName'] ?? '').toString(),
     includeConclusion: _includeConclusion,
     prompt: _prompt.text,
-    targetSessionId: _target,
+    targetSessionId: _target == kHookNewSession ? '' : _target,
+    newSession: _target == kHookNewSession
+        ? HookNewSession(dirId: _newDir, cli: _newCli, title: _newTitle.text)
+        : null,
     cooldownSeconds: int.tryParse(_cooldown.text.trim()) ?? 0,
     enabled: _enabled,
     baseFilter: _editing?.rule.filter ?? const {},
@@ -532,9 +569,14 @@ class _HookEditorState extends State<HookEditor> {
     ];
     // 编辑时目标会话可能不在列表里（已删除）；保持当前值，免得 Dropdown 断言。
     final targetValue =
-        _target.isEmpty || sessionItems.any((i) => i.value == _target)
+        _target.isEmpty ||
+            _target == kHookNewSession ||
+            sessionItems.any((i) => i.value == _target)
         ? _target
         : '';
+    // 工作区 / CLI 在列表里找不到（已删除、后端版本较旧）时回退到“沿用”，免得 Dropdown 断言。
+    final dirValue = widget.dirs.any((d) => d.id == _newDir) ? _newDir : '';
+    final cliValue = widget.clis.contains(_newCli) ? _newCli : '';
     return Padding(
       padding: EdgeInsets.fromLTRB(16, 14, 16, 16 + bottom),
       child: SingleChildScrollView(
@@ -630,7 +672,8 @@ class _HookEditorState extends State<HookEditor> {
                   '附带最后一轮结论与摘要（会发送到外部，请确认）',
                   style: TextStyle(fontSize: 13),
                 ),
-                onChanged: (v) => setState(() => _includeConclusion = v == true),
+                onChanged: (v) =>
+                    setState(() => _includeConclusion = v == true),
               ),
             ] else ...[
               _label('注入到'),
@@ -638,10 +681,54 @@ class _HookEditorState extends State<HookEditor> {
                 value: targetValue,
                 items: [
                   const DropdownMenuItem(value: '', child: Text('触发事件的会话')),
+                  const DropdownMenuItem(
+                    value: kHookNewSession,
+                    child: Text('新建会话（每次触发新建一个）'),
+                  ),
                   ...sessionItems,
                 ],
                 onChanged: (v) => setState(() => _target = v),
               ),
+              if (_target == kHookNewSession) ...[
+                const SizedBox(height: 14),
+                _label('新会话所在工作区'),
+                _dropdown(
+                  value: dirValue,
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('触发事件所在的工作区'),
+                    ),
+                    for (final d in widget.dirs)
+                      DropdownMenuItem(
+                        value: d.id,
+                        child: Text(d.label, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _newDir = v),
+                ),
+                const SizedBox(height: 14),
+                _label('新会话使用的 CLI'),
+                _dropdown(
+                  value: cliValue,
+                  items: [
+                    const DropdownMenuItem(
+                      value: '',
+                      child: Text('与触发事件的会话相同'),
+                    ),
+                    for (final c in widget.clis)
+                      DropdownMenuItem(value: c, child: Text(c)),
+                  ],
+                  onChanged: (v) => setState(() => _newCli = v),
+                ),
+                const SizedBox(height: 14),
+                _label('新会话标题（可选，默认用规则名称）'),
+                TextField(
+                  controller: _newTitle,
+                  maxLength: 120,
+                  decoration: _deco(''),
+                ),
+              ],
               const SizedBox(height: 14),
               _label('你的指令'),
               TextField(

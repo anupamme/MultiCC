@@ -27,6 +27,8 @@ function staticRoutes() {
   routes['/auth-client.js'] = { headers: { 'content-type': 'text/javascript' }, body: `window.multiccWsUrl=async url=>url+(url.includes('?')?'&':'?')+'ticket=fixture'` };
   routes['/api/settings/access-token'] = () => json({ hasToken: true, canEdit: false });
   routes['/api/secrets'] = () => json([{ name: 'HOOK_SECRET' }]);
+  routes['/api/directories'] = () => json([{ id: 'd1', name: '主仓' }, { id: 'd2', name: '营销仓' }]);
+  routes['/api/events/catalog'] = () => json({ events: [], aliases: {}, actions: [], clis: ['claude', 'codex', 'opencode'] });
   routes['/api/sessions'] = () => json([
     { id: 's1', label: '发布会话', type: 'chat' }, { id: 's2', label: '测试会话', type: 'chat' },
     { id: '__aux__', label: 'AI', type: 'aux' },
@@ -200,18 +202,64 @@ test('chat header hook button: count badge and the shared form scoped to this se
     assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
     // 会话入口：不出现“作用范围”，因为归属已固定为本会话。
     assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('hook-scope-row')).display`), 'none');
+    // 「注入到」三选一：触发事件的会话 / 新建会话 / 指定会话（会话页头入口也能选其它会话）。
     await page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form');
       f.querySelectorAll('input[name=ev]').forEach(b => { b.checked = b.value === 'task.done'; });
       f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); f.elements.prompt.value = '整理发布说明'; })()`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelector('.hook-dialog form').elements.target.options].map(o => [o.value, o.textContent])`), [
+      ['', '触发事件的会话'], ['__new__', '新建会话（每次触发新建一个）'], ['s1', '发布会话'], ['s2', '测试会话']]);
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('.hook-dialog [data-newsession]')).display`), 'none', '没选新建会话时不露出工作区/CLI');
+    await page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form'); f.elements.target.value = '__new__'; f.elements.target.onchange(); })()`);
+    assert.notEqual(await page.evaluate(`getComputedStyle(document.querySelector('.hook-dialog [data-newsession]')).display`), 'none');
+    assert.deepEqual(await page.evaluate(`[...document.querySelector('.hook-dialog form').elements.newDir.options].map(o => [o.value, o.textContent])`),
+      [['', '触发事件所在的工作区'], ['d1', '主仓'], ['d2', '营销仓']]);
+    assert.deepEqual(await page.evaluate(`[...document.querySelector('.hook-dialog form').elements.newCli.options].map(o => o.value)`), ['', 'claude', 'codex', 'opencode']);
+    await page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form'); f.elements.newDir.value = 'd2'; f.elements.newCli.value = 'codex'; f.elements.newTitle.value = '发布说明'; })()`);
     await page.screenshot('chat-hook-editor.png');
     await click(page, `document.getElementById('hook-save')`);
     assert.ok(await page.waitFor(`document.querySelector('.hook-dialog').open === false`));
     const posted = requestsOf(page, 'POST', '/api/sessions/s1/triggers');
     assert.equal(posted.length, 1);
     assert.deepEqual(JSON.parse(posted[0].body), {
-      type: 'event', name: '', on: ['task.done'], filter: {}, action: { kind: 'inject-prompt', prompt: '整理发布说明' }, enabled: true,
+      type: 'event', name: '', on: ['task.done'], filter: {},
+      action: { kind: 'inject-prompt', prompt: '整理发布说明', newSession: { dirId: 'd2', cli: 'codex', title: '发布说明' } }, enabled: true,
     });
     assert.ok(await page.waitFor(`document.getElementById('hook-btn').textContent === '钩子 2'`), '保存后角标自己刷新');
+  });
+});
+
+test('hook form: inject into a specific session, and blank new-session follows the source', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  const routes = staticRoutes();
+  routes['/api/sessions/s1/triggers'] = () => json({ triggers: [] });
+  routes['POST /api/sessions/s1/triggers'] = () => json({ id: 't9' });
+  routes['/stub.html'] = { headers: { 'content-type': 'text/html' }, body: `<!doctype html><meta charset="utf-8"><body>
+    <button id="hook-btn">钩子</button>
+    <script src="/i18n-catalog.js"></script><script src="/i18n.js"></script><script src="/error-envelope.js"></script>
+    <script src="/api-client.js"></script><script src="/hook-editor.js"></script><script src="/chat-hooks.js"></script></body>` };
+  await withCdpHarness({ routes, screenshotDir: path.join(os.tmpdir(), 'multicc-hooks-ui') }, async page => {
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 900, deviceScaleFactor: 1, mobile: false });
+    await page.navigate('/stub.html?session=s1');
+    const fill = (target) => page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form');
+      f.querySelectorAll('input[name=ev]').forEach(b => { b.checked = b.value === 'task.failed'; });
+      f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); f.elements.prompt.value = 'p';
+      f.elements.target.value = ${JSON.stringify(target)}; f.elements.target.onchange(); })()`);
+
+    await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    await fill('s2');
+    await click(page, `document.getElementById('hook-save')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog').open === false`));
+    assert.deepEqual(JSON.parse(requestsOf(page, 'POST', '/api/sessions/s1/triggers')[0].body).action, { kind: 'inject-prompt', prompt: 'p', targetSessionId: 's2' });
+
+    // 新建会话但工作区/CLI 都留空 = 沿用来源会话（后端在触发时解析），请求体里是空串。
+    await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    await fill('__new__');
+    await click(page, `document.getElementById('hook-save')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog').open === false`));
+    assert.deepEqual(JSON.parse(requestsOf(page, 'POST', '/api/sessions/s1/triggers')[1].body).action,
+      { kind: 'inject-prompt', prompt: 'p', newSession: { dirId: '', cli: '', title: '' } });
   });
 });
 

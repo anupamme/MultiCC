@@ -4565,7 +4565,16 @@ window.MULTICC_I18N_CATALOG = {
     "hookDeleteConfirm": "删除这条触发器？",
     "hookDeleteFailed": "删除失败：{msg}",
     "hookToggleFailed": "更新失败：{msg}",
-    "hookLoadFailed": "加载触发器失败：{msg}"
+    "hookLoadFailed": "加载触发器失败：{msg}",
+    "hookInjectNew": "新建会话（每次触发新建一个）",
+    "hookNewDir": "新会话所在工作区",
+    "hookNewDirSource": "触发事件所在的工作区",
+    "hookNewCli": "新会话使用的 CLI",
+    "hookNewCliSource": "与触发事件的会话相同",
+    "hookNewTitle": "新会话标题（可选，默认用规则名称）",
+    "hookNewHint": "每次触发都会新建一个会话，并把下面的指令连同来源信息发给它。",
+    "hookTargetNew": "新建会话",
+    "hookTargetSession": "会话 {id}"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9132,6 +9141,15 @@ window.MULTICC_I18N_CATALOG = {
     "hookDeleteConfirm": "Delete this trigger?",
     "hookDeleteFailed": "Delete failed: {msg}",
     "hookToggleFailed": "Update failed: {msg}",
-    "hookLoadFailed": "Failed to load triggers: {msg}"
+    "hookLoadFailed": "Failed to load triggers: {msg}",
+    "hookInjectNew": "A new session (created on each firing)",
+    "hookNewDir": "Workspace of the new session",
+    "hookNewDirSource": "The workspace of the triggering session",
+    "hookNewCli": "CLI of the new session",
+    "hookNewCliSource": "Same as the triggering session",
+    "hookNewTitle": "Title of the new session (optional; defaults to the rule name)",
+    "hookNewHint": "Each firing creates a new session and sends it the instruction below with the source details.",
+    "hookTargetNew": "new session",
+    "hookTargetSession": "session {id}"
   }
 };

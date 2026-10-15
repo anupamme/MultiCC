@@ -403,3 +403,88 @@ test('engine.listAll merges global + session event rules with last run; skips ot
   assert.equal(globalItem.rule.id, global.id);
   assert.equal(globalItem.lastRun, null);
 });
+
+// ── inject target: specific session / brand-new session per firing ─────────
+function newSessionHarness(over = {}) {
+  const created = [];
+  const h = engineHarness({
+    createSession: async (input) => { created.push(input); return { sessionId: `task-new-${created.length}` }; },
+    sessionInfo: (id) => (id === 's1' ? { dirId: 'dir1', cli: 'codex' } : null),
+    ...over,
+  });
+  h.created = created;
+  return h;
+}
+
+test('rules: newSession is validated, normalized and exclusive with targetSessionId', () => {
+  const opts = { idFactory: () => 'r', nowIso: () => 'n' };
+  const ok = validateEventRule({ on: ['task.achieved'], action: { kind: 'inject-prompt', prompt: 'go', newSession: { dirId: 'd1', cli: 'claude', title: ' T ' } } }, opts);
+  assert.deepEqual(ok.rule.action.newSession, { dirId: 'd1', cli: 'claude', title: 'T' });
+  const blank = validateEventRule({ on: ['task.achieved'], action: { kind: 'inject-prompt', newSession: {} } }, opts);
+  assert.deepEqual(blank.rule.action.newSession, { dirId: '', cli: '', title: '' }, '空=沿用来源会话');
+  assert.match(validateEventRule({ on: ['task.achieved'], action: { kind: 'inject-prompt', targetSessionId: 's2', newSession: {} } }, opts).error, /mutually exclusive/);
+  assert.match(validateEventRule({ on: ['task.achieved'], action: { kind: 'inject-prompt', newSession: { dirId: 'bad dir!' } } }, opts).error, /newSession\.dirId/);
+  assert.match(validateEventRule({ on: ['task.achieved'], action: { kind: 'inject-prompt', newSession: { cli: 'Bad CLI' } } }, opts).error, /newSession\.cli/);
+});
+
+test('engine: newSession creates a session then injects into it; follows source dir/cli when blank', async () => {
+  const h = newSessionHarness();
+  h.engine.addGlobal({ on: ['task.achieved'], name: '汇总', action: { kind: 'inject-prompt', prompt: '整理发布说明', newSession: {} } });
+  h.hub.emit('task.achieved', 's1', { goal: 'ship', goalState: 'achieved', conclusion: 'all green' });
+  await h.settle();
+  assert.equal(h.created.length, 1);
+  assert.equal(h.created[0].dirId, 'dir1', '沿用来源会话的工作区');
+  assert.equal(h.created[0].cli, 'codex', '沿用来源会话的 CLI');
+  assert.equal(h.created[0].title, '汇总');
+  assert.match(h.created[0].clientMsgId, /^hook:[\w.:-]+:r\d+$/, '幂等 id 由事件+规则派生');
+  assert.equal(h.calls.inject.length, 1);
+  assert.equal(h.calls.inject[0][0], 'task-new-1', '指令进的是新会话，不是来源会话');
+  assert.match(h.calls.inject[0][1], /all green[\s\S]*你的指令：整理发布说明/);
+  assert.equal(h.engine.recentResults().at(-1).ok, true);
+});
+
+test('engine: explicit workspace and cli win over the source session', async () => {
+  const h = newSessionHarness();
+  h.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p', newSession: { dirId: 'other', cli: 'claude', title: '排障' } } });
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle();
+  assert.deepEqual([h.created[0].dirId, h.created[0].cli, h.created[0].title], ['other', 'claude', '排障']);
+});
+
+test('engine: no workspace resolvable, or create failure, is a recorded failure with no inject', async () => {
+  const { ACTIONS } = require('../src/events/actions');
+  const noDir = await ACTIONS['inject-prompt'](
+    { eventId: 'e', type: 'task.failed', sessionId: null, dirId: null, data: {} },
+    { id: 'r', action: { kind: 'inject-prompt', prompt: 'p', newSession: { dirId: '', cli: '', title: '' } } },
+    { sessionInfo: () => null, createSession: async () => { throw new Error('must not be called'); }, injectPrompt: () => true });
+  assert.match(noDir.error, /no workspace/);
+  assert.equal(noDir.ok, false);
+
+  const boom = newSessionHarness({ createSession: async () => { throw new Error('limit'); } });
+  boom.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p', newSession: {} } });
+  boom.hub.emit('task.failed', 's1', { goal: 'g' });
+  await boom.settle();
+  assert.equal(boom.calls.inject.length, 0);
+  assert.equal(boom.engine.recentResults().at(-1).ok, false);
+});
+
+test('engine: the new session finishing does not spawn another one (loop latch follows the new id)', async () => {
+  const h = newSessionHarness();
+  h.persistedSessions.set('task-new-1', { id: 'task-new-1', dirId: 'dir1', triggers: [] });
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'p', newSession: {} }, cooldownMs: 0 });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.created.length, 1);
+  h.hub.emit('task.finished', 'task-new-1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.created.length, 1, '新会话自己的完成事件被防环压制，不会再建第二个');
+});
+
+test('engine: targetSessionId injects into that specific session', async () => {
+  const h = newSessionHarness();
+  h.engine.addGlobal({ on: ['task.achieved'], action: { kind: 'inject-prompt', prompt: 'p', targetSessionId: 's9' } });
+  h.hub.emit('task.achieved', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject[0][0], 's9');
+  assert.equal(h.created.length, 0);
+});

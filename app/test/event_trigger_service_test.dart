@@ -96,52 +96,57 @@ void main() {
     expect(items[1].lastRun!.error, 'boom');
   });
 
-  test('create posts to the global or session route with the draft body',
-      () async {
-    final calls = <http.Request>[];
-    final svc = EventTriggerService(
-      settings: await mockSettings(),
-      httpClient: MockClient((request) async {
-        calls.add(request);
-        return ok({'ok': true});
-      }),
-    );
-    const draft = HookDraft(
-      name: ' hi ',
-      on: ['task.done'],
-      skipCancelled: true,
-      kind: 'webhook',
-      url: ' https://a.io/h ',
-      secretName: 'SIGN',
-      includeConclusion: true,
-      cooldownSeconds: 30,
-    );
-    await svc.create(draft);
-    await svc.create(draft, sessionId: 'a b');
-    expect(calls[0].method, 'POST');
-    expect(calls[0].url.path, '/api/event-rules');
-    expect(calls[1].url.path, '/api/sessions/a%20b/triggers');
-    final body = jsonDecode(calls[0].body) as Map<String, dynamic>;
-    expect(body, {
-      'type': 'event',
-      'name': 'hi',
-      'on': ['task.done'],
-      'filter': {'cancelled': false},
-      'action': {
-        'kind': 'webhook',
-        'url': 'https://a.io/h',
-        'secretName': 'SIGN',
-        'includeConclusion': true,
-      },
-      'enabled': true,
-      'cooldownMs': 30000,
-    });
-  });
+  test(
+    'create posts to the global or session route with the draft body',
+    () async {
+      final calls = <http.Request>[];
+      final svc = EventTriggerService(
+        settings: await mockSettings(),
+        httpClient: MockClient((request) async {
+          calls.add(request);
+          return ok({'ok': true});
+        }),
+      );
+      const draft = HookDraft(
+        name: ' hi ',
+        on: ['task.done'],
+        skipCancelled: true,
+        kind: 'webhook',
+        url: ' https://a.io/h ',
+        secretName: 'SIGN',
+        includeConclusion: true,
+        cooldownSeconds: 30,
+      );
+      await svc.create(draft);
+      await svc.create(draft, sessionId: 'a b');
+      expect(calls[0].method, 'POST');
+      expect(calls[0].url.path, '/api/event-rules');
+      expect(calls[1].url.path, '/api/sessions/a%20b/triggers');
+      final body = jsonDecode(calls[0].body) as Map<String, dynamic>;
+      expect(body, {
+        'type': 'event',
+        'name': 'hi',
+        'on': ['task.done'],
+        'filter': {'cancelled': false},
+        'action': {
+          'kind': 'webhook',
+          'url': 'https://a.io/h',
+          'secretName': 'SIGN',
+          'includeConclusion': true,
+        },
+        'enabled': true,
+        'cooldownMs': 30000,
+      });
+    },
+  );
 
   test('draft body per kind: notify message, inject prompt + target', () {
     expect(
-      const HookDraft(on: ['task.failed'], kind: 'notify', message: ' m ')
-          .toJson()['action'],
+      const HookDraft(
+        on: ['task.failed'],
+        kind: 'notify',
+        message: ' m ',
+      ).toJson()['action'],
       {'kind': 'notify', 'message': 'm'},
     );
     expect(
@@ -155,8 +160,11 @@ void main() {
     );
     // 留空目标 = 注入到触发事件的会话（不带 targetSessionId）。
     expect(
-      const HookDraft(on: ['task.achieved'], kind: 'inject-prompt', prompt: 'p')
-          .toJson()['action'],
+      const HookDraft(
+        on: ['task.achieved'],
+        kind: 'inject-prompt',
+        prompt: 'p',
+      ).toJson()['action'],
       {'kind': 'inject-prompt', 'prompt': 'p'},
     );
   });
@@ -180,7 +188,11 @@ void main() {
   test('validate catches missing events and webhook url', () {
     expect(const HookDraft(on: [], kind: 'notify').validate(), '请至少选择一个事件');
     expect(
-      const HookDraft(on: ['task.failed'], kind: 'webhook', url: ' ').validate(),
+      const HookDraft(
+        on: ['task.failed'],
+        kind: 'webhook',
+        url: ' ',
+      ).validate(),
       '请填写 Webhook 地址',
     );
     expect(
@@ -189,46 +201,46 @@ void main() {
     );
   });
 
-  test('update / setEnabled / remove target the owner route; test expands', () async {
-    final calls = <http.Request>[];
-    final svc = EventTriggerService(
-      settings: await mockSettings(),
-      httpClient: MockClient((request) async {
-        calls.add(request);
-        return ok({'ok': true});
-      }),
-    );
-    await svc.setEnabled(item(), false);
-    await svc.setEnabled(item(sessionId: 's1'), true);
-    await svc.remove(item(sessionId: 's1'));
-    await svc.update(
-      item(),
-      const HookDraft(on: ['task.failed'], kind: 'notify'),
-    );
-    expect(
-      calls.map((c) => '${c.method} ${c.url.path}').toList(),
-      [
+  test(
+    'update / setEnabled / remove target the owner route; test expands',
+    () async {
+      final calls = <http.Request>[];
+      final svc = EventTriggerService(
+        settings: await mockSettings(),
+        httpClient: MockClient((request) async {
+          calls.add(request);
+          return ok({'ok': true});
+        }),
+      );
+      await svc.setEnabled(item(), false);
+      await svc.setEnabled(item(sessionId: 's1'), true);
+      await svc.remove(item(sessionId: 's1'));
+      await svc.update(
+        item(),
+        const HookDraft(on: ['task.failed'], kind: 'notify'),
+      );
+      expect(calls.map((c) => '${c.method} ${c.url.path}').toList(), [
         'PUT /api/event-rules/r1',
         'PUT /api/sessions/s1/triggers/r1',
         'DELETE /api/sessions/s1/triggers/r1',
         'PUT /api/event-rules/r1',
-      ],
-    );
-    expect(jsonDecode(calls[0].body), {'enabled': false});
-    expect(jsonDecode(calls[1].body), {'enabled': true});
+      ]);
+      expect(jsonDecode(calls[0].body), {'enabled': false});
+      expect(jsonDecode(calls[1].body), {'enabled': true});
 
-    calls.clear();
-    await svc.test(item(sessionId: 's1', on: ['task.done']));
-    await svc.test(item(on: ['turn.completed']));
-    final first = jsonDecode(calls[0].body) as Map<String, dynamic>;
-    expect(calls[0].url.path, '/api/events/test');
-    expect(first['type'], 'task.achieved', reason: 'task.done 别名展开');
-    expect(first['goalState'], 'achieved');
-    expect(first['sessionId'], 's1');
-    final second = jsonDecode(calls[1].body) as Map<String, dynamic>;
-    expect(second['type'], 'turn.completed');
-    expect(second.containsKey('sessionId'), isFalse);
-  });
+      calls.clear();
+      await svc.test(item(sessionId: 's1', on: ['task.done']));
+      await svc.test(item(on: ['turn.completed']));
+      final first = jsonDecode(calls[0].body) as Map<String, dynamic>;
+      expect(calls[0].url.path, '/api/events/test');
+      expect(first['type'], 'task.achieved', reason: 'task.done 别名展开');
+      expect(first['goalState'], 'achieved');
+      expect(first['sessionId'], 's1');
+      final second = jsonDecode(calls[1].body) as Map<String, dynamic>;
+      expect(second['type'], 'turn.completed');
+      expect(second.containsKey('sessionId'), isFalse);
+    },
+  );
 
   test('server errors surface the error field', () async {
     final svc = EventTriggerService(
@@ -250,4 +262,78 @@ void main() {
     expect(hookExpandedType('task.attention'), 'task.failed');
     expect(hookExpandedType('task.*'), 'task.finished');
   });
+
+  test(
+    'newSession body: blank follows the source, excludes targetSessionId',
+    () {
+      final action = const HookDraft(
+        on: ['task.achieved'],
+        kind: 'inject-prompt',
+        prompt: ' p ',
+        targetSessionId: 's2', // 被 newSession 覆盖，两者互斥
+        newSession: HookNewSession(dirId: 'd2', cli: 'codex', title: ' 发布说明 '),
+      ).toJson()['action'];
+      expect(action, {
+        'kind': 'inject-prompt',
+        'prompt': 'p',
+        'newSession': {'dirId': 'd2', 'cli': 'codex', 'title': '发布说明'},
+      });
+      expect(
+        const HookDraft(
+          on: ['task.achieved'],
+          kind: 'inject-prompt',
+          prompt: 'p',
+          newSession: HookNewSession(),
+        ).toJson()['action'],
+        {
+          'kind': 'inject-prompt',
+          'prompt': 'p',
+          'newSession': {'dirId': '', 'cli': '', 'title': ''},
+        },
+      );
+    },
+  );
+
+  test(
+    'HookRule parses newSession; fetchClis reads the catalog and fails soft',
+    () async {
+      final rule = HookRule.fromJson({
+        'id': 'r',
+        'on': ['task.done'],
+        'action': {
+          'kind': 'inject-prompt',
+          'prompt': 'p',
+          'newSession': {'dirId': 'd1', 'cli': 'claude', 'title': 'T'},
+        },
+      });
+      expect(rule.newSession!.dirId, 'd1');
+      expect(rule.newSession!.cli, 'claude');
+      expect(rule.newSession!.title, 'T');
+      expect(
+        HookRule.fromJson({
+          'id': 'r',
+          'on': ['task.done'],
+          'action': {'kind': 'inject-prompt'},
+        }).newSession,
+        isNull,
+      );
+
+      final okSvc = EventTriggerService(
+        settings: await mockSettings(),
+        httpClient: MockClient((request) async {
+          expect(request.url.path, '/api/events/catalog');
+          return ok({
+            'clis': ['claude', 'codex'],
+          });
+        }),
+      );
+      expect(await okSvc.fetchClis(), ['claude', 'codex']);
+
+      final failSvc = EventTriggerService(
+        settings: await mockSettings(),
+        httpClient: MockClient((_) async => http.Response('nope', 500)),
+      );
+      expect(await failSvc.fetchClis(), isEmpty, reason: '老后端/取不到时不阻塞编辑器');
+    },
+  );
 }

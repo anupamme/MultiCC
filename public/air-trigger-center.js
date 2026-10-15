@@ -47,17 +47,8 @@
     return element;
   }
 
-  async function sessionChoices() {
-    try {
-      const list = await request('/api/sessions');
-      return (Array.isArray(list) ? list : [])
-        .filter(entry => entry && entry.id && entry.type !== 'aux' && !String(entry.id).startsWith('__'))
-        .map(entry => ({ id: entry.id, label: entry.label || entry.id }));
-    } catch (_) { return []; }
-  }
-
   async function openEditor(item) {
-    editor().open({ item: item || null, sessions: await sessionChoices(), onSaved: load });
+    editor().open({ item: item || null, onSaved: load });
   }
 
   async function act(label, work) {
@@ -95,7 +86,12 @@
         if (root.confirm(t('hookDeleteConfirm'))) act('hookDeleteFailed', () => editor().removeItem(item));
       }, 'danger'));
     article.append(head, flow, owner, actions);
-    if (rule.action.kind === 'inject-prompt' && rule.action.prompt) article.insertBefore(node('p', rule.action.prompt, 'schedule-prompt'), actions);
+    if (rule.action.kind === 'inject-prompt') {
+      const target = rule.action.newSession ? t('hookTargetNew') : (rule.action.targetSessionId
+        ? t('hookTargetSession', { id: rule.action.targetSessionId }) : t('hookInjectSource'));
+      flow.append(node('small', `（${target}）`));
+      if (rule.action.prompt) article.insertBefore(node('p', rule.action.prompt, 'schedule-prompt'), actions);
+    }
     return article;
   }
 

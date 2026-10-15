@@ -273,10 +273,8 @@ const turnProgressHeartbeat = new TurnProgressHeartbeat({
     metrics.inc('multicc_chat_progress_heartbeats_total');
     metrics.set('multicc_chat_silent_turn_seconds', Math.round(event.silentMs / 1000));
     logger.info('chat_progress_heartbeat', event);
-    // Wire key is `heartbeatPhase` (not `phase`): three unrelated enums used to
-    // share that key across progress_heartbeat / provider_auto_route /
-    // provider_route_event, and a reader could not tell which one it was looking
-    // at without the message type. The internal module still calls it `phase`.
+    // Wire key is `heartbeatPhase`: `phase` was shared by three unrelated enums
+    // (heartbeat / auto_route / route_event). Internally it is still `phase`.
     const { phase: heartbeatPhase, ...heartbeatRest } = event;
     chatBroadcast(event.sessionId, { ...heartbeatRest, type: 'progress_heartbeat', heartbeatPhase });
   },
@@ -2828,7 +2826,7 @@ const triggerRuntime = createSessionTriggers({
   logger,
 });
 triggerRuntime.mountRoutes(app);
-const eventsHost = require('./src/events/host').createEventsHost({ bus, app, persistedSessions, chatSessions, saveBestEffort: savePersistedSessionsBestEffort, rulesFile: MULTICC_PATHS.eventRulesFile, secretsVault, loadChatHistory, notify: (...a) => pushRuntime.notify(...a), logger });
+const eventsHost = require('./src/events/host').createEventsHost({ bus, app, persistedSessions, chatSessions, saveBestEffort: savePersistedSessionsBestEffort, rulesFile: MULTICC_PATHS.eventRulesFile, secretsVault, loadChatHistory, createChatTask: i => taskShellHost.createTask(i), notify: (...a) => pushRuntime.notify(...a), logger });
 const teardownTriggers = triggerRuntime.teardownSession;
 
 const ensureFirstRunDirectory = async () => {

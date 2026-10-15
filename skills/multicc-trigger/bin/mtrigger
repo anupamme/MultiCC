@@ -105,6 +105,12 @@ async function main() {
         if (f.secret) body.action.secretName = f.secret;
         if (f['include-conclusion'] === 'true') body.action.includeConclusion = true;
         if (f.message) body.action.message = f.message;
+        // 注入目标：默认触发事件的会话；--target 指定会话；--new-session 每次触发新建一个
+        // （--dir / --cli 留空 = 沿用触发事件的会话，--title 默认用规则名称）。
+        if (f.target) body.action.targetSessionId = f.target;
+        if (f['new-session'] === 'true') {
+          body.action.newSession = { dirId: f.dir || '', cli: f.cli || '', title: f.title || '' };
+        }
         const filter = {};
         if (f['goal-state']) filter.goalState = f['goal-state'];
         if (f.cancelled) filter.cancelled = f.cancelled === 'true';
