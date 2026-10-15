@@ -23,7 +23,6 @@ test('Air themes restored/live messages, expanded tools, diagnostics and artifac
   const html = fs.readFileSync(path.join(publicDir, 'chat.html'), 'utf8')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
     .replace(/<link[^>]*https:\/\/cdn[^>]*>/g, '')
-    .replace('<body', '<body class="air-chat"')
     .replace('</body>', `<script>window.t=k=>({'taskArtifactsTitle':'任务产物','taskArtifactsSearch':'搜索产物','taskArtifactsManage':'管理产物','taskArtifactsRefresh':'刷新','taskArtifactsCollapse':'收起','taskArtifactsNoTask':'当前任务','taskArtifactsPage':'网页','taskArtifactsCopy':'复制链接'}[k]||k)</script>${scripts.map(s => `<script src="/${s}.js"></script>`).join('')}</body>`);
   routes['/'] = { body: html };
   routes['/api/task-shell-tasks/theme/artifacts'] = { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ taskId: 'theme', title: 'Air 聊天配色验收', items: [
@@ -112,9 +111,6 @@ test('Air themes restored/live messages, expanded tools, diagnostics and artifac
     assert.ok(await page.waitFor('document.querySelector("#api-error-bar .api-error-retry").textContent==="已重新提交"'),'重试按钮走完一轮');
     assert.equal(await page.evaluate('retryCalls.length'),1);
     for(const x of await inspect(['#api-error-bar .api-error-retry']))assert.ok(x.contrast>=4.5,JSON.stringify(x));
-    // Theme removal verifies fallback colors still work on legacy Chat.
-    await page.evaluate('document.body.classList.remove("air-chat")');
-    assert.equal(await page.evaluate('getComputedStyle(document.querySelector(".tool-body")).backgroundColor'),'rgb(13, 17, 23)');
     assert.deepEqual(await page.evaluate('__errors'),[]);
   });
 });

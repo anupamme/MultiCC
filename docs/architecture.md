@@ -75,7 +75,6 @@ multicc/
 │   ├── task-board-ui.js          # Shared task-board list rendering (web + archive page)
 │   ├── wechat.html / wechat.js   # WeChat bridge UI
 │   ├── events.html               # Directory event timeline viewer
-│   ├── share.html                # Shared session snapshot viewer
 │   ├── memo.html                 # Directory memo editor
 │   ├── s2s-session.js            # Speech-to-Speech state machine
 │   ├── vad-monitor.js            # Voice Activity Detection (RMS-based)

@@ -7,7 +7,7 @@ body.task-mode .session-only { display: none !important; }
 .task-separation-dialog h3 { margin: 0 0 8px; }
 .task-separation-dialog p { margin: 7px 0; line-height: 1.45; }
 .task-separation-dialog .task-separation-hint {
-  color: var(--chat-muted, #8b949e);
+  color: var(--chat-muted);
   font-size: 12px;
 }
 
@@ -18,9 +18,9 @@ body.task-mode .session-only { display: none !important; }
   max-width: 80%;
   font-size: 11px;
   line-height: 1.6;
-  color: var(--chat-muted, #8b949e);
-  background: var(--chat-surface, #161b22);
-  border: 1px solid var(--chat-line, #30363d);
+  color: var(--chat-muted);
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-line);
   border-radius: 999px;
   text-align: center;
   white-space: nowrap;

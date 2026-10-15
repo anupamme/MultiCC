@@ -4,13 +4,13 @@
 #token-rate-bar {
   display: inline-block;
   flex: 0 0 auto;
-  color: var(--chat-muted, #8b949e);
-  background: var(--chat-surface, #161b22);
-  border: 1px solid var(--chat-soft, #21262d);
+  color: var(--chat-muted);
+  background: var(--chat-surface);
+  border: 1px solid var(--chat-soft);
   font-variant-numeric: tabular-nums;
   cursor: default;
 }
 #token-rate-bar:empty { display: none; }
-#token-rate-bar[data-tone="flowing"] { color: var(--chat-success, #3fb950); }
-#token-rate-bar[data-tone="warning"] { color: var(--chat-warning, #d29922); border-color: currentColor; }
-#token-rate-bar[data-tone="danger"] { color: var(--chat-danger, #f85149); border-color: currentColor; }
+#token-rate-bar[data-tone="flowing"] { color: var(--chat-success); }
+#token-rate-bar[data-tone="warning"] { color: var(--chat-warning); border-color: currentColor; }
+#token-rate-bar[data-tone="danger"] { color: var(--chat-danger); border-color: currentColor; }

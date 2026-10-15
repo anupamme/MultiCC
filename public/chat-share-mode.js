@@ -102,7 +102,7 @@
     if (document.getElementById('share-gate')) return document.getElementById('share-gate');
     const ov = document.createElement('div');
     ov.id = 'share-gate';
-    ov.style.cssText = 'position:fixed;inset:0;background:var(--chat-overlay, rgba(0,0,0,.88));'
+    ov.style.cssText = 'position:fixed;inset:0;background:var(--chat-overlay);'
       + 'z-index:999999;display:flex;align-items:center;justify-content:center;'
       + 'font-family:system-ui,-apple-system,sans-serif';
     document.body.appendChild(ov);
@@ -110,10 +110,10 @@
   }
 
   function card(title, body, fieldsHtml) {
-    return `<div id="share-gate-card" style="background:var(--chat-surface, #1c1c1e);border-radius:14px;padding:26px;max-width:380px;width:90%;color:var(--chat-text, #eee);box-shadow:var(--chat-shadow, 0 8px 40px rgba(0,0,0,.6))">
+    return `<div id="share-gate-card" style="background:var(--chat-surface);border-radius:14px;padding:26px;max-width:380px;width:90%;color:var(--chat-text);box-shadow:var(--chat-shadow)">
       <div style="font-size:20px;font-weight:700;margin-bottom:14px"><span style="color:#f78166">Multi</span><span style="color:#79c0ff">CC</span></div>
       <h3 style="margin:0 0 8px;font-size:17px">${title}</h3>
-      <p style="font-size:13px;color:var(--chat-muted, #999);margin:0 0 16px;line-height:1.6">${body}</p>
+      <p style="font-size:13px;color:var(--chat-muted);margin:0 0 16px;line-height:1.6">${body}</p>
       ${fieldsHtml}
     </div>`;
   }
@@ -127,8 +127,8 @@
     if (state === 'locked') {
       ov.innerHTML = card('需要访问密码', '分享方为此会话设置了密码，请输入后查看。',
         `<input id="share-pw" type="password" autocomplete="current-password" placeholder="访问密码"
-            style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:8px;border-radius:8px;border:1px solid var(--chat-line, #333);background:var(--chat-soft, #2a2a2e);color:var(--chat-text, #eee);font-size:14px" />
-         <div id="share-msg" style="font-size:12px;color:var(--chat-danger, #ff8a80);margin:4px 0 10px;min-height:16px"></div>
+            style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:8px;border-radius:8px;border:1px solid var(--chat-line);background:var(--chat-soft);color:var(--chat-text);font-size:14px" />
+         <div id="share-msg" style="font-size:12px;color:var(--chat-danger);margin:4px 0 10px;min-height:16px"></div>
          <button id="share-go" style="width:100%;padding:11px;border:none;border-radius:8px;background:#0a84ff;color:#fff;font-size:14px;font-weight:600;cursor:pointer">进入</button>`);
       const input = ov.querySelector('#share-pw');
       const msg = ov.querySelector('#share-msg');

@@ -798,7 +798,7 @@ test('both metric lines wrap instead of overflowing a narrow bubble', () => {
   // renders both lines with Wrap, covered by app/test/usage_timing_line_test.dart).
   const usageCss = HTML.slice(HTML.indexOf('.msg-usage {'));
   assert.match(usageCss.slice(0, usageCss.indexOf('}')), /flex-wrap:\s*wrap/);
-  const timingStyle = LIVE_UI_SOURCE.match(/line\.style\.cssText\s*=\s*'([^']*msg-timing[^']*|[^']*6e7681[^']*)'/);
+  const timingStyle = LIVE_UI_SOURCE.match(/function buildTimingLine[\s\S]*?line\.style\.cssText\s*=\s*'([^']*)'/);
   assert.ok(timingStyle, 'timing line still sets its inline layout');
   assert.match(timingStyle[1], /display:flex/);
   assert.match(timingStyle[1], /flex-wrap:wrap/);

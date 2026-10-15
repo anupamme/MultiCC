@@ -28,7 +28,7 @@
   #header .hdr-btn[data-hdr-icon][data-state="on"]::after {
     content: "✓";
     margin-left: 2px;
-    color: var(--chat-success, #3fb950);
+    color: var(--chat-success);
     font-size: 10px;
     vertical-align: super;
   }
@@ -68,11 +68,7 @@ body #header-more-menu #session-title[data-hdr-icon]:empty { display: none; }
   font-family: 'Cascadia Code', 'Fira Code', monospace;
   font-size: 13px;
   font-weight: 600;
-  color: var(--chat-blue, #6aa3ff);
   margin-left: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 /* 只在桌面截断标题：手机上要撑满（chat.html 那条 max-width:none 在本表之前，
    同权重下这里晚的说得算）。 */

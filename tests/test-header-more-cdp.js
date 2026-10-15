@@ -8,10 +8,13 @@ test('More menu stays above tool messages, scrolls, closes and returns to its he
   const dir = path.resolve(__dirname, '../public');
   const style = fs.readFileSync(path.join(dir, 'chat.html'), 'utf8').match(/<style>([\s\S]*?)<\/style>/)[1];
   const items = Array.from({ length: 18 }, (_, i) => `<button class="hdr-btn" id="action-${i}">菜单项 ${i}</button>`).join('');
+  // Chat only renders inside Air, so the fixture carries the Air layer (chat-air.css
+  // + body.air-chat) on top of the page's own base styles, as the real frame does.
   const routes = { '/': { body: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${style}
     #header{isolation:isolate;z-index:0;backdrop-filter:blur(20px)}#header-more-wrap{display:block}#messages{position:relative;z-index:100;overflow:visible}.tool-call{position:relative;z-index:99999;height:700px;background:#eef4ff}
-    </style><div id="header"><span class="hdr-spacer"></span><span id="header-more-wrap"><button class="hdr-btn" id="header-more-btn">更多</button><span id="header-more-menu">${items}</span></span></div><div id="messages"><div class="tool-call">tool use</div></div><script src="/chat-live-ui.js"></script><script>MultiCCChatLiveUi.bindHeaderMoreMenu({window,document,button:document.getElementById('header-more-btn'),menu:document.getElementById('header-more-menu'),wrap:document.getElementById('header-more-wrap')});</script>` },
+    </style><link rel="stylesheet" href="/chat-air.css"><body class="air-chat"><div id="header"><span class="hdr-spacer"></span><span id="header-more-wrap"><button class="hdr-btn" id="header-more-btn">更多</button><span id="header-more-menu">${items}</span></span></div><div id="messages"><div class="tool-call">tool use</div></div><script src="/chat-live-ui.js"></script><script>MultiCCChatLiveUi.bindHeaderMoreMenu({window,document,button:document.getElementById('header-more-btn'),menu:document.getElementById('header-more-menu'),wrap:document.getElementById('header-more-wrap')});</script>` },
     '/chat-live-ui.js': { body: fs.readFileSync(path.join(dir, 'chat-live-ui.js')), headers: { 'content-type': 'text/javascript' } },
+    '/chat-air.css': { body: fs.readFileSync(path.join(dir, 'chat-air.css')), headers: { 'content-type': 'text/css' } },
   };
   await withCdpHarness({ routes }, async page => {
     await page.navigate('/');

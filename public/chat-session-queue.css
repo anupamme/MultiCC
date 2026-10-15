@@ -5,14 +5,9 @@
 /* ── Durable messages staged behind the active turn ── */
 #session-queue-dock {
   flex-shrink: 0;
-  width: min(calc(100% - 20px), 960px);
-  align-self: center;
   margin: 0 10px 6px;
-  color: var(--chat-text, #c9d1d9);
-  background:var(--chat-surface, rgba(22, 27, 34, .96));
-  border: 1px solid var(--chat-line, #3d444d);
+  border: 1px solid var(--chat-line);
   border-radius: 10px;
-  box-shadow:var(--chat-shadow, 0 -6px 22px rgba(0, 0, 0, .28));
   overflow: hidden;
 }
 #session-queue-dock[hidden] { display: none; }
@@ -22,16 +17,15 @@
   justify-content: space-between;
   gap: 10px;
   padding: 8px 11px;
-  color: var(--chat-warning, #d29922);
   font-size: 12px;
   cursor: pointer;
   user-select: none;
   list-style: none;
 }
 #session-queue-dock summary::-webkit-details-marker { display: none; }
-#session-queue-dock summary::after { content: '⌄'; color: var(--chat-muted, #8b949e); }
+#session-queue-dock summary::after { content: '⌄'; color: var(--chat-muted); }
 #session-queue-dock[open] summary::after { content: '⌃'; }
-#session-queue-hint { margin-left: auto; color: var(--chat-muted, #8b949e); font-weight: 400; }
+#session-queue-hint { margin-left: auto; font-weight: 400; }
 #session-queue-list {
   max-height: min(34vh, 320px);
   overflow: auto;
@@ -47,14 +41,13 @@
   align-items: flex-start;
   gap: 7px;
   padding: 8px;
-  border-top: 1px solid var(--chat-line, #30363d);
+  border-top: 1px solid var(--chat-line);
 }
 .session-queue-handle {
   flex: 0 0 auto;
   align-self: stretch;
   width: 18px;
   padding: 0;
-  color: var(--chat-muted, #8b949e);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 5px;
@@ -67,12 +60,8 @@
   touch-action: none;
   user-select: none;
 }
-.session-queue-handle:hover {
-  color: var(--chat-text, #c9d1d9);
-  border-color: var(--chat-line, #3d444d);
-}
 .session-queue-handle:focus-visible {
-  outline: 2px solid var(--chat-blue, #58a6ff);
+  outline: 2px solid var(--chat-blue);
   outline-offset: 2px;
 }
 #session-queue-list.session-queue-reordering { cursor: grabbing; }
@@ -86,16 +75,13 @@
   position: relative;
   z-index: 2;
   transition: none;
-  background: var(--chat-surface, #161b22);
   border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, .45);
   opacity: .96;
 }
-.session-queue-position { flex: 0 0 auto; min-width: 24px; color: var(--chat-muted, #8b949e); font-size: 11px; text-align: right; }
+.session-queue-position { flex: 0 0 auto; min-width: 24px; font-size: 11px; text-align: right; }
 .session-queue-text {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--chat-text, #c9d1d9);
   font-size: 12px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -116,7 +102,6 @@
 .session-queue-retry {
   flex-basis: 100%;
   margin: 2px 0 0 31px; /* align under the text, past the position number */
-  color: var(--chat-warning, #d29922);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -135,8 +120,6 @@
 }
 .session-queue-insert {
   padding: 3px 9px;
-  color: var(--chat-blue, #79c0ff);
-  background: rgba(56, 139, 253, .08);
   border: 1px solid #1f6feb;
   border-radius: 6px;
 }
@@ -147,9 +130,8 @@
 .session-queue-close {
   width: 28px;
   padding: 0;
-  color: var(--chat-danger, #f85149);
   background: transparent;
-  border: 1px solid var(--chat-danger-line, #6e3630);
+  border: 1px solid var(--chat-danger-line);
   border-radius: 50%;
   font-size: 20px;
   line-height: 1;
@@ -157,17 +139,17 @@
 .session-queue-close:hover:not(:disabled) {
   color: #fff;
   background: #da3633;
-  border-color: var(--chat-danger, #f85149);
+  border-color: var(--chat-danger);
 }
 .session-queue-insert:focus-visible,
 .session-queue-close:focus-visible {
-  outline: 2px solid var(--chat-blue, #58a6ff);
+  outline: 2px solid var(--chat-blue);
   outline-offset: 2px;
 }
 .session-queue-insert:disabled,
 .session-queue-close:disabled {
-  color: var(--chat-muted, #8b949e);
-  border-color: var(--chat-line, #3d444d);
+  color: var(--chat-muted);
+  border-color: var(--chat-line);
   cursor: wait;
   opacity: .75;
 }

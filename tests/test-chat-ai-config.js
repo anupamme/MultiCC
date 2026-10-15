@@ -206,14 +206,15 @@ test('Auto Provider picker exposes protocol pools, ordered candidates and the pe
     { id: 'relay-b', protocol: 'anthropic' },
     { id: 'relay-c', protocol: 'anthropic' },
   ], 'anthropic').candidates.length, 2);
-  assert.match(page, /MultiCCRunConfig\.open\(/);
-  assert.match(page, /MultiCCRunConfig\.pillModel\(/);
+  // 运行配置只有一个入口：Air 宿主页。对话帧里的按钮把对话框交给宿主，自己不再
+  // 留一份药丸文案或对话框。
+  assert.match(page, /window\.parent\?\.__multiccAirRunConfig\?\.\(\)/);
+  assert.doesNotMatch(page, /MultiCCRunConfig\./);
   // 待生效那份 profile 里没有 providerName：展开时整份继承旧车道，药丸上就会写着
-  // 「OpenCode · Claude 官方」。两个入口都必须在换道时放掉旧名字（名字表见
+  // 「OpenCode · Claude 官方」。宿主必须在换道时放掉旧名字（名字表见
   // run-config.js 的 openCodeRouteName + chat-ai-config.js 的 OPENCODE_NATIVE_NAMES）。
   const air = fs.readFileSync(path.join(ROOT, 'public', 'air.js'), 'utf8');
   assert.match(air, /providerName: pending\.providerName \|\| null/);
-  assert.match(page, /providerName: laneChanged \? null : current\.providerName/);
   const run = require('../public/run-config');
   const selection = { mode: 'auto', candidates: [{ providerId: 'a' }, { providerId: 'b' }] };
   assert.equal(run.pillModel({ current: { providerSelection: selection },

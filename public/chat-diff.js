@@ -37,8 +37,8 @@
   var DOCK_STORE_KEY = 'multicc.diffDock';
   var NARROW_QUERY = '(max-width: 640px)';
   var STATUS_COLOR = {
-    M: 'var(--chat-blue, #58a6ff)', A: 'var(--chat-success, #3fb950)', D: 'var(--chat-danger, #f85149)', R: 'var(--chat-purple, #bc8cff)',
-    T: 'var(--chat-warning, #d29922)', C: 'var(--chat-warning, #d29922)', U: 'var(--chat-warning, #d29922)',
+    M: 'var(--chat-blue)', A: 'var(--chat-success)', D: 'var(--chat-danger)', R: 'var(--chat-purple)',
+    T: 'var(--chat-warning)', C: 'var(--chat-warning)', U: 'var(--chat-warning)',
   };
   var STATUS_LABEL = { M: 'M', A: 'A', D: 'D', R: 'R', T: 'T', C: 'C', U: 'U' };
 
@@ -563,8 +563,8 @@
     badge.className = 'diff-status-badge';
     var st = file.status || 'M';
     badge.textContent = STATUS_LABEL[st] || st.charAt(0);
-    badge.style.color = STATUS_COLOR[st] || 'var(--chat-muted, #8b949e)';
-    badge.style.borderColor = STATUS_COLOR[st] || 'var(--chat-line, #30363d)';
+    badge.style.color = STATUS_COLOR[st] || 'var(--chat-muted)';
+    badge.style.borderColor = STATUS_COLOR[st] || 'var(--chat-line)';
     row.appendChild(badge);
 
     var pathWrap = document.createElement('span');
@@ -626,8 +626,8 @@
 
     // Header.
     dom.detailBadge.textContent = STATUS_LABEL[file.status] || (file.status || '?').charAt(0);
-    dom.detailBadge.style.color = STATUS_COLOR[file.status] || 'var(--chat-muted, #8b949e)';
-    dom.detailBadge.style.borderColor = STATUS_COLOR[file.status] || 'var(--chat-line, #30363d)';
+    dom.detailBadge.style.color = STATUS_COLOR[file.status] || 'var(--chat-muted)';
+    dom.detailBadge.style.borderColor = STATUS_COLOR[file.status] || 'var(--chat-line)';
     var split = splitPath(path);
     dom.detailBasename.textContent = split.base || path;
     dom.detailDir.textContent = split.dir || '';
@@ -857,7 +857,7 @@
     } else {
       // Fallback: monospace pre-wrap text.
       var pre = document.createElement('pre');
-      pre.style.cssText = 'margin:0;padding:8px 16px;white-space:pre-wrap;word-break:break-word;font-family:monospace;font-size:12px;color:var(--chat-text, #c9d1d9);';
+      pre.style.cssText = 'margin:0;padding:8px 16px;white-space:pre-wrap;word-break:break-word;font-family:monospace;font-size:12px;color:var(--chat-text);';
       pre.textContent = String(patch || '');
       dom.patchContainer.appendChild(pre);
     }

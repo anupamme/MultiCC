@@ -101,7 +101,7 @@
     dialog.setAttribute('aria-live', 'polite');
     // Intentionally non-modal: a suggestion is a durable, optional decision and
     // must never make the conversation or header controls inert.
-    dialog.style.cssText = 'max-width:440px;width:calc(100% - 40px);padding:20px;border:1px solid var(--chat-line,#30363d);border-radius:14px;background:var(--chat-surface,#161b22);color:var(--chat-text,#c9d1d9);position:fixed;right:16px;bottom:92px;margin:0;z-index:10000;box-shadow:var(--chat-shadow,0 16px 40px rgba(0,0,0,.35));';
+    dialog.style.cssText = 'max-width:440px;width:calc(100% - 40px);padding:20px;border:1px solid var(--chat-line);border-radius:14px;background:var(--chat-surface);color:var(--chat-text);position:fixed;right:16px;bottom:92px;margin:0;z-index:10000;box-shadow:var(--chat-shadow);';
     const title = doc.createElement('h3'); title.textContent = t('taskSeparationTitle');
     const description = doc.createElement('p'); description.textContent = t('taskSeparationBody');
     const names = doc.createElement('p'); names.textContent = `${suggestion.sourceTitle || ''} → ${suggestion.title}`;
@@ -136,7 +136,7 @@
     const pill = doc.createElement('div');
     pill.className = 'task-separation-pill';
     pill.setAttribute('role', 'status');
-    pill.style.cssText = 'position:fixed;right:16px;bottom:92px;z-index:9999;display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--chat-line,#30363d);border-radius:999px;background:var(--chat-surface,#161b22);color:var(--chat-muted,#8b949e);font-size:12px;box-shadow:var(--chat-shadow,0 10px 24px rgba(0,0,0,.3));';
+    pill.style.cssText = 'position:fixed;right:16px;bottom:92px;z-index:9999;display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--chat-line);border-radius:999px;background:var(--chat-surface);color:var(--chat-muted);font-size:12px;box-shadow:var(--chat-shadow);';
     const label = doc.createElement('span');
     label.textContent = `${t(suggestion.stale === true ? 'taskSeparationStale' : 'taskSeparationDeferred')}${suggestion.title ? ' · ' + text(suggestion.title) : ''}`;
     pill.append(label);

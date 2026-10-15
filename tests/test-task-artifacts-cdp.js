@@ -44,13 +44,20 @@ test('artifact sidebar: real page, scoped links, dedupe, search, copy, persisten
       await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...box });
       await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...box });
     };
+    // Chat only renders inside Air, where the artifact toggle lives in the More
+    // menu and the host page opens that menu through the frame's controller. The
+    // fixture stubs chat.js, so it binds the same controller itself.
+    const more = open => page.evaluate(`(window.__more ||= MultiCCChatLiveUi.bindHeaderMoreMenu({window,document,
+      button:document.getElementById('header-more-btn'),menu:document.getElementById('header-more-menu'),
+      wrap:document.getElementById('header-more-wrap')})).${open ? 'open' : 'close'}()`);
+    const clickToggle = async () => { await more(true); await click('#task-artifacts-toggle'); await more(false); };
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     // 产物边栏只剩一个宿主：标准聊天页（Air 的任务面板嵌的就是它）。
     await page.navigate('/chat.html?session=a');
     assert.ok(await page.waitFor(`document.getElementById('task-artifacts-toggle')?.textContent==='产物 3'`));
     assert.equal(await page.evaluate(`document.getElementById('task-artifacts-panel').hidden`), true);
     await page.evaluate(`document.getElementById('input').value='保留我的草稿'`);
-    await click('#task-artifacts-toggle');
+    await clickToggle();
     assert.equal(await page.evaluate(`document.getElementById('task-artifacts-toggle').getAttribute('aria-expanded')`), 'true');
     assert.equal(await page.evaluate(`getComputedStyle(document.body).paddingRight`), '310px');
     assert.equal(await page.evaluate(`document.getElementById('task-artifacts-list').innerText.includes('OTHER TASK')`), false);
@@ -65,9 +72,10 @@ test('artifact sidebar: real page, scoped links, dedupe, search, copy, persisten
     await click('.task-artifacts-meta button');
     assert.ok((await page.evaluate('window.__copied')).endsWith('/artifacts/results/results.json'));
     await click('#task-artifacts-close');
-    assert.equal(await page.evaluate(`document.activeElement.id`), 'task-artifacts-toggle');
+    assert.equal(await page.evaluate(`document.getElementById('task-artifacts-panel').hidden`), true);
+    assert.equal(await page.evaluate(`document.getElementById('task-artifacts-toggle').getAttribute('aria-expanded')`), 'false');
     assert.equal(await page.evaluate(`document.getElementById('input').value`), '保留我的草稿');
-    await click('#task-artifacts-toggle');
+    await clickToggle();
     await page.navigate('/chat.html?session=a');
     assert.ok(await page.waitFor(`document.getElementById('task-artifacts-panel')?.hidden===false`), 'expanded preference survives reload');
     registry.push({ kind: 'page', title: '<img src=x onerror=alert(1)>', taskId: 'tsk_a', url: '/artifacts/new/index.html' });
@@ -94,8 +102,8 @@ test('artifact sidebar: real page, scoped links, dedupe, search, copy, persisten
     errors.push(...await page.evaluate('window.__errors||[]'));
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     await page.navigate('/chat.html?session=a');
-    assert.ok(await page.waitFor(`document.querySelector('#header #task-artifacts-toggle')?.textContent==='产物 4'`));
-    assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('task-artifacts-panel')).colorScheme`), 'dark');
+    assert.ok(await page.waitFor(`document.querySelector('#header-more-menu #task-artifacts-toggle')?.textContent==='产物 4'`));
+    assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('task-artifacts-panel')).colorScheme`), 'light');
     screenshots.push(await page.screenshot('artifact-sidebar-full-chat'));
     // The fixture stubs only chat.js; unrelated full-chat modules may request
     // optional APIs. Sidebar errors are caught on the fully wired task page above.

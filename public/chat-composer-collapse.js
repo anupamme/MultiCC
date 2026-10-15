@@ -17,7 +17,6 @@
   'use strict';
 
   var body = document.body;
-  if (!body.classList.contains('air-chat')) return;
 
   // Only phones fold. A desktop window has room for the whole composer, and
   // folding there would be motion for its own sake.
