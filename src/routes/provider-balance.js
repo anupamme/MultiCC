@@ -20,6 +20,7 @@ const {
 const { fetchKimiBalance } = require('./kimi-quota');
 const { checkEgressIpAllowed } = require('../providers/egress-ip-policy');
 const { balanceBar, renderQuotaBar, COLOR } = require('../quota/quota-bar-view');
+const { providerLimitSnapshot } = require('../quota/provider-limit-sync');
 
 function quotaBarFor(strategy, dto, fetchedAt) {
   if (!dto) return null;
@@ -164,11 +165,17 @@ function createProviderBalanceRuntime(options = {}) {
   // routes (mountProviderRelayQuotaRoutes) must keep answering with a REAL
   // query result, never a stash of their own.
   const lookupCached = typeof options.lookupCached === 'function' ? options.lookupCached : null;
+  function readCached(appType, id) {
+    const provider = getProvider(appType, id);
+    if (!provider) return { ok: false, reason: 'not_found' };
+    const snapshot = providerLimitSnapshot(lookupCached?.(provider.appType, id), now());
+    return snapshot ? { ...snapshot, cached: true } : { ok: false, reason: 'no_cached_limit' };
+  }
 
   // One provider → one result. Providers without a pollable surface resolve to
   // ok:false reason:'unsupported' rather than an HTTP error: "no balance API"
   // is a normal answer the UI must be able to display.
-  async function queryOne(appType, id) {
+  async function fetchOne(appType, id) {
     const provider = getProvider(appType, id);
     if (!provider) return { ok: false, reason: 'not_found' };
     const target = getProviderLimitTarget(appType, id);
@@ -206,9 +213,14 @@ function createProviderBalanceRuntime(options = {}) {
       return staleFallback(lookupCached, provider, target, id, failure) || failure;
     }
     const fetchedAt = now();
+    dto = { ...dto, fetchedAt };
     const success = { ok: true, providerId: id, appType: provider.appType, strategy: target.strategy, dto,
       bar: quotaBarFor(target.strategy, dto, fetchedAt), fetchedAt };
-    if (onResult) { try { onResult(provider.appType, id, success); } catch (_) {} }
+    if (onResult) { try {
+      const recorded = onResult(provider.appType, id, success);
+      const snapshot = providerLimitSnapshot(recorded, fetchedAt);
+      if (snapshot) success.snapshot = snapshot;
+    } catch (_) {} }
     return success;
   }
 
@@ -217,7 +229,7 @@ function createProviderBalanceRuntime(options = {}) {
   async function queryAll() {
     const providers = listProviders();
     const results = await Promise.all(providers.map(async provider => {
-      const result = await queryOne(provider.appType, provider.id);
+      const result = await refreshOne(provider.appType, provider.id);
       return { name: provider.name || '', ...result };
     }));
     return { ok: true, results };
@@ -230,14 +242,14 @@ function createProviderBalanceRuntime(options = {}) {
   function refreshOne(appType, id) {
     const key = `${appType}:${id}`;
     if (refreshing.has(key)) return refreshing.get(key);
-    const pending = queryOne(appType, id)
+    const pending = fetchOne(appType, id)
       .catch(() => null)
       .finally(() => refreshing.delete(key));
     refreshing.set(key, pending);
     return pending;
   }
 
-  return Object.freeze({ queryOne, queryAll, refreshOne, adapters });
+  return Object.freeze({ queryOne: refreshOne, queryAll, refreshOne, readCached, adapters });
 }
 
 function mountProviderBalanceRoutes(app, deps = {}) {
@@ -254,7 +266,9 @@ function mountProviderBalanceRoutes(app, deps = {}) {
   });
   app.get('/api/providers/:appType/:id/balance', async (req, res) => {
     try {
-      const result = await runtime.queryOne(req.params.appType, req.params.id);
+      const result = req.query?.cached === '1'
+        ? runtime.readCached(req.params.appType, req.params.id)
+        : await runtime.queryOne(req.params.appType, req.params.id);
       if (result.reason === 'not_found') return res.status(404).json(result);
       res.json(result);
     } catch (_) {

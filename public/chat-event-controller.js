@@ -377,6 +377,7 @@
         host.updateEffortBtn?.();
         host.updateProviderBtn?.();
       }
+      global.MultiCCChatRateLimit?.refreshProviderLimit?.(true);
       if (message.is_streaming && state.pendingCancel) {
         state.pendingCancel = false;
         host.transportSend?.({ type: 'cancel' });
@@ -816,6 +817,10 @@
           // re-shows it with the fresh decision.
           liveUi.renderApiError?.(message);
           if (message.state !== 'retry_wait' && message.action !== 'retry') host.offerDoctor?.(global.document?.getElementById('api-error-bar'));
+          break;
+        }
+        case 'provider_limit_updated': {
+          global.MultiCCChatRateLimit?.consumeProviderLimitSnapshot?.(message);
           break;
         }
         case 'rate_limit_event': {

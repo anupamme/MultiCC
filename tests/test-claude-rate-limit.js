@@ -772,6 +772,7 @@ test('a provider switch during an in-flight balance query still queries the new 
     await flushClient();
     const pending = [];
     global.fetch = (url) => {
+      if (String(url).includes('?cached=1')) return Promise.resolve({ json: async () => ({ ok: false, reason: 'no_cached_limit' }) });
       if (!String(url).includes('/api/providers/')) {
         return Promise.resolve({ json: async () => ({ bars: {} }) });
       }
@@ -779,7 +780,9 @@ test('a provider switch during an in-flight balance query still queries the new 
     };
     f.C.setCli('codex');
     f.C.setProviderBaseUrl('', 'official', { appType: 'codex' });
+    await flushClient();
     f.C.setProviderBaseUrl('https://relay.example/codex-proxy/official', 'borrowed', { appType: 'codex' });
+    await flushClient();
     assert.equal(pending.length, 2, 'the old in-flight query does not suppress the new provider query');
     assert.ok(pending[1].url.includes('/api/providers/codex/borrowed/balance'));
     // The late answer for the previous provider is dropped by the revision check.

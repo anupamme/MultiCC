@@ -324,6 +324,7 @@ function createUsageLimitPoller({ resolveTarget, broadcast, now = () => Date.now
       }
       // Cache even a null result briefly, so a broken endpoint does not get
       // hammered every turn. A successful later poll overwrites it on TTL expiry.
+      if (dto) dto = { ...dto, fetchedAt: now() };
       cache.set(cacheKey, { at: nowMs, dto, ...(failureDetail ? { error: failureDetail } : {}) });
       inflight.delete(cacheKey);
       return dto;

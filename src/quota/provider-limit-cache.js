@@ -444,6 +444,16 @@ function createProviderLimitCache({
   const db = openDatabase({ Database, file, fsImpl });
   const statements = prepareStatements(db);
   let closed = false;
+  const listeners = new Set();
+  function subscribe(listener) {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+  function notify(entry) {
+    for (const listener of listeners) {
+      try { listener(entry); } catch (_) { /* 持久化成功不受推送失败影响 */ }
+    }
+  }
 
   // Catch-up import: the DB already exists but the legacy JSON is still present
   // (crash between DB rename and archive, or a restored JSON). Legacy only fills
@@ -487,6 +497,8 @@ function createProviderLimitCache({
     ensureOpen();
     const prev = get(appType, id);
     const nowMs = now();
+    const fetchedAt = entry.fetchedAt != null ? Math.trunc(entry.fetchedAt) : nowMs;
+    if (prev && prev.fetchedAt > fetchedAt) return prev;
     const next = {
       appType: String(appType),
       providerId: String(id),
@@ -495,8 +507,8 @@ function createProviderLimitCache({
       summary: entry.summary != null ? entry.summary : (prev ? prev.summary : null),
       summaryText: typeof entry.summaryText === 'string' ? entry.summaryText : (prev ? prev.summaryText : ''),
       barText: typeof entry.barText === 'string' ? entry.barText : (prev ? prev.barText : null),
-      fetchedAt: entry.fetchedAt != null ? Math.trunc(entry.fetchedAt) : nowMs,
-      updatedAt: nowMs,
+      fetchedAt,
+      updatedAt: Math.max(nowMs, (prev?.updatedAt || 0) + 1),
       lastError: null,
       lastErrorCode: null,
       lastErrorAt: null,
@@ -504,6 +516,7 @@ function createProviderLimitCache({
     };
     const tx = db.transaction(() => statements.upsert.run(toRowParams(next)));
     tx.immediate();
+    notify(next);
     return next;
   }
 
@@ -529,8 +542,10 @@ function createProviderLimitCache({
     next.lastErrorCode = meta.code ? String(meta.code) : null;
     next.lastErrorAt = nowMs;
     next.lastAttemptAt = nowMs;
+    next.updatedAt = Math.max(nowMs, (prev?.updatedAt || 0) + 1);
     const tx = db.transaction(() => statements.upsert.run(toRowParams(next)));
     tx.immediate();
+    notify(next);
     return next;
   }
 
@@ -569,10 +584,12 @@ function createProviderLimitCache({
     try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (_) { /* best effort */ }
     try { db.close(); } catch (_) { /* best effort */ }
     closed = true;
+    listeners.clear();
   }
 
   return Object.freeze({
     record,
+    subscribe,
     recordFailure,
     get,
     snapshot,

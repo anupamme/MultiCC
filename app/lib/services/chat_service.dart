@@ -571,6 +571,10 @@ class ChatService {
         _emit('api_error_policy', msg);
         break;
 
+      case 'provider_limit_updated':
+        _emit('provider_limit_updated', msg);
+        break;
+
       case 'rate_limit_event':
         final info = msg['rate_limit_info'];
         if (info is Map) {

@@ -31,6 +31,7 @@ export '../services/transcript_live_folder.dart'
 export 'admission_notes.dart';
 
 part 'chat_provider_history.dart';
+part 'chat_provider_quota_sync.dart';
 
 bool _isRecoverableCodexReconnectErrorText(String text) {
   // 与 public/chat-event-controller.js 的同名判定逐字对齐：前缀是车道展示名，2026-09-24
@@ -1094,6 +1095,7 @@ class ChatProvider extends ChangeNotifier {
           _loadProviderBaseUrl();
         } else {
           _syncActualProviderBaseUrl();
+          refreshVendorQuotas();
         }
         _loadIdleBars();
 
@@ -1680,6 +1682,9 @@ class ChatProvider extends ChangeNotifier {
         notifyListeners();
         break;
 
+      case 'provider_limit_updated':
+        applyProviderLimitSnapshot(evt.payload as Map<String, dynamic>);
+        break;
       case 'rate_limit_event':
         {
           final payload = evt.payload as Map<String, dynamic>;
@@ -1829,6 +1834,7 @@ class ChatProvider extends ChangeNotifier {
     _providerLimitAppType = nextAppType;
     if (changed) {
       _providerLimitRevision += 1;
+      _providerLimitSnapshot = null;
       _activeProviderLimit = null;
       // The passive window bar belongs to whichever provider produced it. On a
       // switch it must not keep speaking for the new provider — a relay
@@ -2004,6 +2010,7 @@ class ChatProvider extends ChangeNotifier {
       // configured-primary URL overwrite the physical route's quota gate.
       if (sid == executionSessionName && _providerSelection == null) {
         _setProviderBaseUrl(baseUrl ?? '');
+        refreshVendorQuotas();
       }
     } catch (_) {
       // Non-fatal: the bar simply stays hidden until a switch provides a baseUrl.
@@ -2077,37 +2084,7 @@ class ChatProvider extends ChangeNotifier {
   // two provider changes in the same microtask, e.g. the CLI config arriving
   // immediately before the provider PATCH's own re-learn).
   String? _providerLimitInFlightKey;
-
-  Future<void> _fetchActiveProviderLimit(
-    int revision,
-    String appType,
-    String providerId,
-  ) async {
-    final inFlightKey = '$appType:$providerId';
-    if (_providerLimitInFlightKey == inFlightKey) return;
-    _providerLimitInFlightKey = inFlightKey;
-    try {
-      final data = await _quota.fetchProviderBalance(appType, providerId);
-      if (revision != _providerLimitRevision ||
-          appType != _providerLimitAppType ||
-          providerId != _providerLimitId) {
-        return;
-      }
-      // A failed query must NOT erase a good bar. The web's refreshProviderLimit
-      // returns on failure without touching the bars, and the server answers a
-      // transient upstream failure with its cached last-known-good bar for
-      // exactly this reason; nulling it here (the old behavior) meant one 20s
-      // timeout hid the chip until the user switched provider or CLI again.
-      // Nothing is kept across an identity change: that path clears the field.
-      if (data == null || data['ok'] != true) return;
-      _activeProviderLimit = data;
-      notifyListeners();
-    } finally {
-      if (_providerLimitInFlightKey == inFlightKey) {
-        _providerLimitInFlightKey = null;
-      }
-    }
-  }
+  Map<String, dynamic>? _providerLimitSnapshot;
 
   Future<void> _fetchArkQuota({bool force = false}) async {
     // Pinned to the baseUrl this query was issued for: a response that lands
@@ -2130,7 +2107,7 @@ class ChatProvider extends ChangeNotifier {
       _arkInFlightUrl = null;
       _arkLoading = false;
     }
-    if (requestBaseUrl != _providerBaseUrl) { notifyListeners(); return; }
+    if (requestBaseUrl != _providerBaseUrl || _providerLimitSnapshot?['kind'] == 'ark') { notifyListeners(); return; }
     if (data == null) {
       _arkErrorAt = _nowMs();
     } else {
@@ -2159,7 +2136,7 @@ class ChatProvider extends ChangeNotifier {
       _kimiInFlightUrl = null;
       _kimiLoading = false;
     }
-    if (requestBaseUrl != _providerBaseUrl) { notifyListeners(); return; }
+    if (requestBaseUrl != _providerBaseUrl || _providerLimitSnapshot?['kind'] == 'kimi') { notifyListeners(); return; }
     if (data == null) {
       _kimiErrorAt = _nowMs();
     } else {
@@ -2252,10 +2229,12 @@ class ChatProvider extends ChangeNotifier {
         _nowMs() - _claudeUsageErrorAt < _vendorQuotaBackoffMs) {
       return;
     }
+    final revision = _providerLimitRevision;
     _claudeUsageFetching = true;
     notifyListeners();
     final data = await _quota.fetchClaudeUsage(session: sessionName, force: force);
     _claudeUsageFetching = false;
+    if (revision != _providerLimitRevision || _providerLimitSnapshot != null) { notifyListeners(); return; }
     if (data == null) {
       _claudeUsageErrorAt = _nowMs();
     } else if (data['status'] == 'idle') {
@@ -2687,6 +2666,7 @@ class ChatProvider extends ChangeNotifier {
   // 扩展体不算「ChangeNotifier 子类的实例成员」，在那儿直接喊 notifyListeners()
   // 会被 analyzer 判成 invalid_use_of_protected_member。
   void _notifyHistoryChanged() => notifyListeners();
+  void _notifyQuotaChanged() => notifyListeners();
   // 未读 / 钉底状态。读写它的行为在 chat_provider_history.dart 的 ChatHistoryLayer
   // 里（扩展不能声明实例字段，所以状态必须留在类体）。
   /// Number of NEW messages received while the user was scrolled up reading

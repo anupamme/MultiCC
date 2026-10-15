@@ -29,17 +29,21 @@ const {
 // just moved, and the reading is then there for every session on that account.
 // The queue enforces the one-a-minute floor and joins an open scrape, so a
 // boundary costs nothing when someone else already read the account.
-function warmClaudeUsage(sessionName) {
+function warmClaudeUsage(sessionName, recordClaude) {
   try {
     const key = claudeProviderKey(sessionName);
     if (!key) return;
-    enqueueClaudeUsage(key).catch(() => {});
+    enqueueClaudeUsage(key).then(entry => {
+      if (entry && recordClaude && claudeProviderKey(sessionName) === key) {
+        recordClaude(sessionName, entry.result, renderClaudeBar(sessionName)?.text);
+      }
+    }).catch(() => {});
   } catch (_) {
     // best-effort: never disturb the chat flow
   }
 }
 
-function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, createPoller, recordLimit }) {
+function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, createPoller, recordLimit, recordClaude }) {
   if (!persistedSessions || !providers || typeof chatBroadcast !== 'function' || typeof createPoller !== 'function') {
     throw new Error('createUsageLimitWiring requires persistedSessions, providers, chatBroadcast, createPoller');
   }
@@ -129,7 +133,7 @@ function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, c
   return {
     ...poller,
     onTurnComplete(sessionName) {
-      warmClaudeUsage(sessionName);
+      warmClaudeUsage(sessionName, recordClaude);
       return poller.onTurnComplete(sessionName);
     },
   };
