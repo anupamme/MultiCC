@@ -96,9 +96,7 @@ func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
 let automationEventSource = CGEventSource(stateID: .privateState)
 
 func deliverAutomationEvent(_ e: CGEvent, pid: pid_t?) {
-  humanInput.notePosted(at: inputClock())
   if let pid = pid { e.postToPid(pid) } else { e.post(tap: .cghidEventTap) }
-  humanInput.notePosted(at: inputClock())
 }
 
 func post(_ e: CGEvent?, pid: pid_t? = nil, flags: CGEventFlags = []) {
@@ -126,7 +124,7 @@ func click(_ p: CGPoint, right: Bool, count: Int) {
 }
 
 // Press at a, smooth-step through ~60Hz leftMouseDragged events, release at b.
-// Always releases, even when the user hits Esc halfway (no stuck button).
+// Always releases, even when the user pauses/cancels halfway (no stuck button).
 func drag(_ a: CGPoint, _ b: CGPoint, ms: Int) -> Bool {
   post(CGEvent(mouseEventSource: automationEventSource, mouseType: .mouseMoved, mouseCursorPosition: a, mouseButton: .left))
   post(CGEvent(mouseEventSource: automationEventSource, mouseType: .leftMouseDown, mouseCursorPosition: a, mouseButton: .left))
@@ -135,8 +133,7 @@ func drag(_ a: CGPoint, _ b: CGPoint, ms: Int) -> Bool {
   var lastPoint = a
   var completed = true
   for i in 1...steps {
-    sampleHumanInput()
-    if control.isHalted || (humanInput.isActive && humanInput.snapshot(at: inputClock()).phase != "running") { completed = false; break }
+    if control.isHalted || (humanInput.isActive && humanInput.isPaused) { completed = false; break }
     let t = Double(i) / Double(steps), e = t * t * (3 - 2 * t)
     let p = CGPoint(x: a.x + (b.x - a.x) * e, y: a.y + (b.y - a.y) * e)
     post(CGEvent(mouseEventSource: automationEventSource, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
@@ -984,131 +981,131 @@ func performDetached(_ e: AXUIElement, _ action: String, grace: Double) -> AXErr
   return sem.wait(timeout: .now() + grace) == .success ? box.v : nil
 }
 
-// MARK: - Human input arbitration
-// Only activity timestamps and held key/button ids are kept, never typed text.
-// Monotonic time makes the countdown immune to wall-clock adjustments.
+// MARK: - Manual pause arbitration
+// The agent assumes it owns the machine. Keyboard and mouse activity is never
+// read as "the user": the text cursor the agent itself opens, its own clicks and
+// typing all look like input to the OS, so guessing made it wait on itself
+// forever. Only the pause button on the floating bar holds automation back, and
+// cancel (or Esc, when the optional tap is installed) stops it.
 final class HumanInputGate {
   private let lock = NSLock()
-  private var lastInput = -Double.infinity
-  private var held = Set<Int>()
   private var active = false
+  private var paused = false
   private var visibleUntil = -Double.infinity
-  private var lastSelfPost = -Double.infinity
-  static let quietSeconds = 0.8
-  static let countdownSeconds = 3.0
+  static let lingerSeconds = 3.0
   var isActive: Bool { lock.lock(); defer { lock.unlock() }; return active }
+  var isPaused: Bool { lock.lock(); defer { lock.unlock() }; return paused }
 
-  func input(at now: Double, token: Int? = nil, down: Bool = false) {
-    lock.lock(); defer { lock.unlock() }
-    lastInput = max(lastInput, now)
-    if let token = token {
-      if down { held.insert(token) } else { held.remove(token) }
-    }
-  }
-  // Events this agent posted to the HID tap also advance the hardware idle
-  // clock and key/button state, so without a taps they look like the user.
-  func notePosted(at now: Double) { lock.lock(); lastSelfPost = now; lock.unlock() }
-  func selfPostAge(at now: Double) -> Double { lock.lock(); defer { lock.unlock() }; return now - lastSelfPost }
+  func setPaused(_ value: Bool) { lock.lock(); paused = value; lock.unlock() }
   func begin(at now: Double) { lock.lock(); active = true; visibleUntil = now; lock.unlock() }
-  func end(at now: Double) { lock.lock(); active = false; visibleUntil = now + 1; lock.unlock() }
-  func releaseMissing(_ isDown: (Int) -> Bool) {
+  func end(at now: Double) { lock.lock(); active = false; visibleUntil = now + HumanInputGate.lingerSeconds; lock.unlock() }
+  func snapshot(at now: Double) -> (phase: String, visible: Bool) {
     lock.lock(); defer { lock.unlock() }
-    held = held.filter(isDown)
-  }
-  func snapshot(at now: Double) -> (phase: String, seconds: Int, visible: Bool) {
-    lock.lock(); defer { lock.unlock() }
-    let age = now - lastInput
-    let phase: String
-    let seconds: Int
-    if !held.isEmpty || age < HumanInputGate.quietSeconds {
-      phase = "paused"; seconds = 0
-    } else if age < HumanInputGate.quietSeconds + HumanInputGate.countdownSeconds {
-      phase = "countdown"
-      seconds = Int(ceil(HumanInputGate.quietSeconds + HumanInputGate.countdownSeconds - age))
-    } else { phase = "running"; seconds = 0 }
-    return (phase, seconds, active || now < visibleUntil)
+    return (paused ? "paused" : "running", active || paused || now < visibleUntil)
   }
 }
 let humanInput = HumanInputGate()
 func inputClock() -> Double { ProcessInfo.processInfo.systemUptime }
 
-// No-focus, click-through desktop status: it must never become an input target.
-final class ComputerUseHUD {
+// Floating control bar: translucent, never takes focus, draggable so it can be
+// moved off whatever the agent needs to reach. Buttons accept the first click
+// because the panel is non-activating.
+final class HUDDragView: NSView {
+  private var grab = NSPoint.zero
+  override var mouseDownCanMoveWindow: Bool { false }
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+  override func mouseDown(with event: NSEvent) {
+    guard let w = window else { return }
+    let m = NSEvent.mouseLocation
+    grab = NSPoint(x: m.x - w.frame.origin.x, y: m.y - w.frame.origin.y)
+  }
+  override func mouseDragged(with event: NSEvent) {
+    guard let w = window else { return }
+    let m = NSEvent.mouseLocation
+    w.setFrameOrigin(NSPoint(x: m.x - grab.x, y: m.y - grab.y))
+  }
+  override func mouseUp(with event: NSEvent) {
+    guard let w = window else { return }
+    UserDefaults.standard.set(NSStringFromPoint(w.frame.origin), forKey: "computerUseBarOrigin")
+  }
+}
+final class HUDButton: NSButton {
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+final class ComputerUseHUD: NSObject {
   private var panel: NSPanel?
   private var label: NSTextField?
+  private var pauseButton: NSButton?
+  private var cancelButton: NSButton?
   private var previous = ""
+  private let size = NSSize(width: 300, height: 38)
+
+  @objc func togglePause() { humanInput.setPaused(!humanInput.isPaused); log(humanInput.isPaused ? "paused from the control bar" : "resumed from the control bar") }
+  @objc func cancel() { control.userStop(); humanInput.setPaused(false) }
+
+  private func startOrigin() -> NSPoint {
+    if let saved = UserDefaults.standard.string(forKey: "computerUseBarOrigin") {
+      let o = NSPointFromString(saved)
+      let r = NSRect(origin: o, size: size)
+      if NSScreen.screens.contains(where: { $0.frame.intersects(r) }) { return o }
+    }
+    let f = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+    return NSPoint(x: f.midX - size.width / 2, y: f.maxY - size.height - 12)
+  }
+  private func button(_ x: CGFloat, _ action: Selector) -> NSButton {
+    let b = HUDButton(title: "", target: self, action: action)
+    b.frame = NSRect(x: x, y: 7, width: 68, height: 24)
+    b.bezelStyle = .rounded; b.controlSize = .small; b.font = .systemFont(ofSize: 12)
+    return b
+  }
+  private func build() {
+    let p = NSPanel(contentRect: NSRect(origin: startOrigin(), size: size),
+                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+    p.level = .statusBar; p.isFloatingPanel = true; p.hidesOnDeactivate = false
+    p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    p.isOpaque = false; p.backgroundColor = .clear; p.hasShadow = true
+    let view = HUDDragView(frame: NSRect(origin: .zero, size: size))
+    view.wantsLayer = true; view.layer?.cornerRadius = 10
+    view.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.6).cgColor
+    let l = NSTextField(labelWithString: "")
+    l.frame = NSRect(x: 12, y: 9, width: 140, height: 20)
+    l.font = .systemFont(ofSize: 13, weight: .medium); l.textColor = .white
+    view.addSubview(l)
+    let pause = button(156, #selector(togglePause)), stop = button(226, #selector(cancel))
+    stop.title = "取消"
+    view.addSubview(pause); view.addSubview(stop)
+    p.contentView = view
+    panel = p; label = l; pauseButton = pause; cancelButton = stop
+  }
+
   func update() {
     let state = humanInput.snapshot(at: inputClock())
     guard state.visible else { panel?.orderOut(nil); previous = ""; return }
-    let text: String
-    if control.isHalted { text = "已停止 · 按 Esc 急停" }
-    else if state.phase == "paused" { text = "已暂停 · 等待鼠标和键盘停止" }
-    else if state.phase == "countdown" { text = "将在 \(state.seconds) 秒后继续操作" }
-    else { text = "AI 正在操作 · 移动鼠标或输入可暂停" }
-    if panel == nil {
-      let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 390, height: 48),
-                      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-      p.level = .statusBar; p.isFloatingPanel = true; p.hidesOnDeactivate = false
-      p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-      p.ignoresMouseEvents = true; p.isOpaque = false; p.backgroundColor = .clear
-      p.hasShadow = true
-      let view = NSView(frame: p.contentView!.bounds)
-      view.wantsLayer = true; view.layer?.cornerRadius = 12
-      view.layer?.backgroundColor = NSColor(white: 0.12, alpha: 0.94).cgColor
-      let l = NSTextField(labelWithString: "")
-      l.frame = NSRect(x: 12, y: 14, width: 366, height: 22)
-      l.font = .systemFont(ofSize: 14, weight: .medium); l.textColor = .white
-      l.alignment = .center; view.addSubview(l); p.contentView = view
-      panel = p; label = l
-    }
-    if text != previous { label?.stringValue = text; previous = text }
-    if let screen = NSScreen.main {
-      panel?.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 195, y: screen.visibleFrame.maxY - 64))
+    if panel == nil { build() }
+    let halted = control.isHalted
+    let text = halted ? "已取消 · 自动操作已停止" : (state.phase == "paused" ? "已暂停" : "AI 正在操作")
+    let title = state.phase == "paused" ? "继续" : "暂停"
+    let key = text + "|" + title + "|" + (halted ? "1" : "0")
+    if key != previous {
+      label?.stringValue = text; pauseButton?.title = title
+      pauseButton?.isHidden = halted; cancelButton?.isHidden = halted
+      previous = key
     }
     panel?.orderFrontRegardless()
   }
 }
 let computerUseHUD = ComputerUseHUD()
 
-// Taps are optional. Without Input Monitoring, sample hardware state while
-// waiting rather than asking for another grant. Synthetic events posted by
-// this agent use privateState, so they do not reset the hardware idle clock.
-let HUMAN_EVENT_TYPES: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .mouseMoved,
-  .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
-  .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
-func sampleHumanInput() {
-  let now = inputClock()
-  // Taps can miss a release (disabled tap, secure input, permissions changing).
-  // Hardware state repairs it and also handles keys already held at startup.
-  humanInput.releaseMissing { token in
-    if token < 1000 { return CGEventSource.keyState(.hidSystemState, key: CGKeyCode(token)) }
-    guard let button = CGMouseButton(rawValue: UInt32(token - 1000)) else { return false }
-    return CGEventSource.buttonState(.hidSystemState, button: button)
-  }
-  // An event can remain held without producing new events (e.g. mouse down).
-  let heldButton = (0...2).contains { CGEventSource.buttonState(.hidSystemState, button: CGMouseButton(rawValue: UInt32($0))!) }
-  let heldKey = (0..<128).contains { CGEventSource.keyState(.hidSystemState, key: CGKeyCode($0)) }
-  // Our own HID-tap posts move the hardware clock and key state too. Without
-  // taps (which filter by EVENT_MARK) attribute that to us, else the AI's own
-  // click/typing in apps like WeChat pauses it forever waiting on itself.
-  let selfAge = humanInput.selfPostAge(at: now)
-  if (heldButton || heldKey) && selfAge >= 1.0 { humanInput.input(at: now); return }
-  if heldButton || heldKey { return }
-  guard !escTaps.contains(where: { $0.port.map { CGEvent.tapIsEnabled(tap: $0) } ?? false }) else { return }
-  let age = HUMAN_EVENT_TYPES.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
-  if age >= selfAge - 0.25 { return }  // newest hardware event is ours
-  if age < HumanInputGate.quietSeconds + HumanInputGate.countdownSeconds { humanInput.input(at: now - age) }
-}
-
-// Wait in the mutation worker; the main run loop keeps delivering physical
-// events and painting the HUD. A bounded wait also survives a forgotten key.
+// Wait in the mutation worker; the main run loop keeps painting the bar. Only an
+// explicit pause holds automation, bounded so a forgotten pause cannot wedge the
+// input lane forever.
 func waitForHumanIdle() -> Bool {
   // Remote-screen input is the user's own manual control, not AI automation.
   if !humanInput.isActive { return !control.isHalted }
-  let deadline = inputClock() + 60
+  let deadline = inputClock() + 300
   while !control.isHalted {
-    sampleHumanInput()
-    if humanInput.snapshot(at: inputClock()).phase == "running" { return true }
+    if !humanInput.isPaused { return true }
     if inputClock() >= deadline { return false }
     usleep(20_000)
   }
@@ -1138,6 +1135,13 @@ final class Control {
       halted = true; haltedAt = Date()
     }
   }
+  // The control bar's cancel button: unlike Esc it is an explicit click on our
+  // own UI, so it stops regardless of whether an operation is in flight.
+  func userStop() {
+    lock.lock(); defer { lock.unlock() }
+    if !halted { log("cancelled from the control bar: computer use stopped") }
+    halted = true; haltedAt = Date()
+  }
   func resume(_ session: String) { lock.lock(); halted = false; lock.unlock(); log("resumed by \(session)") }
 
   func holderConflict(_ session: String) -> String? {
@@ -1159,7 +1163,7 @@ final class Control {
     var r: [String: Any] = ["halted": halted]
     let input = humanInput.snapshot(at: inputClock())
     r["inputState"] = input.visible ? (halted ? "stopped" : input.phase) : "idle"
-    r["resumeSecondsLeft"] = input.seconds
+    r["resumeSecondsLeft"] = 0
     if let h = leaseHolder, leaseUntil > Date() { r["leaseHolder"] = h; r["leaseSecondsLeft"] = Int(leaseUntil.timeIntervalSinceNow) }
     if let t = haltedAt, halted { r["haltedAt"] = ISO8601DateFormatter().string(from: t) }
     return r
@@ -1214,14 +1218,13 @@ func withMutation(_ req: [String: Any], session: String, target: pid_t?, kind: M
   control.begin(session)
   let automation = session != "remote-screen"
   if automation {
-    sampleHumanInput()
     humanInput.begin(at: inputClock())
     DispatchQueue.main.sync { computerUseHUD.update() }
   }
   defer { if automation { humanInput.end(at: inputClock()) }; control.end() }
   guard waitForHumanIdle() else {
     return refused(control.isHalted ? "user-stopped" : "user-active",
-                   "computer use paused by user input; nothing was sent", retrySafe: !control.isHalted)
+                   "computer use paused from the control bar; nothing was sent", retrySafe: !control.isHalted)
   }
   // The user may have switched windows during the pause. Re-check protection
   // and refuse stale foreground/coordinate targets before delivering input.
@@ -1584,6 +1587,11 @@ func handle(_ req: [String: Any]) -> [String: Any] {
 // before any other app's tap can swallow the key) and session level. Either
 // one halting is enough. Counters are diagnostics only: key contents are never
 // recorded, mouse events are counted to prove the tap is alive.
+// Event types the optional Esc tap listens to (Esc itself plus mouse/keyboard
+// counters for diagnostics); they no longer decide whether the user is "active".
+let HUMAN_EVENT_TYPES: [CGEventType] = [.keyDown, .keyUp, .flagsChanged, .mouseMoved,
+  .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+  .otherMouseDown, .otherMouseUp, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged, .scrollWheel]
 final class EscTap {
   let name: String
   let location: CGEventTapLocation
@@ -1601,7 +1609,6 @@ final class EscTap {
       let me = Unmanaged<EscTap>.fromOpaque(info!).takeUnretainedValue()
       // Ignore ALL our synthetic input, including key-up and mouse movement.
       if event.getIntegerValueField(.eventSourceUserData) == EVENT_MARK { return Unmanaged.passUnretained(event) }
-      recordHumanInput(type, event)
       switch type {
       case .tapDisabledByTimeout, .tapDisabledByUserInput:
         if let p = me.port { CGEvent.tapEnable(tap: p, enable: true) }
@@ -1626,24 +1633,6 @@ final class EscTap {
   var snapshot: [String: Any] {
     ["installed": port != nil, "enabled": port.map { CGEvent.tapIsEnabled(tap: $0) } ?? false,
      "keyDowns": keyDowns, "escapes": escapes, "mouseEvents": mouse]
-  }
-}
-func recordHumanInput(_ type: CGEventType, _ event: CGEvent) {
-  if event.getIntegerValueField(.eventSourceUserData) == EVENT_MARK { return }
-  let now = inputClock()
-  switch type {
-  case .keyDown, .keyUp:
-    humanInput.input(at: now, token: Int(event.getIntegerValueField(.keyboardEventKeycode)), down: type == .keyDown)
-  case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
-    humanInput.input(at: now, token: 1000 + Int(event.getIntegerValueField(.mouseEventButtonNumber)),
-                     down: type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown)
-  case .flagsChanged:
-    let code = Int(event.getIntegerValueField(.keyboardEventKeycode))
-    // Query the individual side: aggregate flags stay set when the other
-    // Shift/Cmd key is still held, which must not leave this key stuck down.
-    humanInput.input(at: now, token: code, down: CGEventSource.keyState(.hidSystemState, key: CGKeyCode(code)))
-  case .tapDisabledByTimeout, .tapDisabledByUserInput: break
-  default: humanInput.input(at: now)
   }
 }
 let escTaps = [EscTap("hid", .cghidEventTap), EscTap("session", .cgSessionEventTap)]
@@ -2716,7 +2705,6 @@ func serve() -> Never {
   // The tap needs Accessibility; retry until it is granted.
   installEscMonitor()
   Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
-    sampleHumanInput()
     computerUseHUD.update()
   }
   Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in installEscMonitor() }
