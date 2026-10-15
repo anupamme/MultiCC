@@ -246,6 +246,7 @@
     const terminal = provider.id === `${provider.appType}-official` && !provider.officialAccountId;
     const account = !!provider.officialAccountId;
     const card = make('article', null, 'air-provider-card');
+    card.dataset.providerId = provider.id;
     const head = make('div', null, 'air-provider-card-head');
     const title = make('div');
     title.append(make('span', provider.appType === 'claude' ? 'C' : 'O', `provider-cli-mark ${provider.appType}`));
@@ -267,8 +268,14 @@
       fact(t('airProviderAvailableCli'), provider.compatibleClis.map(cliName).join(' / ') || cliName(provider.appType)),
       fact(t('airProviderTotalUsage'), providerStat(provider)),
     );
-    if (provider.limit?.summaryText) card.append(head, endpoint, facts, make('p', `${provider.limit.stale ? t('airProviderQuotaStale') : t('airProviderQuota')}${provider.limit.summaryText}`, 'air-provider-limit'));
-    else card.append(head, endpoint, facts);
+    card.append(head, endpoint, facts);
+    const limitView = resolveLimit(provider);
+    if (limitView?.text) {
+      const limit = make('p', limitView.text, 'air-provider-limit');
+      limit.title = limitView.title;
+      limit.style.color = limitView.color;
+      card.append(limit);
+    }
     const actions = make('div', null, 'air-provider-card-actions');
     const speed = button(latency.has(provider.id) ? latency.get(provider.id) : t('airProviderSpeedTest'), () => speedTest(provider, speed));
     actions.append(speed);
@@ -692,6 +699,27 @@
     void load();
     return root.MultiCCAirUsage?.reload();
   }
+
+  function resolveLimit(provider) {
+    return root.QuotaBarView?.resolveProviderLimit(provider.limit, {
+      translate: (key, params, fallback) => {
+        const translated = t(key, params);
+        return translated && translated !== key ? translated : fallback;
+      },
+      rolled: t('quotaRolledWindow'),
+    });
+  }
+
+  // Repaint time tokens without fetching quotas or rebuilding card controls.
+  root.setInterval(() => {
+    if (document.hidden || !data) return;
+    document.querySelectorAll('.air-provider-card[data-provider-id]').forEach(card => {
+      const provider = data.providers.find(item => item.id === card.dataset.providerId);
+      const limit = card.querySelector('.air-provider-limit');
+      const view = provider && limit && resolveLimit(provider);
+      if (view) { limit.textContent = view.text; limit.title = view.title; limit.style.color = view.color; }
+    });
+  }, 30_000);
 
   root.MultiCCAirProvider = Object.freeze({ render, refresh, openEditor, toggleAdvanced });
 })(typeof window !== 'undefined' ? window : null);

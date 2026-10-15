@@ -2,6 +2,7 @@
 
 const { safeCode, sanitizePublicText } = require('../http/public-safety');
 const { STALE_MS_DEFAULT } = require('../quota/provider-limit-cache');
+const { providerLimitBar } = require('../quota/quota-bar-view');
 
 const DEFAULT_PROVIDER_IDS = Object.freeze({ claude: null, codex: null });
 const MAX_PROBE_CANDIDATES = 20;
@@ -212,11 +213,11 @@ function createProviderRoutes(rawDeps) {
               kind: entry.kind,
               status: entry.status,
               summary: entry.summary,
-              // Compact summary text (placeholders already stripped) — the
-              // live bar text is intentionally not exposed; it carries
-              // client-expanded {cd}/{ago} markers that a picker shouldn't
-              // re-render.
+              // Keep the legacy summary for older clients; current clients
+              // resolve the canonical bar's time tokens just like chat does.
               summaryText: entry.summaryText,
+              bar: providerLimitBar({ ...entry,
+                stale: !!(entry.fetchedAt != null && nowMs - entry.fetchedAt > staleAfterMs) }),
               fetchedAt: entry.fetchedAt,
               updatedAt: entry.updatedAt,
               lastError: entry.lastError,

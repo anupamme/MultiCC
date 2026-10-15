@@ -23,6 +23,7 @@ const {
   balanceBar,
   renderQuotaBar,
   compactBarText,
+  providerLimitBar,
   arkPlanFromBaseUrl,
   arkWindowLabel,
 } = require('./quota-bar-view');
@@ -188,6 +189,7 @@ function createLimitRecorder({ cache, persistedSessions, providers, now = Date.n
       // out first, so every cycle the reading carries is kept. Dropping GLM's
       // weekly one once made a weekly-exhausted plan read as "5h 0% → usable".
       const main = normalized.kind === 'weekly' ? '1wk' : '5h';
+      summary.window = main;
       const reported = Array.isArray(dto.windows)
         ? dto.windows.map(w => w && windowRow(w.window, w.label, w.usedPercent, w.resetMs))
         : [
@@ -478,10 +480,11 @@ function createLimitRecorder({ cache, persistedSessions, providers, now = Date.n
     try { previous = cache.get(appType, providerId); } catch (_) { previous = null; }
     const rows = mergeWindows(windows.filter(w => w && Number.isFinite(Number(w.usedPercent))),
       previous && previous.summary && previous.summary.windows, Number(at));
-    const text = rows.map(w => `${w.window || '?'} ${Math.round(Number(w.usedPercent))}%`).join(' · ');
+    const summary = { kind: appType, status: 'ok', fetchedAt: at, windows: rows };
+    const text = providerLimitBar({ kind: appType, summary })?.text || '';
     return cache.record(appType, providerId, {
-      kind: 'claude',
-      summary: { kind: 'claude', status: 'ok', fetchedAt: at, windows: rows },
+      kind: appType,
+      summary,
       summaryText: compactBarText(text),
       barText: text || null,
       fetchedAt: at,

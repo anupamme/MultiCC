@@ -390,7 +390,7 @@ test("provider catalog preserves the normalized limit projection", () => {
     },
   });
   assert.deepEqual(p.limit, {
-    kind: "window", status: "ok", summaryText: "5h 80%", fetchedAt: 123_456,
+    kind: "window", status: "ok", summaryText: "5h 80%", bar: null, fetchedAt: 123_456,
     updatedAt: 123_457, lastError: null, lastErrorAt: null, stale: false,
   });
   // no limit → null, never a frozen shell
@@ -399,6 +399,22 @@ test("provider catalog preserves the normalized limit projection", () => {
   const cat = providerCatalog.normalizeCatalog({ providers: [], limitCacheStaleMs: 600_000 });
   assert.equal(cat.limitCacheStaleMs, 600_000);
   assert.equal(providerCatalog.normalizeCatalog({ providers: [] }).limitCacheStaleMs, null);
+});
+
+test('provider pickers resolve the same server bar as the cards, including reset and freshness', () => {
+  const now = 1_700_000_000_000;
+  const { providerLimitBar } = require('../src/quota/quota-bar-view');
+  const { resolveProviderLimit } = require('../public/quota-bar-view');
+  const bar = providerLimitBar({ kind: 'claude', stale: true, fetchedAt: now - 60_000,
+    summary: { windows: [{ window: '7d', usedPercent: 36, resetMs: now + 86_400_000 }] } });
+  const provider = providerCatalog.normalizeProvider({ id: 'p1', appType: 'claude',
+    limit: { summaryText: '7d 36%', bar, fetchedAt: now - 60_000, stale: true } });
+  const resolved = resolveProviderLimit(provider.limit, { now });
+  assert.equal(resolved.text, '1wk 64% 1d · 更新于 1 分钟前 · 过期');
+  assert.equal(ai.providerLimitLabel(provider, null, now), ` · ${resolved.text}`);
+  assert.equal(ai.providerLimitLabel(provider, null, now + 3_600_000),
+    ' · 1wk 64% 23h · 更新于 1 小时前 · 过期');
+  assert.equal(provider.limit.bar, bar);
 });
 
 test("subagent routing policy is one shared rule for chat and Air", () => {
