@@ -1212,6 +1212,40 @@ test('Claude stream reuses one bubble and binds tool input/result without HTML i
   assert.equal(fixture.state.liveStreamUsage.cacheRead, 3);
 });
 
+test('stream events report output the bubble never shows to the speed meter', () => {
+  const seen = [];
+  const tokenRate = {
+    noteRequest: () => seen.push(['request']),
+    noteBlock: kind => seen.push(['block', kind]),
+    noteChunk: text => seen.push(['chunk', text]),
+    noteUsage: tokens => seen.push(['usage', tokens]),
+  };
+  const fixture = controllerFixture({ tokenRate });
+  const generation = fixture.controller.beginGeneration();
+  const stream = event => fixture.controller.handleEvent({ type: 'stream_event', event }, generation);
+  stream({ type: 'message_start', message: { usage: { input_tokens: 5 } } });
+  stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+  stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } });
+  stream({ type: 'content_block_stop', index: 0 });
+  stream({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 't1', name: 'Bash' } });
+  stream({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"c' } });
+  stream({ type: 'message_delta', usage: { output_tokens: 42 } });
+  assert.deepEqual(seen, [
+    ['request'], ['block', 'thinking'], ['chunk', 'hmm'], ['block', null],
+    ['block', 'output'], ['chunk', '{"c'], ['usage', 42],
+  ]);
+  assert.equal(fixture.state.currentTextContent, '', 'thinking stays out of the reply text');
+
+  // Adapter lanes: reasoning and tool arguments arrive as part_delta.
+  seen.length = 0;
+  fixture.state.currentCli = 'codex';
+  fixture.controller.handleEvent({ type: 'part_delta', delta: { type: 'reasoning', text: 'why' } }, generation);
+  fixture.controller.handleEvent({ type: 'part_delta', delta: {
+    type: 'tool', toolId: 'c1', tool: { name: 'shell', arguments: '{"cmd"' },
+  } }, generation);
+  assert.deepEqual(seen, [['chunk', 'why'], ['chunk', '{"cmd"']]);
+});
+
 test('Codex still consumes proxy text deltas for token-level rendering', () => {
   const fixture = controllerFixture();
   fixture.state.currentCli = 'codex';

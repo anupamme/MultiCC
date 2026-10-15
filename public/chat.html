@@ -8,7 +8,7 @@
   <base href="/" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#0d1117" />
-  <title>MultiCC Chat</title><link rel="stylesheet" href="/vendor/highlight.js/github-dark.min.css" /><link rel="stylesheet" href="/error-envelope.css" /><link rel="stylesheet" href="/chat-context-trace.css" />
+  <title>MultiCC Chat</title><link rel="stylesheet" href="/vendor/highlight.js/github-dark.min.css" /><link rel="stylesheet" href="/error-envelope.css" /><link rel="stylesheet" href="/chat-context-trace.css" /><link rel="stylesheet" href="/chat-token-rate.css" />
   <link rel="stylesheet" href="/chat-layout.css" /><script src="/chat-layout.js"></script><script src="/chat-worktree-sync.js"></script><style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     /* iOS Safari height fallback: vh → -webkit-fill-available → dvh. */
@@ -2570,7 +2570,7 @@
          mixing the two on one line made both unreadable. Everything else the
          turn reports lives in the panel this row opens. -->
     <div id="usage-context-row" class="usage-summary-row usage-summary-context" aria-label="本轮上下文占用" data-i18n-aria-label="usageContextRowLabel">
-      <div id="cost-bar" class="usage-summary-bar" data-usage-role="cost" role="button" tabindex="0" aria-live="polite" aria-expanded="false" aria-controls="usage-detail-pop"></div>
+      <div id="cost-bar" class="usage-summary-bar" data-usage-role="cost" role="button" tabindex="0" aria-live="polite" aria-expanded="false" aria-controls="usage-detail-pop"></div><span id="token-rate-bar" class="usage-summary-bar" data-usage-role="token-rate" aria-label="实时 token 速度" data-i18n-aria-label="tokenRateAria"></span>
     </div>
     <div id="usage-detail-pop" class="usage-detail-pop" role="dialog" aria-label="本轮与会话用量" data-i18n-aria-label="usageDetailPopLabel" aria-hidden="true" style="display:none"></div>
   </section>
@@ -2928,7 +2928,7 @@
   <script src="status-presentation.js"></script>
   <script src="chat-ai-config.js"></script><script src="run-config.js"></script>
   <script src="chat-transport.js"></script>
-  <script src="chat-token-readout.js"></script>
+  <script src="chat-token-readout.js"></script><script src="chat-token-rate.js"></script>
   <script src="chat-usage-readout.js"></script>
   <script src="chat-history-store.js"></script>
   <script src="chat-quote.js"></script>

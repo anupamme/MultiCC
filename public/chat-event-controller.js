@@ -933,6 +933,7 @@
           else if (state.currentTextContent && !state.currentTextContent.endsWith('\n\n')) state.currentTextContent += '\n\n';
           host.startTitleAnimation?.();
           host.updateUI?.();
+          host.tokenRate?.noteRequest();
           if (event.message?.usage) {
             // One request's own prompt accounting — the exact context size.
             host.noteRequestUsage?.(event.message.usage);
@@ -943,6 +944,7 @@
           break;
         case 'content_block_start':
           state.activeContentIndex = event.index;
+          host.tokenRate?.noteBlock(/thinking/.test(event.content_block?.type || '') ? 'thinking' : 'output');
           if (event.content_block?.type === 'text') state.activeContentType = 'text';
           else if (event.content_block?.type === 'tool_use') {
             state.activeContentType = 'tool_use';
@@ -963,17 +965,24 @@
             state.currentTextContent += event.delta.text;
             host.renderCurrentText?.();
             host.maybeScrollToBottom?.();
+          } else if (event.delta?.type === 'thinking_delta' && event.delta.thinking) {
+            // Not rendered live, but it is output the model is generating —
+            // without it a long think reads as a stalled stream on the speed chip.
+            host.tokenRate?.noteChunk(event.delta.thinking);
           } else if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
+            host.tokenRate?.noteChunk(event.delta.partial_json);
             const tool = state.currentToolCards.get(event.index);
             if (tool) { tool.inputJson += event.delta.partial_json; historyView.updateToolInput(tool); }
           }
           break;
         case 'content_block_stop':
+          host.tokenRate?.noteBlock(null);
           state.activeContentType = null;
           state.activeContentIndex = -1;
           break;
         case 'message_delta':
           if (event.usage) {
+            host.tokenRate?.noteUsage(event.usage.output_tokens);
             host.updateContextBar?.(event.usage);
             state.liveStreamUsage = liveUi.accumulateLiveUsage(event.usage, state.liveStreamUsage);
             if (state.currentMsgEl) {
@@ -1105,6 +1114,7 @@
           state.currentToolCards.set(`id:${rid}`, tool);
           historyView.appendToolCard(state.currentMsgEl.querySelector('.msg-content'), card);
         }
+        host.tokenRate?.noteChunk(d.text);
         tool.reasoning = (tool.reasoning || '') + d.text;
         tool.inputJson = JSON.stringify({ text: tool.reasoning });
         historyView.updateToolInput(tool);
@@ -1120,6 +1130,7 @@
         }
         // Tool arguments arrive in fragments (like codex function_call_arguments);
         // accumulate and surface what's parsed so far.
+        host.tokenRate?.noteChunk(d.tool.arguments || '');
         tool.args = (tool.args || '') + (d.tool.arguments || '');
         try { tool.inputJson = JSON.stringify(JSON.parse(tool.args)); }
         catch (_) { tool.inputJson = JSON.stringify({ arguments: tool.args }); }

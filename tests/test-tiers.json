@@ -2015,6 +2015,15 @@
       ]
     },
     {
+      "path": "tests/test-chat-token-rate.js",
+      "tier": "other",
+      "lane": "deterministic",
+      "owner": "npm:test:security",
+      "entrypoints": [
+        "npm:test:security"
+      ]
+    },
+    {
       "path": "tests/test-chat-token-readout.js",
       "tier": "other",
       "lane": "deterministic",
