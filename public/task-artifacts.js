@@ -19,12 +19,7 @@
     toggle.dataset.hdrIcon = '📦';
     toggle.onclick = () => setOpen(!opened);
     const header = document.getElementById('header');
-    const airChatMenu = document.body.classList.contains('air-chat') ? document.getElementById('header-more-menu') : null;
-    const airToolbar = document.body.classList.contains('air') ? document.querySelector('#composer .toolbar') : null;
-    if (airChatMenu) airChatMenu.append(toggle);
-    else if (airToolbar) airToolbar.insertBefore(toggle, airToolbar.firstChild);
-    else if (header) header.insertBefore(toggle, header.querySelector('.hdr-spacer'));
-    else { const bar = node('div', null, 'task-artifacts-tools'); bar.append(toggle); document.querySelector('main').insertBefore(bar, document.getElementById('history')); }
+    document.getElementById('header-more-menu')?.append(toggle);
     panel = node('aside'); panel.id = 'task-artifacts-panel'; panel.hidden = true;
     panel.setAttribute('aria-labelledby', 'task-artifacts-heading');
     const head = node('div', null, 'task-artifacts-head');

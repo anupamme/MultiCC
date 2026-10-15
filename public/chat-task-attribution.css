@@ -15,18 +15,18 @@
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 9px;
-  background: var(--chat-surface, #161b22);
-  color: var(--chat-muted, #8b949e);
-  box-shadow: var(--chat-shadow, 0 6px 18px rgba(0,0,0,.24));
+  background: var(--chat-surface);
+  color: var(--chat-muted);
+  box-shadow: var(--chat-shadow);
   cursor: pointer;
 }
 .task-attribution-toggle:hover, .task-attribution-toggle.active {
-  color: var(--chat-text, #c9d1d9);
-  border-color: var(--chat-blue, #58a6ff);
+  color: var(--chat-text);
+  border-color: var(--chat-blue);
 }
-.task-attribution-toggle.active { color: var(--chat-blue, #58a6ff); }
+.task-attribution-toggle.active { color: var(--chat-blue); }
 
 /* The pick control sits on the same corner strip as the delete/quote buttons,
    on the opposite side, so "act on this message" and "choose this turn" never
@@ -40,10 +40,10 @@
   width: 20px;
   height: 20px;
   padding: 0;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 50%;
-  background: var(--chat-soft, #21262d);
-  color: var(--chat-muted, #8b949e);
+  background: var(--chat-soft);
+  color: var(--chat-muted);
   font-size: 10px;
   line-height: 1;
   cursor: pointer;
@@ -52,14 +52,14 @@
 }
 .task-attribution-pick:hover, .task-attribution-pick:focus-visible {
   opacity: 1;
-  color: var(--chat-blue, #58a6ff);
-  border-color: var(--chat-blue, #58a6ff);
+  color: var(--chat-blue);
+  border-color: var(--chat-blue);
   outline: none;
 }
 .task-attribution-pick.picked {
   opacity: 1;
-  color: var(--chat-blue, #58a6ff);
-  border-color: var(--chat-blue, #58a6ff);
+  color: var(--chat-blue);
+  border-color: var(--chat-blue);
   background: var(--chat-blue-soft, rgba(88,166,255,.16));
 }
 
@@ -75,12 +75,12 @@
   gap: 8px;
   max-width: min(680px, calc(100vw - 24px));
   padding: 8px 12px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 12px;
-  background: var(--chat-surface, #161b22);
-  color: var(--chat-text, #c9d1d9);
+  background: var(--chat-surface);
+  color: var(--chat-text);
   font-size: 12px;
-  box-shadow: var(--chat-shadow, 0 12px 28px rgba(0,0,0,.34));
+  box-shadow: var(--chat-shadow);
 }
 /* Automatic suggestions: recorded verdicts waiting for a yes or no. They sit
    above the manual controls because acting on one is the shorter path. */
@@ -90,7 +90,7 @@
   flex-direction: column;
   gap: 4px;
   padding-bottom: 6px;
-  border-bottom: 1px solid var(--chat-line, #30363d);
+  border-bottom: 1px solid var(--chat-line);
 }
 .task-attribution-suggestion {
   display: flex;
@@ -102,24 +102,24 @@
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--chat-warning, #d29922);
+  color: var(--chat-warning);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 .task-attribution-suggestion-accept, .task-attribution-suggestion-dismiss,
 .task-attribution-suggestion-defer, .task-attribution-suggestion-cancel {
   padding: 2px 8px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 7px;
-  background: var(--chat-soft, #21262d);
+  background: var(--chat-soft);
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-suggestion-accept:hover { color: var(--chat-blue, #58a6ff); border-color: var(--chat-blue, #58a6ff); }
-.task-attribution-suggestion-dismiss:hover { color: var(--chat-muted, #8b949e); }
-.task-attribution-suggestion-defer:hover { color: var(--chat-muted, #8b949e); }
-.task-attribution-suggestion-cancel:hover { color: var(--chat-warning, #d29922); border-color: var(--chat-warning, #d29922); }
+.task-attribution-suggestion-accept:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
+.task-attribution-suggestion-dismiss:hover { color: var(--chat-muted); }
+.task-attribution-suggestion-defer:hover { color: var(--chat-muted); }
+.task-attribution-suggestion-cancel:hover { color: var(--chat-warning); border-color: var(--chat-warning); }
 /* §9.1: the same suggestion, next to the stretch of conversation it is about.
    Compact and in flow — it never overlays the transcript, never moves the
    scroll position and never blocks the next message. */
@@ -130,17 +130,17 @@
   flex-wrap: wrap;
   margin: 2px 0 6px;
   padding: 4px 8px;
-  border: 1px solid var(--chat-warning, #d29922);
+  border: 1px solid var(--chat-warning);
   border-left-width: 3px;
   border-radius: 8px;
-  background: var(--chat-soft, #21262d);
+  background: var(--chat-soft);
   font-size: 12px;
 }
 .task-attribution-inline-label {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--chat-warning, #d29922);
+  color: var(--chat-warning);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -148,61 +148,61 @@
 .task-attribution-inline-defer {
   flex: 0 0 auto;
   padding: 2px 8px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 7px;
-  background: var(--chat-surface, #161b22);
-  color: var(--chat-text, #c9d1d9);
+  background: var(--chat-surface);
+  color: var(--chat-text);
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-inline-accept:hover { color: var(--chat-blue, #58a6ff); border-color: var(--chat-blue, #58a6ff); }
-.task-attribution-inline-dismiss:hover, .task-attribution-inline-defer:hover { color: var(--chat-muted, #8b949e); }
+.task-attribution-inline-accept:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
+.task-attribution-inline-dismiss:hover, .task-attribution-inline-defer:hover { color: var(--chat-muted); }
 
 /* A suggestion is worth noticing without opening the mode. */
 .task-attribution-toggle[data-suggestions]:not([data-suggestions="0"]) {
-  color: var(--chat-warning, #d29922);
-  border-color: var(--chat-warning, #d29922);
+  color: var(--chat-warning);
+  border-color: var(--chat-warning);
 }
 /* 独立继续是任务级动作，和「移动轮次」不是一回事：给它一条竖线，别看起来像
    第二个应用按钮。 */
 .task-attribution-continue {
   padding: 2px 9px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-left-width: 3px;
   border-radius: 8px;
-  background: var(--chat-soft, #21262d);
+  background: var(--chat-soft);
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-continue:hover:not(:disabled) { color: var(--chat-warning, #d29922); border-color: var(--chat-warning, #d29922); }
+.task-attribution-continue:hover:not(:disabled) { color: var(--chat-warning); border-color: var(--chat-warning); }
 .task-attribution-continue:disabled { opacity: .55; cursor: default; }
-.task-attribution-hint { color: var(--chat-muted, #8b949e); }
+.task-attribution-hint { color: var(--chat-muted); }
 .task-attribution-count { font-weight: 600; white-space: nowrap; }
-.task-attribution-summary { flex: 1 1 160px; min-width: 0; color: var(--chat-muted, #8b949e); }
-.task-attribution-summary[data-tone="ok"] { color: var(--chat-teal, #39c5cf); }
-.task-attribution-summary[data-tone="warn"] { color: var(--chat-warning, #d29922); }
-.task-attribution-summary[data-tone="error"] { color: var(--chat-danger, #f85149); }
+.task-attribution-summary { flex: 1 1 160px; min-width: 0; color: var(--chat-muted); }
+.task-attribution-summary[data-tone="ok"] { color: var(--chat-teal); }
+.task-attribution-summary[data-tone="warn"] { color: var(--chat-warning); }
+.task-attribution-summary[data-tone="error"] { color: var(--chat-danger); }
 .task-attribution-target {
   min-width: 120px;
   max-width: 220px;
   padding: 4px 6px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 8px;
-  background: var(--chat-soft, #21262d);
+  background: var(--chat-soft);
   color: inherit;
   font: inherit;
 }
 .task-attribution-apply, .task-attribution-cancel, .task-attribution-undo, .task-attribution-toast-close {
   padding: 4px 10px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 8px;
-  background: var(--chat-soft, #21262d);
+  background: var(--chat-soft);
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-apply:hover:not(:disabled) { color: var(--chat-blue, #58a6ff); border-color: var(--chat-blue, #58a6ff); }
+.task-attribution-apply:hover:not(:disabled) { color: var(--chat-blue); border-color: var(--chat-blue); }
 .task-attribution-apply:disabled { opacity: .5; cursor: default; }
 
 .task-attribution-toast {
@@ -216,24 +216,24 @@
   gap: 10px;
   max-width: min(560px, calc(100vw - 24px));
   padding: 8px 12px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 10px;
-  background: var(--chat-surface, #161b22);
-  color: var(--chat-text, #c9d1d9);
+  background: var(--chat-surface);
+  color: var(--chat-text);
   font-size: 12px;
-  box-shadow: var(--chat-shadow, 0 12px 28px rgba(0,0,0,.34));
+  box-shadow: var(--chat-shadow);
 }
 .task-attribution-toast-close { padding: 2px 8px; }
 /* 独立继续的结果链接：必须由用户点击打开，不能在异步返回后自动弹窗。 */
 .task-attribution-link {
   padding: 3px 9px;
-  border: 1px solid var(--chat-line, #30363d);
+  border: 1px solid var(--chat-line);
   border-radius: 8px;
-  color: var(--chat-blue, #58a6ff);
+  color: var(--chat-blue);
   text-decoration: none;
   white-space: nowrap;
 }
-.task-attribution-link:hover { border-color: var(--chat-blue, #58a6ff); }
+.task-attribution-link:hover { border-color: var(--chat-blue); }
 
 @media (max-width: 760px) {
   .task-attribution-toggle { right: 6px; top: calc(50% + 48px); width: 38px; height: 38px; }

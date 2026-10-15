@@ -3,9 +3,10 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { withCdpHarness, findChromeBinary } = require('./helpers/cdp-harness');
 
-// 页头那一批动作有两种形状（chat.html 的「页头动作的两种形状」）：
-//   展开态（桌面）—— 只剩图标，名字挂在 title 上（没有悬浮说明就成了猜谜）；
-//   收进「更多」（手机 / Air）—— 图标占一列、名字占一列，两列对齐。
+// 页头那一批动作有两种形状（chat-header-shapes.css 的「页头动作的两种形状」）：
+//   留在页头（桌面）—— 只剩图标，名字挂在 title 上（没有悬浮说明就成了猜谜）；
+//   收进「更多」—— 图标占一列、名字占一列，两列对齐。
+// 聊天只在 Air 里渲染：大多数动作常驻「更多」，页头只留 Air 不接管的那几个（语言、语音通话）。
 // 这批按钮的名字是脚本随时改写的（记忆/角色带 ✓、自动提交带状态、CLI 换成当前
 // CLI），所以图标不能用节点，只能由 data-hdr-icon 画出来。
 const publicDir = path.resolve(__dirname, '../public');
@@ -24,6 +25,16 @@ for (const file of fs.readdirSync(path.join(publicDir, 'shared')).filter(f => f.
 routes['/auth-client.js'] = {
   headers: { 'content-type': 'text/javascript' },
   body: `window.multiccWsUrl=async url=>url+(url.includes('?')?'&':'?')+'ticket=fixture'`,
+};
+// The run-config dialog is the Air host's (run-config.js); Chat no longer carries
+// a copy. Its own logic is exercised on a bare page with air.html's load order.
+routes['/run-config-host.html'] = {
+  headers: { 'content-type': 'text/html' },
+  body: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/run-config.css"><body>
+${['auth-client.js', 'i18n-catalog.js', 'i18n.js', 'shared/dom-helpers.js', 'shared/format.js', 'api-client.js',
+  'provider-catalog.js', 'auto-provider-editor.js', 'shared/models.js', 'chat-ai-config.js', 'run-config.js']
+  .map(src => `<script src="/${src}"></script>`).join('')}</body>`,
 };
 routes['/api/sessions'] = () => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ok: true, sessions: [], directories: [] }) });
 
@@ -52,14 +63,15 @@ const openMenuOnPhone = async page => {
   assert.ok(await page.waitFor(`document.getElementById('header-more-menu')?.matches(':popover-open')`));
 };
 
-test('desktop header row: every action is icon + hover tooltip, state via a badge', async t => {
+test('desktop header row: every action left in the header is icon + hover tooltip, state via a badge', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
   await withCdpHarness({ routes, screenshotDir: qaDir() }, async page => {
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
     await page.navigate('/chat.html?session=shapes');
     assert.ok(await page.waitFor(`document.getElementById('header') && document.getElementById('lang-btn')`));
     const shapes = await page.evaluate(expandedProbe);
-    assert.ok(shapes.length >= 10, `页头展开态该有一排动作：${shapes.length}`);
+    // Air 不接管的那几个动作留在帧内页头（其余都在「更多」里）。
+    assert.ok(shapes.length >= 2 && shapes.some(item => item.id === 'lang-btn'), `页头该留着 Air 不接管的动作：${JSON.stringify(shapes.map(item => item.id))}`);
     for (const item of shapes) {
       assert.equal(item.font, '0px', `${item.id} 的名字该收起来（字号仍是 ${item.font}）`);
       assert.ok(item.icon && item.icon !== 'none', `${item.id} 该画出图标`);
@@ -106,7 +118,7 @@ test('More menu: every row is an icon column plus a name column, names share one
   });
 });
 
-test('standalone Chat opens shared runtime settings and preserves pending subagent settings on save', async t => {
+test('run-config dialog opens on the pending profile and preserves pending subagent settings on save', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
   const json = value => ({ headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
   const provider = { id: 'relay', name: 'Test Relay', protocol: 'anthropic', appType: 'claude',
@@ -127,13 +139,13 @@ test('standalone Chat opens shared runtime settings and preserves pending subage
   const screenshots = process.env.MULTICC_RUNTIME_QA_DIR || qaDir();
   await withCdpHarness({ routes: fixture, screenshotDir: screenshots }, async page => {
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-    await page.navigate('/chat.html?session=runtime');
-    assert.ok(await page.waitFor(`document.getElementById('model-btn')?.textContent.includes('claude-opus-4-8')`));
-    const header = await page.evaluate(`({ pill: document.getElementById('model-btn').getBoundingClientRect().toJSON(),
-      legacy: ['cli-btn','provider-btn','effort-btn'].map(id => getComputedStyle(document.getElementById(id)).display) })`);
-    assert.ok(header.pill.width > 0 && header.pill.right <= 390, JSON.stringify(header));
-    assert.deepEqual(header.legacy, ['none', 'none', 'none']);
-    await page.evaluate(`document.getElementById('model-btn').click()`);
+    await page.navigate('/run-config-host.html');
+    assert.ok(await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig'));
+    // The same call Air makes from its composer card: the session's configuration,
+    // including the pending profile that applies from the next turn.
+    await page.evaluate(`window.__saved = 0; window.MultiCCRunConfig.open({ sessionId: 'runtime', configuration: {
+      cli: 'claude-exp', provider: 'relay', model: 'claude-sonnet-4-6', effectiveModel: 'claude-sonnet-4-6',
+      pendingConfiguration: ${JSON.stringify(info.pendingConfiguration)} } }, ['claude-exp', 'codex-exp'], () => { window.__saved++; })`);
     assert.ok(await page.waitFor(`document.querySelector('.air-config-dialog[open] .rc-model')?.value === 'claude-opus-4-8'`));
     assert.equal(await page.evaluate(`document.querySelector('.rc-sub-provider').value`), 'relay');
     const metrics = await page.send('Page.getLayoutMetrics');
@@ -146,7 +158,7 @@ test('standalone Chat opens shared runtime settings and preserves pending subage
     assert.equal(pendingProfile.model, 'claude-sonnet-4-6');
     assert.deepEqual(pendingProfile.subagent, { providerId: 'relay', model: 'claude-sonnet-4-6' });
     assert.ok(page.requests.some(req => req.method === 'PATCH' && req.path === '/api/sessions/runtime'));
-    assert.match(await page.evaluate(`document.getElementById('model-btn').textContent`), /下轮生效/);
+    assert.ok(await page.waitFor('window.__saved === 1'), 'the host is told the save landed');
     console.log('Runtime save screenshot (390×844 CSS pixels):', await page.screenshot('chat-runtime-config-saved'));
   });
 });
@@ -171,8 +183,8 @@ test('switching from DeepSeek to Codex official drops the old model from the act
     },
   };
   await withCdpHarness({ routes: fixture, artifactsDir: path.join(os.tmpdir(), 'multicc-codex-switch-cdp') }, async page => {
-    await page.navigate('/chat.html?session=switch-test');
-    await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig');
+    await page.navigate('/run-config-host.html');
+    assert.ok(await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig'));
     await page.evaluate(`window.MultiCCRunConfig.open({ sessionId: 'switch-test', configuration: {
       cli: 'codex', provider: 'ds', model: 'deepseek-flash' } }, ['codex'], () => {});`);
     assert.ok(await page.waitFor(`document.querySelector('.rc-model')?.value === 'deepseek-flash'`));

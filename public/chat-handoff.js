@@ -10,14 +10,14 @@
    因此没有 git 开关，只有一个「只导执行环境」。 */
 
 (function installChatHandoff(root) {
-  const OVERLAY_STYLE = 'position:fixed;inset:0;background:var(--chat-overlay, rgba(0,0,0,.7));z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
-  const BOX_STYLE = 'background:var(--chat-surface, #161b22);border:1px solid var(--chat-line, #30363d);border-radius:12px;padding:18px;width:560px;max-width:94vw;max-height:90vh;overflow:auto;color:var(--chat-text, #c9d1d9);';
-  const FIELD_STYLE = 'width:100%;box-sizing:border-box;background:var(--chat-canvas, #0d1117);border:1px solid var(--chat-line, #30363d);border-radius:6px;color:var(--chat-text, #c9d1d9);font-size:13px;padding:7px 9px;';
-  const BUTTON_STYLE = 'background:var(--chat-soft, #21262d);border:1px solid var(--chat-line, #30363d);border-radius:6px;color:var(--chat-text, #c9d1d9);font-size:13px;padding:6px 14px;cursor:pointer;';
+  const OVERLAY_STYLE = 'position:fixed;inset:0;background:var(--chat-overlay);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+  const BOX_STYLE = 'background:var(--chat-surface);border:1px solid var(--chat-line);border-radius:12px;padding:18px;width:560px;max-width:94vw;max-height:90vh;overflow:auto;color:var(--chat-text);';
+  const FIELD_STYLE = 'width:100%;box-sizing:border-box;background:var(--chat-canvas);border:1px solid var(--chat-line);border-radius:6px;color:var(--chat-text);font-size:13px;padding:7px 9px;';
+  const BUTTON_STYLE = 'background:var(--chat-soft);border:1px solid var(--chat-line);border-radius:6px;color:var(--chat-text);font-size:13px;padding:6px 14px;cursor:pointer;';
   const PRIMARY_STYLE = 'background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:13px;padding:7px 14px;cursor:pointer;';
-  const MUTED = 'color:var(--chat-muted, #8b949e);';
-  const DANGER = 'color:var(--chat-danger, #f85149);';
-  const SUCCESS = 'color:var(--chat-success, #3fb950);';
+  const MUTED = 'color:var(--chat-muted);';
+  const DANGER = 'color:var(--chat-danger);';
+  const SUCCESS = 'color:var(--chat-success);';
 
   // 执行环境是全量的：machine / cli / shared 这三层本来就是「别的会话也在读」的
   // 层，少带一层就不是复刻环境了。context / code 层由 context=0、git=0 单独关。

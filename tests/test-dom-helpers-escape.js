@@ -80,9 +80,6 @@ const REGISTRY = {
   'public/chat-handoff.js': [
     { name: 'esc', mode: 'delegate', reason: '交接包弹窗，chat.html 在它之前加载 shared/dom-helpers.js' },
   ],
-  'public/share.html': [
-    { name: 'esc', mode: 'delegate', reason: 'inline 脚本前的 <script src="/shared/dom-helpers.js">' },
-  ],
   'public/manage-official-accounts.js': [
     { name: 'esc', mode: 'fallback', reason: 'Air 有 dom-helpers.js 就用它；单独加载（单元测试 / 旧页）时自己转全五个，绝不吐原文' },
   ],

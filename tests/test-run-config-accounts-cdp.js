@@ -23,6 +23,15 @@ routes['/auth-client.js'] = {
   headers: { 'content-type': 'text/javascript' },
   body: `window.multiccWsUrl=async url=>url+(url.includes('?')?'&':'?')+'ticket=fixture'`,
 };
+// 运行配置由 Air 宿主页加载；用相同依赖顺序测试账户功能，不依赖聊天帧里的旧副本。
+routes['/run-config-host.html'] = {
+  headers: { 'content-type': 'text/html' },
+  body: `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/run-config.css"><body>
+${['auth-client.js', 'i18n-catalog.js', 'i18n.js', 'shared/dom-helpers.js', 'shared/format.js', 'api-client.js',
+  'provider-catalog.js', 'auto-provider-editor.js', 'shared/models.js', 'chat-ai-config.js', 'run-config.js']
+  .map(src => `<script src="/${src}"></script>`).join('')}</body>`,
+};
 routes['/api/sessions'] = () => json({ ok: true, sessions: [], directories: [] });
 routes['/api/providers'] = () => json({ providers: [], defaults: {} });
 
@@ -53,8 +62,8 @@ test('Command Code: add an account inline, save the pick, delete it back to the 
   };
   await withCdpHarness({ routes: fixture, screenshotDir: qaDir() }, async page => {
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1180, height: 900, deviceScaleFactor: 1, mobile: false });
-    await page.navigate('/chat.html?session=acct');
-    await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig');
+    await page.navigate('/run-config-host.html');
+    assert.ok(await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig'));
     await page.evaluate(`window.MultiCCRunConfig.open({ sessionId: 'acct', configuration: { cli: 'commandcode', model: 'deepseek/deepseek-v4-flash' } }, ['commandcode', 'claude-exp'], () => {})`);
     assert.ok(await page.waitFor(`${visible('.rc-account')} && !document.querySelector('.air-config-dialog[open] .rc-account').disabled`), 'account row shows for Command Code');
     assert.deepEqual(await page.evaluate(optionTexts), ['=本机 CLI 登录（默认）', '__add_account__=＋ 添加账户…']);
@@ -114,8 +123,8 @@ test('OpenCode: a stored pick is shown, hidden on a MultiCC line; a vanished one
   };
   await withCdpHarness({ routes: fixture, screenshotDir: qaDir() }, async page => {
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    await page.navigate('/chat.html?session=oc');
-    await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig');
+    await page.navigate('/run-config-host.html');
+    assert.ok(await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig'));
     await page.evaluate(`window.MultiCCRunConfig.open({ sessionId: 'oc', configuration: { cli: 'opencode', model: 'opencodego/deepseek-v4-flash' } }, ['opencode'], () => {})`);
     assert.ok(await page.waitFor(`document.querySelector('.air-config-dialog[open] .rc-account')?.value === '${OLD_ID}'`));
     assert.match(await page.evaluate(`document.querySelector('.air-config-dialog[open] .rc-account-field .rc-note').textContent`), /Zen 与 Go 共用/);

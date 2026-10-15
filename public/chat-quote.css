@@ -19,9 +19,7 @@
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 1px solid var(--chat-line, #30363d);
-  background: var(--chat-soft, #21262d);
-  color: var(--chat-muted, #8b949e);
+  border: 1px solid var(--chat-line);
   font-size: 11px;
   line-height: 1;
   padding: 0;
@@ -31,5 +29,5 @@
   z-index: 2;
 }
 .msg:hover .msg-quote, .msg-quote:focus { opacity: 1; }
-.msg-quote:hover { color: var(--chat-warning, #d29922); border-color: var(--chat-warning, #d29922); }
+.msg-quote:hover { color: var(--chat-warning); border-color: var(--chat-warning); }
 @media (hover: none) { .msg-quote { opacity: .4; } }

@@ -27,15 +27,8 @@ function buildRoutes(publicDir) {
   const html = fs.readFileSync(path.join(publicDir, 'chat.html'), 'utf8')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
     .replace(/<link[^>]*https:\/\/cdn[^>]*>/g, '')
-    .replace('<body', '<body class="air-chat"')
     .replace('</body>', '<script src="/chat-composer-collapse.js"></script></body>');
   routes['/'] = { body: html, headers: { 'content-type': 'text/html' } };
-  // The same frame as it arrives without ?air=1: chat.html adds .air-chat from
-  // the query string, so the fold's gate is a load-time decision.
-  routes['/plain'] = {
-    body: html.replace('<body class="air-chat"', '<body'),
-    headers: { 'content-type': 'text/html' },
-  };
   return routes;
 }
 
@@ -97,7 +90,6 @@ test('the mobile composer folds into an oval as the transcript is scrolled back'
         hasDraft: pill.classList.contains('has-draft'),
         radius: parseFloat(getComputedStyle(card).borderBottomLeftRadius),
         focus: document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : '',
-        kids: card.children.length,
         cardInline: card.style.height,
         clipInline: clip.style.height,
         viewport: scroller.clientHeight,
@@ -118,7 +110,6 @@ test('the mobile composer folds into an oval as the transcript is scrolled back'
     const wholeCard = s.card;
     const wholeClip = s.clip;
     const wholeViewport = s.viewport;
-    const wholeKids = s.kids;
     // Folding hands the composer's room back to the transcript, so a distance
     // read while folded is short by exactly this much: the fold now owns part
     // of the number that drives it, which is the whole point of the module.
@@ -299,22 +290,5 @@ test('the mobile composer folds into an oval as the transcript is scrolled back'
 
     const errors = await page.evaluate('window.__errors');
     assert.deepEqual(errors, [], `the page should stay quiet: ${errors.join(' | ')}`);
-
-    // 14. the same phone frame without ?air=1 is left completely alone: no
-    //     fold, and no stray oval button sitting inside the composer.
-    await page.navigate('/plain');
-    assert.ok(await page.waitFor('document.getElementById("input-bar") !== null'),
-      'the plain frame should still have its composer');
-    const plain = await page.evaluate(String.raw`(() => ({
-      hasPill: !!document.getElementById('air-composer-pill'),
-      folded: document.body.classList.contains('air-composer-fold'),
-      kids: document.getElementById('input-bar').children.length,
-    }))()`);
-    assert.equal(plain.folded, false, 'a frame that is not Air must not fold');
-    assert.equal(plain.hasPill, false, 'a frame that is not Air must not be given the oval');
-    // The oval is the module's only addition to the composer, so the markup a
-    // frame it never touched receives carries exactly one child fewer.
-    assert.equal(plain.kids, wholeKids - 1,
-      `the composer must be left as it was found, ${plain.kids} children vs ${wholeKids - 1}`);
   });
 });

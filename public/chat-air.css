@@ -6,8 +6,7 @@ body.air-chat {
   --air-muted: #596d82;
   --air-line: #dce7f2;
   --air-blue: #146dce;
-  /* Shared tokens also reach restored messages and inline styles created by
-     live controllers. Legacy Chat retains the fallback in each declaration. */
+  /* 所有聊天入口共用浅色令牌，也供恢复的消息和控制器生成的内联样式使用。 */
   --chat-canvas: #f7faff;
   --chat-surface: #fff;
   --chat-soft: #eef3f8;
@@ -400,8 +399,8 @@ body.air-chat.task-artifacts-chat .task-artifacts-toggle { color-scheme: light; 
 .air-chat .chat-dialog-backdrop .btn-red { color: #fff; border-color: var(--chat-danger); background: var(--chat-danger); }
 .air-chat :focus-visible { outline: 2px solid var(--chat-blue); outline-offset: 2px; }
 
-/* Local light syntax palette: CDN github-dark remains the legacy fallback.
-   Scope all hljs tokens so both language detection and streamed blocks work. */
+/* 本地浅色语法配色；vendor 样式仍提供代码块的基础布局。
+   覆盖全部 hljs 令牌，兼容语言检测和流式代码块。 */
 .air-chat .hljs { color: var(--chat-text); background: var(--chat-soft); }
 .air-chat .hljs-doctag, .air-chat .hljs-keyword, .air-chat .hljs-meta .hljs-keyword,
 .air-chat .hljs-template-tag, .air-chat .hljs-template-variable, .air-chat .hljs-type,

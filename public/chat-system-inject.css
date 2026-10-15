@@ -16,9 +16,9 @@
   align-self: flex-start;
   max-width: min(620px, 92%);
   padding: 5px 10px;
-  color: var(--chat-muted, #8b949e);
-  background: var(--chat-soft, #21262d);
-  border: 1px solid var(--chat-line, #30363d);
+  color: var(--chat-muted);
+  background: var(--chat-soft);
+  border: 1px solid var(--chat-line);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.5;
@@ -33,9 +33,9 @@
 }
 
 .system-inject-icon { font-size: 11px; opacity: .8; }
-.system-inject-label { font-weight: 600; color: var(--chat-muted, #8b949e); }
-.system-inject-head:hover .system-inject-label { color: var(--chat-text, #e7eaee); }
-.system-inject-arrow { font-size: 9px; color: var(--chat-muted, #6e7681); transition: transform .2s; }
+.system-inject-label { font-weight: 600; color: var(--chat-muted); }
+.system-inject-head:hover .system-inject-label { color: var(--chat-text); }
+.system-inject-arrow { font-size: 9px; color: var(--chat-muted); transition: transform .2s; }
 .msg.user.system-inject.open .system-inject-arrow { transform: rotate(90deg); }
 
 /* 折叠态就是「一行 + 省略号」：正文一直在 DOM 里（textContent，从不解析成 HTML），
@@ -45,7 +45,7 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--chat-muted, #8b949e);
+  color: var(--chat-muted);
 }
 .msg.user.system-inject.open .system-inject-body {
   white-space: pre-wrap;
@@ -58,6 +58,6 @@
    卡片不是蓝底，同一条尾注得按卡片的色调重画。 */
 .msg.user.system-inject > .msg-task-tail {
   margin-left: 0;
-  color: var(--chat-muted, #8b949e);
+  color: var(--chat-muted);
   text-align: left;
 }
