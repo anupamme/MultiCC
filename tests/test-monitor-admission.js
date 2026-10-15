@@ -276,7 +276,7 @@ for (const lane of ['sdk', 'legacy']) test(`real ${lane} Monitor progress during
 // A resident session driven turn by turn against the fake upstream, with the
 // production background runtime deciding every native notification.
 async function residentSession(t, lane, reply, backgroundHold = { quietMs: 300 }, managedRoute = false) {
-  const injections = [], decisions = [], main = [];
+  const injections = [], decisions = [], main = [], broadcasts = [];
   const f = await sdkFixture(t, args => {
     const first = JSON.stringify(args.input.messages[0]?.content || '');
     if (first.includes('SUBAGENT_JOB')) return reply.sub?.(args);
@@ -287,7 +287,7 @@ async function residentSession(t, lane, reply, backgroundHold = { quietMs: 300 }
   const name = `resident-${lane}-${randomUUID().slice(0, 8)}`;
   const state = { cwd: f.cwd, currentToolCalls: [], isStreaming: false };
   const background = createBackgroundTaskRuntime({
-    broadcast() {}, observeTask() {}, noteBgResultInjected() {},
+    broadcast: (id, event) => broadcasts.push(event), observeTask() {}, noteBgResultInjected() {},
     deliverSystem: (id, text) => { injections.push(text); },
     createCoalescer: coalescing.createCoalescer, buildNudge: coalescing.buildNudge,
     classifyCompletion: coalescing.classifyBgCompletion,
@@ -332,7 +332,7 @@ async function residentSession(t, lane, reply, backgroundHold = { quietMs: 300 }
       });
     } finally { state.isStreaming = false; }
   }
-  return { f, stream, name, background, turn, injections, decisions, main, go: file => fs.writeFileSync(path.join(f.cwd, file), 'go') };
+  return { f, stream, name, background, turn, injections, decisions, main, broadcasts, go: file => fs.writeFileSync(path.join(f.cwd, file), 'go') };
 }
 
 const backgroundAgent = { type: 'tool_use', id: 'agent-tool', name: 'Agent', input: {
@@ -367,10 +367,20 @@ for (const lane of ['sdk', 'legacy']) test(`real ${lane} background Agent finish
   const s = await residentSession(t, lane, { main: n => n === 1 ? backgroundAgent : null, sub: subagentReply });
   const turn = s.turn('Research in the background');
   await untilRequests(s, 2);
+  const agent = s.broadcasts.find(event => event.type === 'monitor_started' && event.subagent_type === 'general-purpose');
+  assert.ok(agent, '真实子助手开始事件带有类型');
+  assert.ok(agent.run_id, '真实子助手开始事件带有运行标识');
+  assert.equal(agent.task_type, 'local_agent');
+  const snapshot = s.background.listActiveBackgroundTasks(s.name).find(task => task.task_id === agent.task_id);
+  assert.equal(snapshot.run_id, agent.run_id, '重连快照保留同一次运行');
+  assert.equal(snapshot.subagent_type, 'general-purpose');
   assert.equal(await settled(turn), false, 'the answer is held while the agent runs');
   assert.equal(s.main.length, 2);
   s.go('agent-go');
   await turn;
+  const completed = s.broadcasts.find(event => event.type === 'monitor_done' && event.task_id === agent.task_id);
+  assert.equal(completed.run_id, agent.run_id, '完成事件保留运行标识');
+  assert.equal(completed.subagent_type, 'general-purpose');
   assert.equal(s.main.length, 3, `one native self-wake, inside the turn (${s.decisions.join(', ')})`);
   assert.match(s.main[2], /AGENT_FINAL_REPORT[\s\S]*END_OF_REPORT/);
   assert.deepEqual(s.injections, [], 'no 🔇 for a report the turn received');

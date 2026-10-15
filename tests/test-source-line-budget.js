@@ -77,10 +77,7 @@ test('the current tracked tree satisfies the ratcheted budget', () => {
   // Debt is allowed only where MIGRATION_DEBT declares it. Anything else over
   // budget is a violation above, so this pins the declared set — a new god file
   // cannot be quietly parked here, and retiring an entry (by splitting the file
-  // back under 3000) means shrinking this list in the same commit. The
-  // chat_provider.dart retired its debt on 2026-10-08 after the usage-cache
-  // refactor brought it below 3000. server.js registered its new debt on
-  // 2026-10-09. Pin those policy changes without relaxing either budget.
-  assert.deepEqual(result.debts.map(entry => entry.file),
-    ['server.js']);
+  // back under 3000) means shrinking this list in the same commit.
+  // 当前主线已清除所有迁移债务，不能继续要求 server.js 保留过时例外。
+  assert.deepEqual(result.debts.map(entry => entry.file), []);
 });

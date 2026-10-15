@@ -4583,5 +4583,20 @@
   "hookNewHint": "Each firing creates a new session and sends it the instruction below with the source details.",
   "hookTargetNew": "new session",
   "hookTargetSession": "session {id}",
-  "hookSessionSearch": "Search sessions (title or workspace)"
+  "hookSessionSearch": "Search sessions (title or workspace)",
+  "backgroundTaskType": "Type: {value}",
+  "backgroundTaskParent": "Parent: {value}",
+  "backgroundTaskRun": "Run: {value}",
+  "backgroundTaskId": "Task: {value}",
+  "backgroundTypeExplore": "Code exploration",
+  "backgroundTypePlan": "Planning",
+  "backgroundTypeGeneral": "General assistant",
+  "backgroundTypeMain": "Main session",
+  "backgroundTypeReview": "Code review",
+  "backgroundTypeBash": "Command execution",
+  "backgroundTypeAgent": "Subagent",
+  "backgroundTypeCommand": "Background command",
+  "backgroundTypeWorkflow": "Workflow",
+  "backgroundTypeMonitor": "Background monitor",
+  "backgroundTypeTool": "Tool task"
 }

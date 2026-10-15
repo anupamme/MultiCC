@@ -2,6 +2,7 @@
 
 const { redactProviderRouteCapability } = require('../observability');
 const { createNativeBackgroundTasks } = require('./native-background-tasks');
+const { createTaskMetadata } = require('./background-task-metadata');
 
 // Session-scoped runtime for Claude Code Monitor / run_in_background events.
 // All host effects are injected so this module can be exercised without
@@ -80,6 +81,7 @@ function createBackgroundTaskRuntime(deps = {}) {
   const mainToolUses = new Map();
   const knownSessions = new Set();
   const nativeTasks = createNativeBackgroundTasks({ broadcast, observe, now });
+  const taskMetadata = createTaskMetadata();
 
   const schedule = (fn, ms) => {
     const timer = setTimer(fn, ms);
@@ -348,7 +350,12 @@ function createBackgroundTaskRuntime(deps = {}) {
       if (!isBackgroundShadow(sessionName, taskId)) continue;
       out.push({ id: taskId, task_id: taskId, description: safeDescription(shadow.description) });
     }
-    return out;
+    const seen = new Set(out.map(task => task.task_id));
+    for (const task of taskMetadata.active(sessionName)) {
+      if (!seen.has(task.task_id || task.id)) out.push(task);
+    }
+    return out.map(task => ({ ...task, ...taskMetadata.fields(sessionName, task.task_id || task.id),
+      description: taskMetadata.description(sessionName, task.task_id || task.id) || task.description }));
   }
 
   // Safety net for the case the completion event can never arrive: the host
@@ -360,13 +367,14 @@ function createBackgroundTaskRuntime(deps = {}) {
   function reapSessionShadows(sessionName, opts = {}) {
     const sessionShadows = shadows.get(sessionName);
     const watches = monitorWatches.get(sessionName);
+    const snapshotTasks = new Map(taskMetadata.active(sessionName).map(task => [task.task_id || task.id, task]));
     const ids = new Set([...(sessionShadows?.keys() || []),
-      ...[...(watches || [])].filter(([, watch]) => watch.live).map(([id]) => id)]);
+      ...[...(watches || [])].filter(([, watch]) => watch.live).map(([id]) => id), ...snapshotTasks.keys()]);
     const reason = String(opts.reason || 'process_exit');
     let reaped = nativeTasks.reap(sessionName);
     for (const taskId of ids) {
       const background = isBackgroundShadow(sessionName, taskId);
-      const description = sessionShadows?.get(taskId)?.description || watches?.get(taskId)?.description || '';
+      const description = sessionShadows?.get(taskId)?.description || watches?.get(taskId)?.description || snapshotTasks.get(taskId)?.description || '';
       if (watches?.has(taskId)) Object.assign(watches.get(taskId), { live: false, endedAt: now(), terminalHandled: true });
       stopShadow(sessionName, taskId);
       const origin = consumeTaskOrigin(sessionName, taskId);
@@ -384,12 +392,14 @@ function createBackgroundTaskRuntime(deps = {}) {
       broadcast(sessionName, {
         type: 'monitor_done',
         task_id: taskId,
+        ...taskMetadata.fields(sessionName, taskId),
         status: 'interrupted',
         summary: safeDescription(description, '后台任务已中断'),
         background,
       });
       reaped += 1;
     }
+    taskMetadata.clear(sessionName);
     return reaped;
   }
 
@@ -483,6 +493,9 @@ function createBackgroundTaskRuntime(deps = {}) {
       ? chatState.currentToolCalls
       : [];
     const tool = tools.find(item => item && item.id === event.tool_use_id);
+    taskMetadata.remember(sessionName, {
+      ...event, subagent_type: event.subagent_type || tool?.input?.subagent_type,
+    });
     const command = (tool && tool.input && tool.input.command) || '';
     const sync = !!(tool && tool.name === 'Bash' && !(tool.input && tool.input.run_in_background));
     const monitor = !!(tool && tool.name === 'Monitor');
@@ -509,11 +522,13 @@ function createBackgroundTaskRuntime(deps = {}) {
         toolUseId: event.tool_use_id || null,
         originTurnId: origin && origin.turnId || null,
         outputFile,
+        ...taskMetadata.fields(sessionName, taskId),
       },
     }, `task ledger start ${taskId}`);
     broadcast(sessionName, {
       type: 'monitor_started',
       task_id: taskId,
+      ...taskMetadata.fields(sessionName, taskId),
       description: event.description || '',
       command,
       background: !sync,
@@ -535,11 +550,13 @@ function createBackgroundTaskRuntime(deps = {}) {
         toolUseId: event.tool_use_id || null,
         lastOutput: event.output || event.content || event.summary || '',
         error: event.error || null,
+        ...taskMetadata.fields(sessionName, taskId),
       },
     }, `task ledger update ${taskId}`);
     broadcast(sessionName, {
       type: 'monitor_progress',
       task_id: taskId,
+      ...taskMetadata.fields(sessionName, taskId),
       description: safeDescription(event.description || event.summary),
       status,
       background: !hasTimed(syncBashTasks, sessionName, taskId),
@@ -569,6 +586,7 @@ function createBackgroundTaskRuntime(deps = {}) {
 
   function handleCompletion(sessionName, chatState, event) {
     const taskId = event.task_id;
+    taskMetadata.finish(sessionName, taskId);
     const watch = monitorWatches.get(sessionName)?.get(String(taskId));
     if (watch) Object.assign(watch, { live: false, endedAt: now() });
     stopShadow(sessionName, taskId);
@@ -588,6 +606,7 @@ function createBackgroundTaskRuntime(deps = {}) {
         originTurnId: origin && origin.turnId || null,
         outputFile,
         lastOutput: snippet,
+        ...taskMetadata.fields(sessionName, taskId),
         error: event.error || (ledgerStatus === 'failed' ? event.summary || 'task failed' : null),
       },
     }, `task ledger finish ${taskId}`);
@@ -595,6 +614,7 @@ function createBackgroundTaskRuntime(deps = {}) {
     broadcast(sessionName, {
       type: 'monitor_done',
       task_id: taskId,
+      ...taskMetadata.fields(sessionName, taskId),
       status: event.status,
       summary: event.summary || '',
       output: snippet,
@@ -730,6 +750,10 @@ function createBackgroundTaskRuntime(deps = {}) {
     if (!sessionName || !event || typeof event !== 'object') return { handled: false };
     event = redactProviderRouteCapability(event);
     knownSessions.add(sessionName);
+    if (/^task_(started|progress|updated|notification)$/.test(event.subtype || '')
+        && !taskMetadata.remember(sessionName, event)) {
+      return { handled: true, decision: 'stale-run' };
+    }
     const native = nativeTasks.handle(sessionName, event);
     if (native) {
       if (native.changed) broadcast(sessionName, { type: 'background_tasks', tasks: listActiveBackgroundTasks(sessionName) });
@@ -777,7 +801,7 @@ function createBackgroundTaskRuntime(deps = {}) {
       for (const [id, watch] of monitorWatches.get(sessionName) || []) {
         if (watch.live && !ids.has(id)) Object.assign(watch, { live: false, endedAt: now() });
       }
-      broadcast(sessionName, { type: 'background_tasks', tasks: event.tasks || [] });
+      broadcast(sessionName, { type: 'background_tasks', tasks: taskMetadata.snapshot(sessionName, event.tasks || []) });
       return { handled: true };
     }
     return { handled: false };
@@ -794,6 +818,7 @@ function createBackgroundTaskRuntime(deps = {}) {
     }
     coalescer.cancel(sessionName);
     nativeTasks.stop(sessionName);
+    taskMetadata.clear(sessionName);
     taskOutputAwaiting.map.delete(sessionName);
     syncBashTasks.map.delete(sessionName);
     subagentTasks.map.delete(sessionName);

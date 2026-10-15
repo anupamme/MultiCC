@@ -1021,7 +1021,7 @@ const chatAuthAction = window.MultiCCChatAuthAction.create({ document, chatApi, 
  * All text goes through textContent — task descriptions are agent-authored and
  * must never be treated as HTML. */
 function danmakuOnDisconnect() { return chatLiveUi.danmakuOnDisconnect(); }
-function pushDanmaku(kind, description, taskId) { return chatLiveUi.pushDanmaku(kind, description, taskId); }
+function pushDanmaku(kind, description, taskId, metadata) { return chatLiveUi.pushDanmaku(kind, description, taskId, metadata); }
 function toggleDanmakuCollapse() { return chatLiveUi.toggleDanmakuCollapse(); }
 
 function showDisconnectBanner(seconds, error) { return chatLiveUi.showDisconnectBanner(seconds, error); }

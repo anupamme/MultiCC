@@ -1014,7 +1014,37 @@
       elements.head.addEventListener('click', () => { if (danmaku.collapsed) toggleDanmakuCollapse(); });
     }
 
-    function pushDanmaku(kind, description, taskId) {
+    function updateDanmakuDetails(row, metadata) {
+      const fields = ['parent_task_id', 'parent_description', 'run_id', 'subagent_type', 'task_type'];
+      for (const field of fields) {
+        if (typeof metadata?.[field] === 'string' && metadata[field].trim()) {
+          row.metadata[field] = metadata[field].trim().slice(0, 240);
+        }
+      }
+      const data = row.metadata;
+      const types = {
+        Explore: tt('backgroundTypeExplore', '代码探索'), Plan: tt('backgroundTypePlan', '方案规划'),
+        'general-purpose': tt('backgroundTypeGeneral', '通用助手'),
+        'main-session': tt('backgroundTypeMain', '主会话'),
+        'code-reviewer': tt('backgroundTypeReview', '代码审查'), Bash: tt('backgroundTypeBash', '命令执行'),
+        local_agent: tt('backgroundTypeAgent', '子助手'), local_bash: tt('backgroundTypeCommand', '后台命令'),
+        local_workflow: tt('backgroundTypeWorkflow', '工作流'), local_monitor: tt('backgroundTypeMonitor', '后台监控'),
+        mcp_task: tt('backgroundTypeTool', '工具任务'),
+      };
+      const short = value => value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
+      const parts = [];
+      const type = data.subagent_type || data.task_type;
+      if (type) parts.push(tt('backgroundTaskType', '类型：{value}', { value: Object.hasOwn(types, type) ? types[type] : type }));
+      if (data.parent_task_id) parts.push(tt('backgroundTaskParent', '父任务：{value}', { value: data.parent_description || short(data.parent_task_id) }));
+      if (data.run_id) parts.push(tt('backgroundTaskRun', '运行：{value}', { value: short(data.run_id) }));
+      row.details.textContent = parts.join(' · ');
+      row.details.style.display = parts.length ? 'block' : 'none';
+      row.details.title = [data.subagent_type || data.task_type,
+        data.parent_task_id && tt('backgroundTaskParent', '父任务：{value}', { value: data.parent_task_id }),
+        data.run_id && tt('backgroundTaskRun', '运行：{value}', { value: data.run_id })].filter(Boolean).join('\n');
+    }
+
+    function pushDanmaku(kind, description, taskId, metadata) {
       initDanmaku();
       const elements = danmakuElements();
       if (!elements.panel) return;
@@ -1023,7 +1053,11 @@
       const rowState = kind === 'progress' ? 'start' : kind;
       const existing = danmaku.rows.get(key);
       if (existing) {
-        if (kind === 'start') { showDanmaku(); return; }
+        const previousRun = existing.metadata.run_id;
+        if (metadata?.run_id && previousRun && metadata.run_id < previousRun) return;
+        const newRun = metadata?.run_id && previousRun !== metadata.run_id;
+        updateDanmakuDetails(existing, metadata);
+        if (kind === 'start' && !newRun) { showDanmaku(); return; }
         setDanmakuRowState(existing, rowState);
         existing.text.textContent = text;
         refreshDanmakuMeta(); showDanmaku(); scheduleDanmakuHide();
@@ -1038,6 +1072,10 @@
       const rowEl = doc.createElement('div');
       const icon = doc.createElement('span');
       const textEl = doc.createElement('span');
+      const content = doc.createElement('span');
+      const details = doc.createElement('span');
+      content.className = 'dm-content';
+      details.className = 'dm-details';
       textEl.className = 'dm-txt';
       textEl.textContent = text;
       // Manual dismiss: a ✕ the user can click to stop/hide a stuck row without
@@ -1049,8 +1087,10 @@
       closeBtn.textContent = '✕';
       closeBtn.title = '停掉这条后台任务提示';
       closeBtn.addEventListener('click', event => { event.stopPropagation(); dismissDanmakuRow(key); });
-      rowEl.append(icon, textEl, closeBtn);
-      const row = { element: rowEl, icon, text: textEl, key, state: rowState, staleTimer: null, confirmedBg: false };
+      content.append(textEl, details);
+      rowEl.append(icon, content, closeBtn);
+      const row = { element: rowEl, icon, text: textEl, details, metadata: {}, key, state: rowState, staleTimer: null, confirmedBg: false };
+      updateDanmakuDetails(row, metadata);
       setDanmakuRowState(row, rowState);
       elements.body.prepend(rowEl);
       danmaku.rows.set(key, row);
@@ -1095,8 +1135,11 @@
         if (!id) continue;
         active.add(String(id));
         // 重连快照恢复任务行，也补齐断线期间丢失的开始事件。
-        if (typeof task === 'object' && task && danmaku.rows.get(`t:${id}`)?.state !== 'start') {
-          pushDanmaku('progress', task.description, String(id));
+        if (typeof task === 'object' && task) {
+          const row = danmaku.rows.get(`t:${id}`);
+          if (row?.state !== 'start' || (task.run_id && task.run_id !== row.metadata.run_id)) {
+            pushDanmaku('progress', task.description, String(id), task);
+          } else updateDanmakuDetails(row, task);
         }
       }
       let changed = false;

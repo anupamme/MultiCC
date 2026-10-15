@@ -616,7 +616,7 @@
           }
           break;
         case 'monitor_started':
-          if (message.background !== false) liveUi.pushDanmaku('start', message.description || message.command || tr('backgroundTaskUnnamed'), message.task_id);
+          if (message.background !== false) liveUi.pushDanmaku('start', message.description || message.command || tr('backgroundTaskUnnamed'), message.task_id, message);
           break;
         case 'monitor_done':
           if (message.background !== false) {
@@ -626,13 +626,13 @@
             liveUi.pushDanmaku(
               message.status === 'error' || message.status === 'failed' ? 'fail'
                 : message.status === 'interrupted' ? 'stale' : 'done',
-              message.summary || message.description || tr('backgroundTaskUnnamed'), message.task_id,
+              message.summary || message.description || tr('backgroundTaskUnnamed'), message.task_id, message,
             );
           }
           break;
         case 'monitor_progress':
           if (message.background !== false) {
-            liveUi.pushDanmaku('progress', message.description || tr('backgroundTaskStillRunning'), message.task_id);
+            liveUi.pushDanmaku('progress', message.description || tr('backgroundTaskStillRunning'), message.task_id, message);
           }
           break;
         case 'progress_heartbeat':

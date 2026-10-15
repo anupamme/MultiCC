@@ -19,6 +19,16 @@
 //     rows auto-prune after [autoHideMs], spinning rows go stale after
 //     [staleMs] without an update.
 
+import '../i18n.dart';
+
+String _taskLabel(String key, String fallback, [String? value]) {
+  final translated = t(key);
+  return (translated == key ? fallback : translated).replaceAll(
+    '{value}',
+    value ?? '',
+  );
+}
+
 enum BackgroundTaskState { start, done, fail, stale }
 
 class BackgroundTaskRow {
@@ -26,6 +36,11 @@ class BackgroundTaskRow {
   final String taskId;
   final String description;
   final BackgroundTaskState state;
+  final String parentTaskId;
+  final String parentDescription;
+  final String runId;
+  final String subagentType;
+  final String taskType;
 
   /// True once this row's task_id appeared in a `background_tasks` snapshot —
   /// the server-confirmed ground truth that the task is really background.
@@ -40,23 +55,106 @@ class BackgroundTaskRow {
     required this.taskId,
     required this.description,
     required this.state,
+    this.parentTaskId = '',
+    this.parentDescription = '',
+    this.runId = '',
+    this.subagentType = '',
+    this.taskType = '',
     this.confirmedBg = false,
     required this.updatedAt,
   });
 
   bool get isSpinning => state == BackgroundTaskState.start;
 
+  String get metadataLabel {
+    final types = {
+      'Explore': _taskLabel('backgroundTypeExplore', '代码探索'),
+      'Plan': _taskLabel('backgroundTypePlan', '方案规划'),
+      'general-purpose': _taskLabel('backgroundTypeGeneral', '通用助手'),
+      'main-session': _taskLabel('backgroundTypeMain', '主会话'),
+      'code-reviewer': _taskLabel('backgroundTypeReview', '代码审查'),
+      'Bash': _taskLabel('backgroundTypeBash', '命令执行'),
+      'local_agent': _taskLabel('backgroundTypeAgent', '子助手'),
+      'local_bash': _taskLabel('backgroundTypeCommand', '后台命令'),
+      'local_workflow': _taskLabel('backgroundTypeWorkflow', '工作流'),
+      'local_monitor': _taskLabel('backgroundTypeMonitor', '后台监控'),
+      'mcp_task': _taskLabel('backgroundTypeTool', '工具任务'),
+    };
+    String short(String value) => value.length > 16
+        ? '${value.substring(0, 8)}…${value.substring(value.length - 6)}'
+        : value;
+    final type = subagentType.isNotEmpty ? subagentType : taskType;
+    return [
+      if (type.isNotEmpty)
+        _taskLabel('backgroundTaskType', '类型：{value}', types[type] ?? type),
+      if (parentTaskId.isNotEmpty)
+        _taskLabel(
+          'backgroundTaskParent',
+          '父任务：{value}',
+          parentDescription.isNotEmpty
+              ? parentDescription
+              : short(parentTaskId),
+        ),
+      if (runId.isNotEmpty)
+        _taskLabel('backgroundTaskRun', '运行：{value}', short(runId)),
+    ].join(' · ');
+  }
+
+  String get metadataTooltip => [
+        if (taskId.isNotEmpty)
+          _taskLabel('backgroundTaskId', '任务：{value}', taskId),
+        if (parentTaskId.isNotEmpty)
+          _taskLabel('backgroundTaskParent', '父任务：{value}', parentTaskId),
+        if (runId.isNotEmpty)
+          _taskLabel('backgroundTaskRun', '运行：{value}', runId),
+      ].join('\n');
+
+  bool accepts(Map<dynamic, dynamic> evt) {
+    final next = evt['run_id'];
+    return next is! String ||
+        next.isEmpty ||
+        runId.isEmpty ||
+        next.compareTo(runId) >= 0;
+  }
+
+  BackgroundTaskRow withMetadata(Map<dynamic, dynamic> evt) {
+    String field(String name, String fallback) {
+      final value = evt[name];
+      return value is String && value.trim().isNotEmpty
+          ? value.trim()
+          : fallback;
+    }
+
+    return copyWith(
+      parentTaskId: field('parent_task_id', parentTaskId),
+      parentDescription: field('parent_description', parentDescription),
+      runId: field('run_id', runId),
+      subagentType: field('subagent_type', subagentType),
+      taskType: field('task_type', taskType),
+    );
+  }
+
   BackgroundTaskRow copyWith({
     String? description,
     BackgroundTaskState? state,
     bool? confirmedBg,
     int? updatedAt,
+    String? parentTaskId,
+    String? parentDescription,
+    String? runId,
+    String? subagentType,
+    String? taskType,
   }) =>
       BackgroundTaskRow(
         key: key,
         taskId: taskId,
         description: description ?? this.description,
         state: state ?? this.state,
+        parentTaskId: parentTaskId ?? this.parentTaskId,
+        parentDescription: parentDescription ?? this.parentDescription,
+        runId: runId ?? this.runId,
+        subagentType: subagentType ?? this.subagentType,
+        taskType: taskType ?? this.taskType,
         confirmedBg: confirmedBg ?? this.confirmedBg,
         updatedAt: updatedAt ?? this.updatedAt,
       );
@@ -89,7 +187,9 @@ String heartbeatRowText(Map<String, dynamic> evt) {
   final elapsed = (evt['elapsedMs'] as num?)?.toInt() ?? 0;
   final secs = (elapsed / 1000).round();
   final clock = secs >= 60 ? '${secs ~/ 60}m${secs % 60}s' : '${secs}s';
-  return toolLabel == null ? '$phaseLabel · $clock' : '$toolLabel · $phaseLabel · $clock';
+  return toolLabel == null
+      ? '$phaseLabel · $clock'
+      : '$toolLabel · $phaseLabel · $clock';
 }
 
 class BackgroundTaskBoard {
@@ -107,12 +207,15 @@ class BackgroundTaskBoard {
 
   /// Most-recent-first snapshot for rendering; pure function of events + now.
   List<BackgroundTaskRow> rows({int now = 0, bool applyAutoHide = true}) {
-    final visible = _rows.values.where((r) => !_dismissed.contains(r.key)).toList()
+    final visible = _rows.values
+        .where((r) => !_dismissed.contains(r.key))
+        .toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    if (!applyAutoHide || now == 0) return visible.take(maxRows).toList(growable: false);
+    if (!applyAutoHide || now == 0) {
+      return visible.take(maxRows).toList(growable: false);
+    }
     return visible
-        .where((r) =>
-            r.isSpinning || now - r.updatedAt < autoHideMs)
+        .where((r) => r.isSpinning || now - r.updatedAt < autoHideMs)
         .take(maxRows)
         .toList(growable: false);
   }
@@ -160,56 +263,79 @@ class BackgroundTaskBoard {
     if (taskId.isEmpty) return;
     final key = 't:$taskId';
     if (_dismissed.contains(key)) return;
-    _upsert(BackgroundTaskRow(
-      key: key,
-      taskId: taskId,
-      description: evt['description']?.toString() ?? '',
-      state: BackgroundTaskState.start,
-      updatedAt: now,
-    ), now: now);
+    final previous = _rowForTask(taskId);
+    if (previous != null && !previous.accepts(evt)) return;
+    _upsert(
+      BackgroundTaskRow(
+        key: key,
+        taskId: taskId,
+        description: evt['description']?.toString() ?? '',
+        state: BackgroundTaskState.start,
+        confirmedBg: previous?.confirmedBg ?? false,
+        updatedAt: now,
+      ).withMetadata({
+        if (previous != null) ...{
+          'parent_task_id': previous.parentTaskId,
+          'parent_description': previous.parentDescription,
+          'run_id': previous.runId,
+          'subagent_type': previous.subagentType,
+          'task_type': previous.taskType,
+        },
+        ...evt,
+      }),
+      now: now,
+    );
   }
 
   /// `monitor_progress` — refresh the description, keep spinning.
   void onMonitorProgress(Map<String, dynamic> evt, {int now = 0}) {
     if (evt['background'] == false) return;
     final row = _rowForTask(evt['task_id']?.toString() ?? '');
-    if (row == null || !row.isSpinning) return;
+    if (row == null || !row.accepts(evt)) return;
+    final nextRun = evt['run_id'];
+    final newRun = nextRun is String && nextRun.isNotEmpty && nextRun != row.runId;
+    if (!row.isSpinning && !newRun) return;
     final desc = evt['description']?.toString();
-    _rows[row.key] = row.copyWith(
-      description: desc == null || desc.isEmpty ? row.description : desc,
-      updatedAt: now,
-    );
+    _rows[row.key] = row.withMetadata(evt).copyWith(
+          state: BackgroundTaskState.start,
+          description: desc == null || desc.isEmpty ? row.description : desc,
+          updatedAt: now,
+        );
   }
 
   /// `monitor_done` — settle into done/fail.
   void onMonitorDone(Map<String, dynamic> evt, {int now = 0}) {
     if (evt['background'] == false) return;
     final row = _rowForTask(evt['task_id']?.toString() ?? '');
-    if (row == null) return;
-    _rows[row.key] = row.copyWith(
-      description: evt['summary']?.toString() ?? row.description,
-      state: ['fail', 'failed', 'error'].contains(evt['status']?.toString())
-          ? BackgroundTaskState.fail
-          : evt['status'] == 'interrupted'
-              ? BackgroundTaskState.stale
-              : BackgroundTaskState.done,
-      updatedAt: now,
-    );
+    if (row == null || !row.accepts(evt)) return;
+    _rows[row.key] = row.withMetadata(evt).copyWith(
+          description: evt['summary']?.toString() ?? row.description,
+          state: ['fail', 'failed', 'error'].contains(evt['status']?.toString())
+              ? BackgroundTaskState.fail
+              : evt['status'] == 'interrupted'
+                  ? BackgroundTaskState.stale
+                  : BackgroundTaskState.done,
+          updatedAt: now,
+        );
   }
 
   /// `progress_heartbeat` — one in-place row per turn.
   void onHeartbeat(Map<String, dynamic> evt, {int now = 0}) {
-    final turnId = evt['turnId']?.toString() ?? evt['sessionId']?.toString() ?? '';
+    final turnId =
+        evt['turnId']?.toString() ?? evt['sessionId']?.toString() ?? '';
     if (turnId.isEmpty) return;
     final key = 'turn:$turnId';
     if (_dismissed.contains(key)) return;
-    _upsert(BackgroundTaskRow(
-      key: key,
-      taskId: '',
-      description: heartbeatRowText(evt),
-      state: BackgroundTaskState.start,
-      updatedAt: now,
-    ), now: now);
+    _upsert(
+      BackgroundTaskRow(
+        key: key,
+        taskId: '',
+        description: heartbeatRowText(evt),
+        state: BackgroundTaskState.start,
+        updatedAt: now,
+      ),
+      now: now,
+    );
   }
 
   /// `background_tasks` — the authoritative snapshot. Confirms spinning rows
@@ -223,14 +349,28 @@ class BackgroundTaskBoard {
           final id = t['task_id']?.toString() ?? t['id']?.toString() ?? '';
           if (id.isNotEmpty) {
             active.add(id);
-            if (!_dismissed.contains('t:$id') && _rowForTask(id)?.isSpinning != true) {
-              _upsert(BackgroundTaskRow(
-                key: 't:$id', taskId: id,
-                description: t['description']?.toString()
-                    ?? _rowForTask(id)?.description ?? '后台任务',
-                state: BackgroundTaskState.start,
-                confirmedBg: true, updatedAt: now,
-              ), now: now);
+            final previous = _rowForTask(id);
+            if (!_dismissed.contains('t:$id') &&
+                (previous?.accepts(t) ?? true)) {
+              final row = previous ??
+                  BackgroundTaskRow(
+                    key: 't:$id',
+                    taskId: id,
+                    description: '后台任务',
+                    state: BackgroundTaskState.start,
+                    updatedAt: now,
+                  );
+              _upsert(
+                row.withMetadata(t).copyWith(
+                      description: previous?.isSpinning == true
+                          ? null
+                          : t['description']?.toString(),
+                      state: BackgroundTaskState.start,
+                      confirmedBg: true,
+                      updatedAt: now,
+                    ),
+                now: now,
+              );
             }
           }
         }
@@ -244,7 +384,10 @@ class BackgroundTaskBoard {
           }
         } else if (row.isSpinning) {
           // Server no longer tracks it — settle instead of spinning forever.
-          _rows[row.key] = row.copyWith(state: BackgroundTaskState.done, updatedAt: now);
+          _rows[row.key] = row.copyWith(
+            state: BackgroundTaskState.done,
+            updatedAt: now,
+          );
         }
       }
     }
@@ -256,11 +399,17 @@ class BackgroundTaskBoard {
   void settleAtTurnEnd({int now = 0, String? turnId}) {
     for (final row in _rows.values.toList()) {
       if (row.key == 'turn:$turnId') {
-        _rows[row.key] = row.copyWith(state: BackgroundTaskState.done, updatedAt: now);
+        _rows[row.key] = row.copyWith(
+          state: BackgroundTaskState.done,
+          updatedAt: now,
+        );
         continue;
       }
       if (row.isSpinning && !row.confirmedBg) {
-        _rows[row.key] = row.copyWith(state: BackgroundTaskState.done, updatedAt: now);
+        _rows[row.key] = row.copyWith(
+          state: BackgroundTaskState.done,
+          updatedAt: now,
+        );
       }
     }
   }
@@ -269,7 +418,10 @@ class BackgroundTaskBoard {
   void markStaleAll({int now = 0}) {
     for (final row in _rows.values.toList()) {
       if (row.isSpinning) {
-        _rows[row.key] = row.copyWith(state: BackgroundTaskState.stale, updatedAt: now);
+        _rows[row.key] = row.copyWith(
+          state: BackgroundTaskState.stale,
+          updatedAt: now,
+        );
       }
     }
   }
