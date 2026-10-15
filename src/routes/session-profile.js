@@ -13,9 +13,10 @@ const { taskShortCode } = require('../classify/task-short-code');
 const { auxVerdictStaleness } = require('../classify/aux-verdict-health');
 const { isGoalState } = require('../classify/vocab');
 const { primaryProviderCandidate, providerSelectionDto, validateProviderSelection } = require('../providers/auto-provider-config');
+const { mergeCliAccountsPatch, retainExistingCliAccounts, sharedCliKeyAccountStore } = require('../cli-key-accounts');
 
 // Session profile routes: PATCH /api/sessions/:id (label/model/effort/agent/
-// rolePrompt/memory/auto-flags/provider/subagent edits) and POST
+// rolePrompt/memory/auto-flags/provider/subagent/cliAccounts edits) and POST
 // /api/sessions/:id/fork (Happier-parity transcript branch).
 //
 // Extracted verbatim from server.js. Behaviour is preserved exactly; the only
@@ -60,6 +61,8 @@ function createSessionProfileRoutes(rawDeps) {
     getFolderMemory,
     getCliSwitchGitSnapshot,
   } = deps;
+  // Per-lane API-key account picks (src/cli-key-accounts.js); tests inject one.
+  const cliKeyAccounts = deps.cliKeyAccounts || sharedCliKeyAccountStore();
 
   if (!persistedSessions || typeof persistedSessions.get !== 'function') {
     throw new TypeError('[session-profile] persistedSessions map is required');
@@ -158,7 +161,7 @@ function createSessionProfileRoutes(rawDeps) {
         }, draft);
         if (status !== 200) return res.status(status).json(result);
         sessionPersistence.mutate('http.stage-session-configuration', () => {
-          for (const key of ['label', 'memory', 'autoContinue', 'autoCommit']) {
+          for (const key of ['label', 'memory', 'autoContinue', 'autoCommit', 'cliAccounts']) {
             if (Object.prototype.hasOwnProperty.call(req.body, key)) s[key] = draft[key];
           }
           stageConfiguration(s, draft, { fresh: s.pendingConfiguration?.fresh === true });
@@ -281,6 +284,16 @@ function createSessionProfileRoutes(rawDeps) {
         // Auto-commit and merge worktree back to base branch after a successful turn.
         s.autoCommit = !!req.body.autoCommit;
         appendEvent(s.dirId, 'session_autocommit_changed', `${s.label || s.id} → ${s.autoCommit ? '自动提交合并' : '关闭'}`, s.id);
+      }
+      if (req.body.cliAccounts !== undefined) {
+        // Which API-key account each key-account lane spawns with. Read only at
+        // the next spawn, so even a busy session takes it immediately (it is not
+        // a staged route field — see the pending branch above).
+        const checked = mergeCliAccountsPatch(s.cliAccounts, req.body.cliAccounts, cliKeyAccounts);
+        if (!checked.ok) return rejectMutation(400, { error: checked.error });
+        if (checked.value) s.cliAccounts = checked.value;
+        else delete s.cliAccounts;
+        appendEvent(s.dirId, 'session_cli_account_changed', `${s.label || s.id} → ${Object.keys(s.cliAccounts || {}).join(', ') || '本机登录'}`, s.id);
       }
       if (hasProviderSelectionPatch) {
         s.providerSelection = preparedProviderSelection.value;
@@ -495,6 +508,9 @@ function createSessionProfileRoutes(rawDeps) {
       const dir = directories.get(src.dirId);
       const r = await createSessionRecord({
         ...configuration, dir, kind: 'chat', label: label || `${src.label || src.id} · fork`,
+        // Keep the source's API-key account picks: dropping them would silently
+        // move the fork onto the CLI's own login (and its billing).
+        cliAccounts: retainExistingCliAccounts(configSource.cliAccounts, cliKeyAccounts),
         persistence: 'required', persistenceSource: 'http.fork-session-create',
       });
       if (!r.ok) return res.status(400).json({ error: r.error });

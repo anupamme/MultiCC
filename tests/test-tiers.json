@@ -2348,6 +2348,15 @@
       ]
     },
     {
+      "path": "tests/test-cli-key-accounts.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-cli-specific-ui.js",
       "tier": "other",
       "lane": "deterministic",
@@ -4109,6 +4118,15 @@
       "owner": "npm:test:core",
       "entrypoints": [
         "npm:test:core"
+      ]
+    },
+    {
+      "path": "tests/test-run-config-accounts-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
       ]
     },
     {
