@@ -394,6 +394,11 @@ let _roleTokens = { main: null, sub: null, subByProvider: [] };
 // during output, not only at turn end. Reset when a new turn starts.
 // Shape: { inputTokens, outputTokens, cacheWrite, cacheRead }
 let _liveStreamUsage = null;
+// Live speed chip under the composer (chat-token-rate.js): estimated tok/s of
+// the streaming turn, or why it is quiet — so a stuck stream is visible.
+const tokenRateBar = document.getElementById('token-rate-bar');
+const tokenRate = window.MultiCCChatTokenRate?.createTokenRateMeter() || null;
+let _tokenRateTimer = null;
 // Provider-level time-window token stats (updated after each turn)
 let _providerId = null;
 let _providerName = null;
@@ -951,6 +956,7 @@ function renderCurrentTextNow(final) {
   return chatHistoryView.renderCurrentText(currentMsgEl, currentTextContent, { final, streaming: isStreaming });
 }
 function renderCurrentText(final = false) {
+  tokenRate?.noteText(currentTextContent);
   if (final) {
     if (_pendingStreamRender != null) { clearTimeout(_pendingStreamRender); _pendingStreamRender = null; }
     return renderCurrentTextNow(true);
@@ -1161,6 +1167,32 @@ function updateUI() {
   cancelBtn.classList.toggle('show', isStreaming);
   inputEl.disabled = !connected;
   pendingUserInputController.setConnected();
+  syncTokenRate();
+}
+function paintTokenRate() {
+  const tools = { toolRunning: false, toolSince: 0, toolEndedAt: 0 };
+  for (const tool of currentToolCards.values()) {
+    if (!tool || tool.name === 'Thinking' || !tool.startedAt) continue;
+    if (tool.endedAt) tools.toolEndedAt = Math.max(tools.toolEndedAt, tool.endedAt);
+    else { tools.toolRunning = true; tools.toolSince = Math.max(tools.toolSince, tool.startedAt); }
+  }
+  const view = window.MultiCCChatTokenRate.describe(tokenRate.snapshot(tools));
+  tokenRateBar.textContent = view.text;
+  tokenRateBar.title = view.title;
+  tokenRateBar.dataset.tone = view.tone;
+}
+function syncTokenRate() {
+  if (!tokenRate || !tokenRateBar || isStreaming === tokenRate.isActive()) return;
+  clearInterval(_tokenRateTimer);
+  _tokenRateTimer = null;
+  if (isStreaming) {
+    tokenRate.begin(currentTextContent.length);
+    _tokenRateTimer = setInterval(paintTokenRate, 500);
+    paintTokenRate();
+  } else {
+    tokenRate.end();
+    tokenRateBar.textContent = tokenRateBar.title = '';
+  }
 }
 // The bar shows context and only context; the provider's token windows, the
 // session's cumulative billing and the turn's timing move into the panel this
@@ -2468,6 +2500,7 @@ chatEventController = window.MultiCCChatEventController.createEventController({
     speakNotify,
     maybeScrollToBottom,
     renderCurrentText,
+    tokenRate,
     renderSessionQueue: window.MultiCCChatSessionQueue.render,
     renderPendingUserInput: message => pendingUserInputController.render(message),
     getUserInputRequestId: () => chatEventState.pendingUserInputRequestId,
