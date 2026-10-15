@@ -82,6 +82,40 @@ test('GLM 5h, Codex weekly and OpenCode weekly render as single window segments'
   assert.match(resolve(Renderer.windowEventBar(opencode)).text, /^OpenCode Go · 1wk 0% 1d$/);
 });
 
+test('a Codex Plus event carries 5h + weekly and renders both, coloured by the tighter one', () => {
+  const codex = Renderer.normalizeWindowEvent({
+    status: 'allowed', rateLimitType: 'weekly', utilization: 0.03, resetsAt: (NOW + 6 * 86_400_000) / 1000, provider: 'codex',
+    windows: [
+      { window: '1wk', usedPercent: 3, resetMs: NOW + 6 * 86_400_000 },
+      { window: '5h', usedPercent: 92, resetMs: NOW + 3_600_000 },
+      { window: 'bogus', usedPercent: 1, resetMs: NOW },
+    ],
+  }, NOW);
+  assert.deepEqual(codex.windows.map((w) => w.window), ['1wk', '5h'], 'unknown window tokens are dropped');
+  const view = resolve(Renderer.windowEventBar(codex));
+  assert.match(view.text, /^5h 8% 1h · 1wk 97% 6d/);
+  assert.equal(view.color, '#f85149', '8% left on the 5h window → red, despite 97% weekly');
+  assert.match(view.title, /5小时: 已用 92%/);
+  assert.match(view.title, /周: 已用 3%/);
+  // A Claude event never takes windows: its bar is merged from the scrape.
+  const claude = Renderer.normalizeWindowEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.1, windows: [{ window: '5h', usedPercent: 10 }] }, NOW);
+  assert.equal(claude.windows, undefined);
+});
+
+test('the Codex click bar shows every window the plan reports', () => {
+  const at = (ms) => (NOW + ms) / 1000;
+  const plus = resolve(Renderer.renderQuotaBar('codex', {
+    status: 'ok', fetchedAt: NOW, planType: 'plus',
+    windows: [{ window: '5h', usedPercent: 22, resetsAt: at(3_600_000) }, { window: '1wk', usedPercent: 3, resetsAt: at(6 * 86_400_000) }],
+  }));
+  assert.match(plus.text, /^5h 78% 1h · 1wk 97% 6d/);
+  // A result from before `windows` existed still renders its week.
+  const legacy = resolve(Renderer.renderQuotaBar('codex', {
+    status: 'ok', fetchedAt: NOW, weekly: { usedPercent: 64, resetsAt: at(3_600_000) },
+  }));
+  assert.match(legacy.text, /^1wk 36% 1h/);
+});
+
 test('the OpenCode routed-provider label says whose window it is', () => {
   const glm = Renderer.normalizeWindowEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.44, resetsAt: (NOW + 3_600_000) / 1000, provider: 'glm' }, NOW);
   const labeled = Renderer.labelRoutedProvider(Renderer.windowEventBar(glm), 'glm');

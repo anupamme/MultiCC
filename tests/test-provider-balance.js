@@ -270,7 +270,7 @@ test('queryAll reports one row per provider, including unpollable ones', async (
   assert.match(byId['codex-official'].bar.text, /\{cd:1700003600000\|1wk\}/,
     'epoch seconds are converted to milliseconds exactly once');
   assert.match(byId['codex-official'].bar.title, /套餐: pro/);
-  assert.match(byId['codex-official'].bar.title, /剩余 23%/);
+  assert.match(byId['codex-official'].bar.title, /周: 已用 77%/, 'one tooltip line per window');
   assert.equal(byId['plain-1'].ok, false);
   assert.equal(byId['plain-1'].reason, 'unsupported');
 });

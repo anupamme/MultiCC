@@ -29,6 +29,7 @@ const os = require('os');
 const path = require('path');
 const providers = require('./providers/core');
 const { checkEgressIpAllowed } = require('./providers/egress-ip-policy');
+const { codexRateLimitWindows, headlineWindow } = require('./codex/rate-limit-windows');
 
 const POLL_TIMEOUT_MS = 6000;
 // 借道余量透传：出借方收到查询后自己触发对厂商的真实余量查询（可能比本机
@@ -46,13 +47,6 @@ const TTL_BY_STRATEGY = Object.freeze({
   // 借道：出借方端点的读取代价与其本机直查相同，同窗口节奏即可。
   'relay-quota': 60 * 1000,
 });
-
-// A weekly window is any rolling window at least ~a day long. The ChatGPT usage
-// endpoint names windows primary/secondary, but which slot holds the weekly cap
-// is PLAN-DEPENDENT (on "prolite" the only window is a 7-day one in the primary
-// slot; other plans put 5h in primary and weekly in secondary). So we classify
-// by window length, never by slot name.
-const WEEKLY_MIN_WINDOW_SECONDS = 24 * 60 * 60;
 
 function keyHash(apiKey) {
   return crypto.createHash('sha256').update(String(apiKey || '')).digest('hex').slice(0, 16);
@@ -199,11 +193,12 @@ function readCodexAuth() {
   return readCodexAuthFile(path.join(os.homedir(), '.codex', 'auth.json'));
 }
 
-// Codex (real ChatGPT backend). Weekly quota comes from the same usage read the
-// codex CLI's /status uses: GET chatgpt.com/backend-api/wham/usage with the OAuth
-// bearer + ChatGPT-Account-Id. This is a read (no messages consumed). We surface
-// the WEEKLY window only (per product decision: codex's binding limit is weekly,
-// and on the prolite plan there is no 5h window at all).
+// Codex (real ChatGPT backend). Quota comes from the same usage read the codex
+// CLI's /status uses: GET chatgpt.com/backend-api/wham/usage with the OAuth
+// bearer + ChatGPT-Account-Id. This is a read (no messages consumed). Every
+// window the plan has is surfaced — Plus meters a 5h window AND a weekly one,
+// and the 5h one is usually what stops a session first; prolite has only the
+// week. Windows are classified by length (src/codex/rate-limit-windows.js).
 async function pollCodexUsage(target, nowMs, timeoutMs = POLL_TIMEOUT_MS, readAuth = null) {
   const reader = readAuth
     || (target && target.authFile ? () => readCodexAuthFile(target.authFile) : readCodexAuth);
@@ -221,56 +216,30 @@ async function pollCodexUsage(target, nowMs, timeoutMs = POLL_TIMEOUT_MS, readAu
   );
   const rl = body && typeof body === 'object' ? body.rate_limit : null;
   if (!rl || typeof rl !== 'object') return null;
-  // Collect the top-level windows present, then pick the longest one that is at
-  // least a day — that is the weekly cap regardless of primary/secondary slot.
-  const windows = [rl.primary_window, rl.secondary_window].filter(
-    (w) => w && typeof w === 'object'
-      && finite(w.used_percent) !== null
-      && finite(w.limit_window_seconds) !== null,
-  );
-  const weekly = windows
-    .filter((w) => finite(w.limit_window_seconds) >= WEEKLY_MIN_WINDOW_SECONDS)
-    .sort((a, b) => finite(b.limit_window_seconds) - finite(a.limit_window_seconds))[0];
-  if (!weekly) return null; // no weekly window exposed → show nothing
-  const pct = finite(weekly.used_percent);
-  if (pct === null) return null;
-  // reset_at is epoch SECONDS (front-end multiplies ×1000, like Claude's resetsAt);
-  // fall back to now + reset_after_seconds when the absolute stamp is absent.
-  let resetsAt = finite(weekly.reset_at);
-  if (resetsAt === null) {
-    const after = finite(weekly.reset_after_seconds);
-    resetsAt = after !== null ? Math.trunc(nowMs / 1000) + after : null;
-  }
-  const rejected = rl.limit_reached === true || pct >= 100;
+  const windows = codexRateLimitWindows(rl, nowMs);
+  const headline = headlineWindow(windows);
+  if (!headline) return null; // no window exposed → show nothing
+  // The account is blocked by whichever cycle runs out first, so the status
+  // reads the tightest window, not just the headline one.
+  const worst = Math.max(...windows.map((w) => w.usedPercent));
+  const rejected = rl.limit_reached === true || worst >= 100;
   return {
     kind: 'window',
     provider: 'codex',
-    rateLimitType: 'weekly',
-    status: rejected ? 'rejected' : (pct >= 80 ? 'allowed_warning' : 'allowed'),
-    utilization: Math.max(0, Math.min(1, pct / 100)),
-    resetsAt,
+    // The headline window keeps the single-window DTO fields meaningful for
+    // readers that predate `windows` (a 借道 borrower on an older build).
+    rateLimitType: headline.window === '5h' ? 'five_hour' : 'weekly',
+    status: rejected ? 'rejected' : (worst >= 80 ? 'allowed_warning' : 'allowed'),
+    utilization: Math.max(0, Math.min(1, headline.usedPercent / 100)),
+    // reset_at is epoch SECONDS (front-end multiplies ×1000, like Claude's resetsAt).
+    resetsAt: headline.resetsAt,
     tier: typeof body.plan_type === 'string' ? body.plan_type : null,
-    // The bar shows the week only, but the line is blocked by whichever cycle
-    // runs out first — the quota cache keeps every one (usedPercent 0..100).
-    windows: windows.map((w) => {
-      const seconds = finite(w.limit_window_seconds);
-      let reset = finite(w.reset_at);
-      if (reset === null && finite(w.reset_after_seconds) !== null) {
-        reset = Math.trunc(nowMs / 1000) + finite(w.reset_after_seconds);
-      }
-      const cycle = seconds >= 28 * 24 * 3600 ? '1m' : seconds >= WEEKLY_MIN_WINDOW_SECONDS ? '1wk' : '5h';
-      return { window: cycle, label: cycle, usedPercent: finite(w.used_percent), resetMs: reset !== null ? reset * 1000 : null };
-    }),
+    // Every cycle (usedPercent 0..100): the bar shows them all, and the quota
+    // cache keeps them so Auto steers off an account before any one runs dry.
+    windows: windows.map((w) => ({ window: w.window, label: w.label, usedPercent: w.usedPercent, resetMs: w.resetMs })),
   };
 }
 
-// 借道余量透传（导入方适配器）：POST 到出借方的 relay quota 端点
-// （…/claude-proxy/<id>/remote/quota 或 …/codex-proxy/<id>/quota，见
-// src/routes/provider-balance.js mountProviderRelayQuotaRoutes）。出借方收到
-// 请求后自己触发对厂商的真实余量查询并把最新 DTO 传回，本机原样透传——本机
-// 只持有借道凭据（mcr1.*，作 Bearer），没有任何厂商凭据。形状漂移一律 null：
-// 绝不伪造，绝不把错误抛进聊天流；但传输失败 / 出借方失败会抛 limit_fetch_failed
-// （.detail 带根因），由调用方记录与展示。
 async function pollRelayQuota(target, nowMs, timeoutMs = POLL_TIMEOUT_MS) {
   const url = String((target && target.relayUrl) || '').trim();
   const apiKey = String((target && target.apiKey) || '').trim();

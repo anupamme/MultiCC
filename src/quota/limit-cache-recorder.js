@@ -115,6 +115,10 @@ function vendorWindows(kind, result, baseUrl) {
       windowRow('1wk', '1wk', site.weeklyUsedPercent, site.weeklyResetsAt),
     ].filter(Boolean);
   }
+  if (kind === 'codex' && Array.isArray(result.windows)) {
+    return result.windows.map(w => w && windowRow(w.window, w.window, w.usedPercent,
+      Number.isFinite(Number(w.resetsAt)) && w.resetsAt !== null ? Number(w.resetsAt) * 1000 : null)).filter(Boolean);
+  }
   if (kind === 'ark' && Array.isArray(result.items)) {
     const subscribed = result.items.filter(it => it && it.subscribed && !it.error
       && Array.isArray(it.periods) && it.periods.length);

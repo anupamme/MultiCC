@@ -95,6 +95,8 @@ function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, c
           rateLimitType: dto.rateLimitType, status: dto.status,
           utilization: dto.utilization, resetsAt: dto.resetsAt,
           provider: dto.provider || 'glm',
+          // A multi-window plan (Codex Plus: 5h + weekly) reports every cycle.
+          ...(Array.isArray(dto.windows) ? { windows: dto.windows } : {}),
         };
         const normalized = normalizeWindowEvent(info, Date.now());
         let bar = null;
