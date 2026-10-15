@@ -387,7 +387,7 @@ test('turn and monitor progress update stable rows and terminal events close the
     type: 'monitor_progress', task_id: 'task-1', description: '后台测试仍在执行', background: true,
   }, generation);
   fixture.controller.handleEvent({ type: 'result' }, generation);
-  assert.deepEqual(fixture.progressCalls, [
+  assert.deepEqual(fixture.progressCalls.map(call => call.slice(0, 3)), [
     ['progress', '正在调用工具 · 31s · 命令执行', 'turn:turn-1'],
     ['progress', '正在处理 · 1m 1s', 'turn:turn-1'],
     ['progress', '后台测试仍在执行', 'task-1'],
@@ -459,11 +459,21 @@ test('interrupted monitor_done (incl. post-restart journal replay) renders stale
   fixture.controller.handleEvent({
     type: 'monitor_done', task_id: 'task-ok', status: 'completed', summary: 'y', background: true,
   }, generation);
-  assert.deepEqual(fixture.progressCalls, [
+  assert.deepEqual(fixture.progressCalls.map(call => call.slice(0, 3)), [
     ['stale', '重启前运行中 · 已随服务重启中断：子任务 B', 'task-r'],
     ['fail', 'x', 'task-f'],
     ['done', 'y', 'task-ok'],
   ]);
+});
+
+test('后台任务生命周期完整传递父任务、运行和类型信息', () => {
+  const fixture = controllerFixture();
+  const generation = fixture.controller.beginGeneration();
+  for (const type of ['monitor_started', 'monitor_progress', 'monitor_done']) {
+    const event = { type, task_id: 'child', parent_task_id: 'parent', run_id: '002', subagent_type: 'Explore' };
+    fixture.controller.handleEvent(event, generation);
+    assert.deepEqual(fixture.progressCalls.at(-1)[3], event);
+  }
 });
 
 test('connection generation rejects stale late events before any host mutation', () => {

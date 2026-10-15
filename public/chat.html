@@ -2223,7 +2223,9 @@
       line-height: 1.35;
       animation: danmakuSlideIn 0.2s ease;
     }
-    .dm-row .dm-txt { flex: 1; min-width: 0; word-break: break-word; color: var(--chat-text); }
+    .dm-row .dm-content { flex: 1; min-width: 0; word-break: break-word; }
+    .dm-row .dm-txt { color: var(--chat-text); }
+    .dm-row .dm-details { display: block; margin-top: 2px; font-size: 10px; color: var(--chat-muted); line-height: 1.5; }
     .dm-row.dm-done .dm-txt, .dm-row.dm-fail .dm-txt, .dm-row.dm-stale .dm-txt { color: var(--chat-muted); }
     .dm-row.dm-stale .dm-txt { opacity: .7; }
     .dm-close {

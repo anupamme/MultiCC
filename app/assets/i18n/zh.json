@@ -4583,5 +4583,20 @@
   "hookNewHint": "每次触发都会新建一个会话，并把下面的指令连同来源信息发给它。",
   "hookTargetNew": "新建会话",
   "hookTargetSession": "会话 {id}",
-  "hookSessionSearch": "搜索会话（标题或工作区名）"
+  "hookSessionSearch": "搜索会话（标题或工作区名）",
+  "backgroundTaskType": "类型：{value}",
+  "backgroundTaskParent": "父任务：{value}",
+  "backgroundTaskRun": "运行：{value}",
+  "backgroundTaskId": "任务：{value}",
+  "backgroundTypeExplore": "代码探索",
+  "backgroundTypePlan": "方案规划",
+  "backgroundTypeGeneral": "通用助手",
+  "backgroundTypeMain": "主会话",
+  "backgroundTypeReview": "代码审查",
+  "backgroundTypeBash": "命令执行",
+  "backgroundTypeAgent": "子助手",
+  "backgroundTypeCommand": "后台命令",
+  "backgroundTypeWorkflow": "工作流",
+  "backgroundTypeMonitor": "后台监控",
+  "backgroundTypeTool": "工具任务"
 }

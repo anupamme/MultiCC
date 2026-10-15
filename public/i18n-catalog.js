@@ -4585,7 +4585,22 @@ window.MULTICC_I18N_CATALOG = {
     "hookNewHint": "每次触发都会新建一个会话，并把下面的指令连同来源信息发给它。",
     "hookTargetNew": "新建会话",
     "hookTargetSession": "会话 {id}",
-    "hookSessionSearch": "搜索会话（标题或工作区名）"
+    "hookSessionSearch": "搜索会话（标题或工作区名）",
+    "backgroundTaskType": "类型：{value}",
+    "backgroundTaskParent": "父任务：{value}",
+    "backgroundTaskRun": "运行：{value}",
+    "backgroundTaskId": "任务：{value}",
+    "backgroundTypeExplore": "代码探索",
+    "backgroundTypePlan": "方案规划",
+    "backgroundTypeGeneral": "通用助手",
+    "backgroundTypeMain": "主会话",
+    "backgroundTypeReview": "代码审查",
+    "backgroundTypeBash": "命令执行",
+    "backgroundTypeAgent": "子助手",
+    "backgroundTypeCommand": "后台命令",
+    "backgroundTypeWorkflow": "工作流",
+    "backgroundTypeMonitor": "后台监控",
+    "backgroundTypeTool": "工具任务"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9172,6 +9187,21 @@ window.MULTICC_I18N_CATALOG = {
     "hookNewHint": "Each firing creates a new session and sends it the instruction below with the source details.",
     "hookTargetNew": "new session",
     "hookTargetSession": "session {id}",
-    "hookSessionSearch": "Search sessions (title or workspace)"
+    "hookSessionSearch": "Search sessions (title or workspace)",
+    "backgroundTaskType": "Type: {value}",
+    "backgroundTaskParent": "Parent: {value}",
+    "backgroundTaskRun": "Run: {value}",
+    "backgroundTaskId": "Task: {value}",
+    "backgroundTypeExplore": "Code exploration",
+    "backgroundTypePlan": "Planning",
+    "backgroundTypeGeneral": "General assistant",
+    "backgroundTypeMain": "Main session",
+    "backgroundTypeReview": "Code review",
+    "backgroundTypeBash": "Command execution",
+    "backgroundTypeAgent": "Subagent",
+    "backgroundTypeCommand": "Background command",
+    "backgroundTypeWorkflow": "Workflow",
+    "backgroundTypeMonitor": "Background monitor",
+    "backgroundTypeTool": "Tool task"
   }
 };

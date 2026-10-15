@@ -522,6 +522,71 @@ async function test(name, fn) {
     assert.deepStrictEqual(h.runtime.handleEvent('s1', {}, { subtype: 'unknown' }), { handled: false });
   });
 
+  await test('子任务信息贯穿生命周期、任务记录和重连快照', () => {
+    const h = makeHarness();
+    h.runtime.handleEvent('s1', { cwd: '/repo', currentToolCalls: [] }, {
+      subtype: 'task_started', task_id: 'parent', description: '检查接口',
+      subagent_type: 'Plan', run_id: '001', task_type: 'local_agent',
+    });
+    const metadata = { parent_task_id: 'parent', parent_description: '检查接口',
+      subagent_type: 'Explore', run_id: '002', task_type: 'local_agent' };
+    h.runtime.handleEvent('s1', { cwd: '/repo', currentToolCalls: [] }, {
+      subtype: 'task_started', task_id: 'child', description: '查找接口定义', ...metadata,
+    });
+    for (const [key, value] of Object.entries(metadata)) {
+      assert.strictEqual(h.broadcasts.at(-1).event[key], value);
+      assert.strictEqual(h.observations.at(-1).detail[key], value);
+    }
+    h.runtime.handleEvent('s1', {}, { subtype: 'task_progress', task_id: 'child', description: '已找到定义' });
+    const snapshot = h.runtime.listActiveBackgroundTasks('s1').find(task => task.task_id === 'child');
+    for (const [key, value] of Object.entries(metadata)) {
+      assert.strictEqual(h.broadcasts.at(-1).event[key], value);
+      assert.strictEqual(snapshot[key], value);
+    }
+    h.runtime.handleEvent('s1', null, { subtype: 'task_notification', task_id: 'child', status: 'completed' });
+    assert.strictEqual(h.broadcasts.at(-1).event.parent_description, '检查接口');
+    assert.strictEqual(h.broadcasts.at(-1).event.run_id, '002');
+    assert.ok(!h.runtime.listActiveBackgroundTasks('s1').some(task => task.task_id === 'child'));
+  });
+
+  await test('仅快照也能恢复任务信息，父任务晚到仍显示名称，退出后清空', () => {
+    const h = makeHarness();
+    h.runtime.handleEvent('s1', {}, { subtype: 'background_tasks_changed', tasks: [
+      { task_id: 'child', description: '检查实现', parent_task_id: 'parent', subagent_type: 'Explore', run_id: '002' },
+      { task_id: 'parent', description: '检查接口', run_id: '001' },
+    ] });
+    assert.strictEqual(h.broadcasts.at(-1).event.tasks[0].parent_description, '检查接口');
+    assert.strictEqual(h.runtime.listActiveBackgroundTasks('s1')[0].subagent_type, 'Explore');
+    assert.deepStrictEqual(h.runtime.listActiveBackgroundTasks('s2'), []);
+    h.runtime.reapSessionShadows('s1');
+    assert.strictEqual(h.broadcasts.at(-1).event.status, 'interrupted');
+    assert.deepStrictEqual(h.runtime.listActiveBackgroundTasks('s1'), []);
+  });
+
+  await test('恢复任务忽略旧运行的迟到事件，允许新运行先到进度', () => {
+    const h = makeHarness();
+    const state = { cwd: '/repo', currentToolCalls: [] };
+    for (const run of ['001', '002']) h.runtime.handleEvent('s1', state, {
+      subtype: 'task_started', task_id: 'child', run_id: run, description: '检查实现',
+    });
+    const before = h.broadcasts.length;
+    for (const subtype of ['task_started', 'task_progress', 'task_updated', 'task_notification']) {
+      assert.strictEqual(h.runtime.handleEvent('s1', state, {
+        subtype, task_id: 'child', run_id: '001', status: 'completed',
+      }).decision, 'stale-run');
+    }
+    assert.strictEqual(h.broadcasts.length, before);
+    assert.strictEqual(h.processes[0].killed, false);
+    assert.strictEqual(h.runtime.listActiveBackgroundTasks('s1')[0].run_id, '002');
+    h.runtime.handleEvent('s1', state, {
+      subtype: 'task_progress', task_id: 'child', run_id: '003', description: '继续检查',
+    });
+    assert.strictEqual(h.broadcasts.at(-1).event.run_id, '003');
+    h.runtime.stopSession('s1');
+    h.runtime.handleEvent('s1', state, { subtype: 'task_started', task_id: 'child', description: '旧版任务' });
+    assert.strictEqual(h.broadcasts.at(-1).event.run_id, undefined);
+  });
+
   await test('stopSession and stopAll kill tails, cancel coalescing, and clear dedup ledgers', () => {
     const h = makeHarness();
     function start(sessionName, taskId, toolId) {

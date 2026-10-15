@@ -13,6 +13,82 @@ void main() {
   setUpAll(() => I18n.init('zh'));
 
   group('BackgroundTaskBoard', () {
+    test('子任务详情贯穿进度和结束，旧运行事件不会覆盖新运行', () {
+      final board = BackgroundTaskBoard();
+      board.onMonitorStarted({
+        'task_id': 'child',
+        'description': '检查接口',
+        'subagent_type': 'Explore',
+        'parent_task_id': 'parent',
+        'parent_description': '检查实现',
+        'run_id': '002',
+      }, now: 1);
+      expect(board.rows().single.metadataLabel, '类型：代码探索 · 父任务：检查实现 · 运行：002');
+      board.onMonitorProgress({
+        'task_id': 'child',
+        'description': '已找到定义',
+      }, now: 2);
+      expect(board.rows().single.subagentType, 'Explore');
+      board.onMonitorDone({
+        'task_id': 'child',
+        'run_id': '001',
+        'summary': '旧结果',
+      }, now: 3);
+      expect(board.rows().single.isSpinning, isTrue);
+      expect(board.rows().single.description, '已找到定义');
+      board.onMonitorDone({
+        'task_id': 'child',
+        'run_id': '002',
+        'summary': '检查完成',
+      }, now: 4);
+      expect(board.rows().single.state, BackgroundTaskState.done);
+      board.onMonitorStarted({
+        'task_id': 'child',
+        'run_id': '003',
+        'description': '继续检查',
+      }, now: 5);
+      expect(board.rows().single.isSpinning, isTrue);
+      expect(board.rows().single.runId, '003');
+      expect(board.rows().single.parentTaskId, 'parent');
+      board.onMonitorStarted({
+        'task_id': 'child',
+        'run_id': '002',
+        'description': '迟到开始',
+      }, now: 6);
+      expect(board.rows().single.runId, '003');
+      expect(board.rows().single.description, '继续检查');
+    });
+
+    test('快照补齐现有任务详情，未知父任务显示标识，重连恢复字段', () {
+      final board = BackgroundTaskBoard();
+      board.onMonitorStarted({
+        'task_id': 'child',
+        'description': '检查接口',
+      }, now: 1);
+      final snapshot = {
+        'tasks': [
+          {
+            'task_id': 'child',
+            'subagent_type': 'Plan',
+            'parent_task_id': 'parent-123',
+            'run_id': '002',
+          },
+        ],
+      };
+      board.onBackgroundTasksSnapshot(snapshot, now: 2);
+      expect(
+        board.rows().single.metadataLabel,
+        '类型：方案规划 · 父任务：parent-123 · 运行：002',
+      );
+      expect(board.rows().single.confirmedBg, isTrue);
+      board.markStaleAll(now: 3);
+      board.onBackgroundTasksSnapshot(snapshot, now: 4);
+      expect(board.rows().single.isSpinning, isTrue);
+      expect(board.rows().single.runId, '002');
+      board.settleAtTurnEnd(now: 5);
+      expect(board.rows().single.isSpinning, isTrue);
+    });
+
     test('重连快照恢复子任务行，失败和中断分别收尾', () {
       final board = BackgroundTaskBoard();
       board.onBackgroundTasksSnapshot({
@@ -62,14 +138,8 @@ void main() {
         'description': 'git status',
         'background': false,
       }, now: 100);
-      board.onMonitorProgress({
-        'task_id': 't2',
-        'background': false,
-      }, now: 110);
-      board.onMonitorDone({
-        'task_id': 't2',
-        'background': false,
-      }, now: 120);
+      board.onMonitorProgress({'task_id': 't2', 'background': false}, now: 110);
+      board.onMonitorDone({'task_id': 't2', 'background': false}, now: 120);
 
       expect(board.rows(), isEmpty);
     });
@@ -94,24 +164,26 @@ void main() {
       expect(board.hasSpinning, isFalse);
     });
 
-    test('background_tasks snapshot confirms rows and settles dropped ones',
-        () {
-      final board = BackgroundTaskBoard();
-      board.onMonitorStarted({'task_id': 'keep', 'description': 'a'}, now: 1);
-      board.onMonitorStarted({'task_id': 'gone', 'description': 'b'}, now: 1);
+    test(
+      'background_tasks snapshot confirms rows and settles dropped ones',
+      () {
+        final board = BackgroundTaskBoard();
+        board.onMonitorStarted({'task_id': 'keep', 'description': 'a'}, now: 1);
+        board.onMonitorStarted({'task_id': 'gone', 'description': 'b'}, now: 1);
 
-      board.onBackgroundTasksSnapshot({
-        'tasks': [
-          {'id': 'x1', 'task_id': 'keep', 'description': 'a'},
-        ],
-      }, now: 2);
+        board.onBackgroundTasksSnapshot({
+          'tasks': [
+            {'id': 'x1', 'task_id': 'keep', 'description': 'a'},
+          ],
+        }, now: 2);
 
-      final byKey = {for (final r in board.rows()) r.key: r};
-      expect(byKey['t:keep']!.confirmedBg, isTrue);
-      expect(byKey['t:keep']!.state, BackgroundTaskState.start);
-      // Dropped from the authoritative active set → settled, not spinning.
-      expect(byKey['t:gone']!.state, BackgroundTaskState.done);
-    });
+        final byKey = {for (final r in board.rows()) r.key: r};
+        expect(byKey['t:keep']!.confirmedBg, isTrue);
+        expect(byKey['t:keep']!.state, BackgroundTaskState.start);
+        // Dropped from the authoritative active set → settled, not spinning.
+        expect(byKey['t:gone']!.state, BackgroundTaskState.done);
+      },
+    );
 
     test('turn end settles unconfirmed rows; confirmed rows keep spinning', () {
       final board = BackgroundTaskBoard();
@@ -222,29 +294,59 @@ void main() {
       board.onMonitorDone({'task_id': 't0'}, now: 100);
       board.onMonitorStarted({'task_id': 't99'}, now: 101);
       expect(board.rows(), hasLength(8));
-      expect(
-        board.rows().map((r) => r.taskId).toList(),
-        isNot(contains('t0')),
-      );
+      expect(board.rows().map((r) => r.taskId).toList(), isNot(contains('t0')));
     });
   });
 
   group('BackgroundTaskPanel widget', () {
+    testWidgets('展开任务面板显示中文类型、父任务与运行标识', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BackgroundTaskPanel(
+              initiallyExpanded: true,
+              rows: const [
+                BackgroundTaskRow(
+                  key: 't:child',
+                  taskId: 'child',
+                  description: '检查接口',
+                  state: BackgroundTaskState.start,
+                  updatedAt: 1,
+                  subagentType: 'Explore',
+                  parentTaskId: 'parent',
+                  parentDescription: '检查实现',
+                  runId: '002',
+                ),
+              ],
+              onDismiss: (_) {},
+            ),
+          ),
+        ),
+      );
+      expect(find.text('检查接口'), findsOneWidget);
+      expect(find.text('类型：代码探索 · 父任务：检查实现 · 运行：002'), findsOneWidget);
+      expect(find.byTooltip('任务：child\n父任务：parent\n运行：002'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     Widget host(Widget child) => MaterialApp(
           home: Scaffold(
-            body: SizedBox(width: 360, child: Align(
-              alignment: Alignment.bottomRight,
-              child: child,
-            )),
+            body: SizedBox(
+              width: 360,
+              child: Align(alignment: Alignment.bottomRight, child: child),
+            ),
           ),
         );
 
-    List<BackgroundTaskRow> rowsOf(List<(String, BackgroundTaskState)> spec) =>
+    List<BackgroundTaskRow> rowsOf(
+      List<(String, BackgroundTaskState)> spec,
+    ) =>
         [
           for (var i = 0; i < spec.length; i++)
             BackgroundTaskRow(
               key: spec[i].$1,
-              taskId: spec[i].$1.startsWith('t:') ? spec[i].$1.substring(2) : '',
+              taskId:
+                  spec[i].$1.startsWith('t:') ? spec[i].$1.substring(2) : '',
               description: '任务 $i',
               state: spec[i].$2,
               updatedAt: i,
@@ -252,27 +354,37 @@ void main() {
         ];
 
     testWidgets('collapsed pill shows the row count', (tester) async {
-      await tester.pumpWidget(host(BackgroundTaskPanel(
-        rows: rowsOf([
-          ('t:1', BackgroundTaskState.start),
-          ('t:2', BackgroundTaskState.done),
-        ]),
-        onDismiss: (_) {},
-      )));
+      await tester.pumpWidget(
+        host(
+          BackgroundTaskPanel(
+            rows: rowsOf([
+              ('t:1', BackgroundTaskState.start),
+              ('t:2', BackgroundTaskState.done),
+            ]),
+            onDismiss: (_) {},
+          ),
+        ),
+      );
       expect(find.byKey(const Key('bg-task-pill')), findsOneWidget);
       expect(find.textContaining('2'), findsWidgets);
       expect(find.byKey(const Key('bg-task-panel')), findsNothing);
     });
 
-    testWidgets('tap expands; rows render; ✕ dismisses locally', (tester) async {
+    testWidgets('tap expands; rows render; ✕ dismisses locally', (
+      tester,
+    ) async {
       final dismissed = <String>[];
-      await tester.pumpWidget(host(BackgroundTaskPanel(
-        rows: rowsOf([
-          ('t:1', BackgroundTaskState.start),
-          ('t:2', BackgroundTaskState.fail),
-        ]),
-        onDismiss: dismissed.add,
-      )));
+      await tester.pumpWidget(
+        host(
+          BackgroundTaskPanel(
+            rows: rowsOf([
+              ('t:1', BackgroundTaskState.start),
+              ('t:2', BackgroundTaskState.fail),
+            ]),
+            onDismiss: dismissed.add,
+          ),
+        ),
+      );
 
       await tester.tap(find.byKey(const Key('bg-task-pill')));
       // A spinning row animates forever — pump one frame, don't settle.
@@ -287,10 +399,9 @@ void main() {
     });
 
     testWidgets('empty rows render nothing', (tester) async {
-      await tester.pumpWidget(host(BackgroundTaskPanel(
-        rows: const [],
-        onDismiss: (_) {},
-      )));
+      await tester.pumpWidget(
+        host(BackgroundTaskPanel(rows: const [], onDismiss: (_) {})),
+      );
       expect(find.byType(BackgroundTaskPanel), findsOneWidget);
       expect(find.byKey(const Key('bg-task-pill')), findsNothing);
     });

@@ -80,7 +80,10 @@ class _BackgroundTaskPanelState extends State<BackgroundTaskPanel> {
                 const SizedBox(width: 6),
                 Text(
                   '${widget.rows.length} ${t('backgroundTasks')}',
-                  style: const TextStyle(color: Color(0xFF31465b), fontSize: 12),
+                  style: const TextStyle(
+                    color: Color(0xFF31465b),
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -188,11 +191,37 @@ class _BackgroundTaskRowView extends StatelessWidget {
           leading,
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              row.description.isEmpty ? t('backgroundTaskUnnamed') : row.description,
-              style: const TextStyle(color: Color(0xFF31465b), fontSize: 12),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            child: Tooltip(
+              message: row.metadataTooltip,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    row.description.isEmpty
+                        ? t('backgroundTaskUnnamed')
+                        : row.description,
+                    style: const TextStyle(
+                      color: Color(0xFF31465b),
+                      fontSize: 12,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (row.metadataLabel.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        row.metadataLabel,
+                        style: const TextStyle(
+                          color: Color(0xFF6f8096),
+                          fontSize: 10,
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           if (onDismiss != null)

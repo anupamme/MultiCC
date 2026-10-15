@@ -154,6 +154,44 @@ function dockFixture({ storage } = {}) {
 const fabOf = fixture => fixture.ids.get('danmaku-fab');
 const panelOf = fixture => fixture.ids.get('danmaku-panel');
 
+test('后台任务展示类型、父任务名称和运行标识，进度更新保留详情', () => {
+  const f = dockFixture();
+  f.liveUi.pushDanmaku('start', '检查接口', 'child', {
+    subagent_type: 'Explore', parent_task_id: 'parent', parent_description: '检查实现', run_id: '002',
+  });
+  const row = f.ids.get('danmaku-body').children[0];
+  const [description, details] = row.children[1].children;
+  assert.equal(details.textContent, '类型：代码探索 · 父任务：检查实现 · 运行：002');
+  assert.match(details.title, /父任务：parent/);
+  f.liveUi.pushDanmaku('progress', '已找到定义', 'child');
+  assert.equal(description.textContent, '已找到定义');
+  assert.match(details.textContent, /代码探索/);
+  f.liveUi.pushDanmaku('done', '旧运行完成', 'child', { run_id: '001' });
+  assert.equal(row.className, 'dm-row dm-start');
+  assert.equal(description.textContent, '已找到定义');
+  f.liveUi.pushDanmaku('done', '检查完成', 'child', { run_id: '002' });
+  assert.equal(row.className, 'dm-row dm-done');
+  f.liveUi.pushDanmaku('start', '继续检查', 'child', { run_id: '003' });
+  assert.equal(row.className, 'dm-row dm-start');
+  assert.match(details.textContent, /运行：003/);
+});
+
+test('快照补充正在运行的任务详情，未知父任务显示标识且文本不执行', () => {
+  const f = dockFixture();
+  f.liveUi.pushDanmaku('start', '检查接口', 'child');
+  f.liveUi.reconcileDanmakuTasks([{ task_id: 'child', subagent_type: '<img onerror=boom>',
+    parent_task_id: 'parent-123', run_id: '002', description: '检查接口' }]);
+  const row = f.ids.get('danmaku-body').children[0];
+  const details = row.children[1].children[1];
+  assert.equal(details.textContent, '类型：<img onerror=boom> · 父任务：parent-123 · 运行：002');
+  assert.equal(details.children.length, 0);
+  f.liveUi.reconcileDanmakuTasks([{ task_id: 'child', run_id: '002', parent_description: '检查实现' }]);
+  assert.match(details.textContent, /父任务：检查实现/);
+  const restored = dockFixture();
+  restored.liveUi.reconcileDanmakuTasks([{ task_id: 'child', subagent_type: 'Plan', run_id: '003' }]);
+  assert.match(restored.ids.get('danmaku-body').children[0].children[1].children[1].textContent, /方案规划/);
+});
+
 test('fab stays hidden while empty; badge counts running rows only', () => {
   const fixture = dockFixture();
   assert.equal(fabOf(fixture).style.display, undefined);
