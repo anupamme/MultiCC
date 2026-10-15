@@ -209,8 +209,8 @@ test('Codex adapter classifies by window length, not slot (weekly in secondary)'
       plan_type: 'pro',
       rate_limit: {
         allowed: true, limit_reached: false,
-        primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 111 },   // 5h — ignored
-        secondary_window: { used_percent: 85, limit_window_seconds: 604800, reset_at: 222 }, // weekly — chosen
+        primary_window: { used_percent: 30, limit_window_seconds: 18000, reset_at: 111 },   // 5h
+        secondary_window: { used_percent: 85, limit_window_seconds: 604800, reset_at: 222 }, // weekly — headline
       },
     }),
     async () => {
@@ -240,9 +240,58 @@ test('Codex adapter: limit_reached → rejected; derives reset from reset_after'
   );
 });
 
-test('Codex adapter: only a short (5h) window → null (codex is weekly-only, never mislabel)', async () => {
+test('Codex adapter: Plus reports 5h + weekly → both windows kept, headline weekly', async () => {
+  await withFetch(
+    () => okJson({
+      plan_type: 'plus',
+      rate_limit: {
+        allowed: true, limit_reached: false,
+        primary_window: { used_percent: 21, limit_window_seconds: 18000, reset_at: 1000 },
+        secondary_window: { used_percent: 3, limit_window_seconds: 604800, reset_at: 9000 },
+      },
+    }),
+    async () => {
+      const dto = await poller.pollCodexUsage({ strategy: 'codex-oauth-usage' }, 0, 6000, CODEX_AUTH);
+      assert.strictEqual(dto.rateLimitType, 'weekly');
+      assert.strictEqual(dto.resetsAt, 9000);
+      assert.deepStrictEqual(dto.windows, [
+        { window: '5h', label: '5h', usedPercent: 21, resetMs: 1000_000 },
+        { window: '1wk', label: '1wk', usedPercent: 3, resetMs: 9000_000 },
+      ]);
+    },
+  );
+});
+
+test('Codex adapter: an exhausted 5h window blocks the account even with weekly to spare', async () => {
+  await withFetch(
+    () => okJson({
+      rate_limit: {
+        primary_window: { used_percent: 100, limit_window_seconds: 18000, reset_at: 1000 },
+        secondary_window: { used_percent: 40, limit_window_seconds: 604800, reset_at: 9000 },
+      },
+    }),
+    async () => {
+      const dto = await poller.pollCodexUsage({ strategy: 'codex-oauth-usage' }, 0, 6000, CODEX_AUTH);
+      assert.strictEqual(dto.status, 'rejected');
+      assert.ok(Math.abs(dto.utilization - 0.4) < 1e-9, 'headline stays the weekly window');
+    },
+  );
+});
+
+test('Codex adapter: only a short (5h) window → labelled five_hour, never as weekly', async () => {
   await withFetch(
     () => okJson({ rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000 }, secondary_window: null } }),
+    async () => {
+      const dto = await poller.pollCodexUsage({ strategy: 'codex-oauth-usage' }, 0, 6000, CODEX_AUTH);
+      assert.strictEqual(dto.rateLimitType, 'five_hour');
+      assert.deepStrictEqual(dto.windows.map((w) => w.window), ['5h']);
+    },
+  );
+});
+
+test('Codex adapter: no window at all → null', async () => {
+  await withFetch(
+    () => okJson({ rate_limit: { primary_window: null, secondary_window: null } }),
     async () => {
       const dto = await poller.pollCodexUsage({ strategy: 'codex-oauth-usage' }, 0, 6000, CODEX_AUTH);
       assert.strictEqual(dto, null);

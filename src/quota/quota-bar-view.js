@@ -414,14 +414,24 @@ function qoderBar(value) {
   );
 }
 
-// ── Codex (ChatGPT weekly quota) ────────────────────────────────────────────
+// ── Codex (ChatGPT subscription windows) ────────────────────────────────────
+
+// The windows a codex quota result carries: `windows` (every cycle, short →
+// long), or just `weekly` from a result produced before windows existed.
+function codexResultWindows(value) {
+  if (Array.isArray(value.windows) && value.windows.length) {
+    return value.windows.filter((w) => w && WINDOW_TOKENS.includes(w.window)
+      && finiteNumber(w.usedPercent) !== null);
+  }
+  return value.weekly ? [{ window: '1wk', ...value.weekly }] : [];
+}
 
 function codexBar(value) {
   if (!value) {
     return partsView(
       [part('quotaCodexIdleText', null, 'Codex 余量 · ⟳ 刷新')],
       COLOR.gray,
-      [part('quotaCodexIdleTitle', null, '点击从 chatgpt.com 拉取 Codex 周额度用量')],
+      [part('quotaCodexIdleTitle', null, '点击从 chatgpt.com 拉取 Codex 5h/周额度用量')],
     );
   }
   if (value.status === 'no_auth') {
@@ -431,27 +441,29 @@ function codexBar(value) {
       [part('quotaCodexNoAuthTitle', null, '未找到 ~/.codex/auth.json。请先在终端运行 codex 完成登录。')],
     );
   }
-  if (value.status !== 'ok' || !value.weekly) {
+  const windows = value.status === 'ok' ? codexResultWindows(value) : [];
+  if (!windows.length) {
     return partsView(
       [part('quotaCodexUnavailableText', null, 'Codex：用量暂不可用 · ⟳ 重试')],
       COLOR.yellow,
       [value.error ? part(null, null, value.error) : part('quotaCodexUnavailableTitle', null, '无法从 chatgpt.com 拉取用量')],
     );
   }
-  const w = value.weekly;
-  const used = w.usedPercent ?? 0;
-  const resetAt = w.resetsAt ? w.resetsAt * 1000 : null;
   const ago = agoTag(value.fetchedAt);
-  const seg = windowSeg('1wk', used, resetAt) || '—';
-  const remaining = w.remainingPercent ?? 0;
+  const resetMs = (w) => (finiteNumber(w.resetsAt) ? finiteNumber(w.resetsAt) * 1000 : null);
+  const seg = sortSegs(windows.map((w) => ({ window: w.window, seg: windowSeg(w.window, w.usedPercent, resetMs(w)) })))
+    .join(' · ') || '—';
+  // The account stops at whichever cycle runs out first.
+  const worst = Math.max(...windows.map((w) => finiteNumber(w.usedPercent)));
 
   const title = [
-    part('quotaCodexTitle', null, 'Codex 周额度（chatgpt.com/backend-api/wham/usage）'),
+    part('quotaCodexTitle', null, 'Codex 额度（chatgpt.com/backend-api/wham/usage）'),
     part('quotaPlanLine', { plan: `${value.planType || '?'}${value.email ? ' · ' + value.email : ''}` },
       `套餐: ${value.planType || '?'}${value.email ? ' · ' + value.email : ''}`),
-    part('quotaUsedRemainingLine', { used, remaining }, `已用 ${used}% · 剩余 ${remaining}%`),
   ];
-  if (resetAt) title.push(part('quotaResetAfterLine', { at: cdTag(resetAt, '1wk') }, `重置: ${cdTag(resetAt, '1wk')} 后`));
+  for (const w of windows.slice().sort((a, b) => windowRank(a.window) - windowRank(b.window))) {
+    title.push(windowDetailLine(w.window, finiteNumber(w.usedPercent), resetMs(w)));
+  }
   for (const a of (value.additional || [])) {
     title.push(part('quotaAdditionalWindowLine', { name: a.name, used: a.usedPercent }, `${a.name}: ${a.usedPercent}% 已用`));
   }
@@ -461,7 +473,7 @@ function codexBar(value) {
   title.push(syncLine(ago), refreshLine());
   return partsView(
     [part(null, null, seg), ago ? part(null, null, ago, ' · ') : null, part(null, null, '⟳', ' ')],
-    unifiedColorFromRemaining(unifiedRemaining(value.limitReached ? 100 : used)),
+    unifiedColorFromRemaining(unifiedRemaining(value.limitReached ? 100 : worst)),
     title,
   );
 }
@@ -944,6 +956,9 @@ function normalizeWindowEvent(info, nowMs) {
   // poller always tags weekly with provider:'codex' — so a weekly event that
   // resolves to Claude is malformed. Reject it rather than mislabel it.
   if (info.rateLimitType === 'weekly' && provider === 'claude') return null;
+  // Every cycle a multi-window reading carries (Codex Plus: 5h + weekly).
+  // Claude merges its own windows from the scrape, so it never takes these.
+  const windows = provider === 'claude' ? [] : normalizeEventWindows(info.windows);
   return Object.freeze({
     schemaVersion: 1,
     kind: info.rateLimitType === 'weekly' ? 'weekly' : 'five_hour',
@@ -953,12 +968,45 @@ function normalizeWindowEvent(info, nowMs) {
     observedAtMs: Math.trunc(finiteNumber(nowMs) ?? Date.now()),
     source: provider === 'opencode' ? 'opencode_log' : 'claude_code',
     provider,
+    ...(windows.length ? { windows: Object.freeze(windows) } : {}),
   });
 }
 
-// ── Single-window bars carried by the passive rate_limit_event ─────────────
-// GLM (5h) and Codex (weekly) each report exactly one window and have no usage
-// page behind them, so their bar is that single segment.
+// [{window, usedPercent (0..100), resetMs}] → frozen rows with a known window
+// token and a percent; anything else is dropped rather than mislabelled.
+function normalizeEventWindows(list) {
+  if (!Array.isArray(list)) return [];
+  const rows = [];
+  for (const w of list) {
+    if (!w || typeof w !== 'object' || !WINDOW_TOKENS.includes(w.window)) continue;
+    const used = finiteNumber(w.usedPercent);
+    if (used === null) continue;
+    rows.push(Object.freeze({
+      window: w.window,
+      usedPercent: Math.max(0, Math.min(100, used)),
+      resetsAtMs: normalizeResetTime(w.resetMs),
+    }));
+  }
+  return rows;
+}
+
+// ── Window bars carried by the passive rate_limit_event ─────────────────────
+// GLM (5h) reports one window; Codex reports every cycle its plan has (Plus:
+// 5h + weekly, prolite: weekly only). Neither has a usage page behind it, so
+// the bar is just those segments, short → long.
+
+// One tooltip line per window, in the same words as the Claude bar's rows
+// (CLAUDE_WINDOW_ZH / CLAUDE_WINDOW_PART below; only read at render time).
+function windowDetailLine(window, used, resetsAtMs) {
+  const pct = Math.round(used);
+  const cd = cdTag(resetsAtMs, window);
+  return part('quotaClaudeWindowDetail', {
+    window: CLAUDE_WINDOW_PART[window],
+    from: null,
+    pct,
+    reset: cd ? part('quotaResetSuffix', { at: cd }, ` · ${cd} 后重置`) : null,
+  }, `${CLAUDE_WINDOW_ZH[window]}: 已用 ${pct}%${cd ? ` · ${cd} 后重置` : ''}`);
+}
 
 function windowEventBar(info) {
   if (!info) return null;
@@ -966,18 +1014,32 @@ function windowEventBar(info) {
     : info.provider === 'codex' ? 'codex'
       : info.provider === 'opencode' ? 'opencode' : 'claude';
   if (provider === 'claude') return null; // Claude's bar is the merged one below
-  const used = info.status === 'rejected' ? 100 : finiteNumber(info.usedPercentage);
-  const token = info.kind === 'weekly' || provider === 'codex' ? '1wk' : '5h';
-  const seg = windowSeg(token, used, info.resetsAtMs);
+  const titleLine = provider === 'glm'
+    ? part('quotaGlmWindowTitle', null, 'GLM Coding Plan 五小时窗口用量（来自 open.bigmodel.cn 额度端点）')
+    : provider === 'opencode'
+      ? part('quotaOpenCodeWindowTitle', null, 'OpenCode Go 订阅窗口用量（来自 opencode 日志中的 provider limit 错误）')
+      : part('quotaCodexWindowTitle', null, 'Codex 订阅额度用量（来自 chatgpt.com/backend-api/wham/usage）');
   const label = provider === 'opencode' ? 'OpenCode Go · ' : '';
+  if (Array.isArray(info.windows) && info.windows.length) {
+    const rows = info.windows.slice()
+      .sort((a, b) => windowRank(a.window) - windowRank(b.window));
+    const segs = rows.map((w) => windowSeg(w.window, w.usedPercent, w.resetsAtMs)).filter(Boolean);
+    // Colour by the cycle that runs out first; an upstream rejection is the
+    // account saying one of them already has.
+    const worst = info.status === 'rejected' ? 100 : Math.max(...rows.map((w) => w.usedPercent));
+    return partsView(
+      [part(null, null, `${label}${segs.join(' · ')}`)],
+      unifiedColorFromRemaining(unifiedRemaining(worst)),
+      [titleLine, ...rows.map((w) => windowDetailLine(w.window, w.usedPercent, w.resetsAtMs))],
+    );
+  }
+  const used = info.status === 'rejected' ? 100 : finiteNumber(info.usedPercentage);
+  const token = info.kind === 'weekly' ? '1wk' : '5h';
+  const seg = windowSeg(token, used, info.resetsAtMs);
   return partsView(
     [part(null, null, `${label}${seg || token}`)],
     unifiedColorFromRemaining(unifiedRemaining(used)),
-    [provider === 'glm'
-      ? part('quotaGlmWindowTitle', null, 'GLM Coding Plan 五小时窗口用量（来自 open.bigmodel.cn 额度端点）')
-      : provider === 'opencode'
-        ? part('quotaOpenCodeWindowTitle', null, 'OpenCode Go 订阅窗口用量（来自 opencode 日志中的 provider limit 错误）')
-        : part('quotaCodexWindowTitle', null, 'Codex 订阅周额度用量（来自 chatgpt.com/backend-api/wham/usage）')],
+    [titleLine],
   );
 }
 
@@ -1203,7 +1265,7 @@ function vendorLabel(kind) {
 const LOADING_TITLE = Object.freeze({
   claude: part('quotaLoadingTitleClaude', null, '正在通过 CDP 打开 claude.ai/settings/usage 解析窗口余量…'),
   opencode: part('quotaLoadingTitleOpencode', null, '正在通过 CDP 抓取 opencode.ai/console ...'),
-  codex: part('quotaLoadingTitleCodex', null, '正在从 chatgpt.com 拉取 Codex 周额度...'),
+  codex: part('quotaLoadingTitleCodex', null, '正在从 chatgpt.com 拉取 Codex 额度...'),
   qoder: part('quotaLoadingTitleQoder', null, '正在通过 CDP 抓取 qoder.com.cn 用量...'),
   ark: part('quotaLoadingTitleArk', null, '正在通过 arkcli 拉取火山方舟套餐额度...'),
   zhipu: part('quotaLoadingTitleZhipu', null, '正在从 z.ai / bigmodel.cn 额度端点拉取窗口用量...'),

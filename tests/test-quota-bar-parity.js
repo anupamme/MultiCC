@@ -138,6 +138,14 @@ const BAR_INPUTS = [
     additional: [{ name: 'Fable', usedPercent: 12 }, { name: '1m', usedPercent: 3 }],
     credits: { hasCredits: true, balance: 12.5 },
   }],
+  ['codex: plus 5h + weekly windows', 'codex', {
+    status: 'ok', fetchedAt: AGO_MS, planType: 'plus', limitReached: false,
+    windows: [
+      { window: '5h', usedPercent: 92, remainingPercent: 8, resetsAt: (NOW_MS + 2 * 3_600_000) / 1000 },
+      { window: '1wk', usedPercent: 3, remainingPercent: 97, resetsAt: (NOW_MS + 6 * 86_400_000) / 1000 },
+    ],
+    weekly: { usedPercent: 3, remainingPercent: 97, resetsAt: (NOW_MS + 6 * 86_400_000) / 1000 },
+  }],
   ['ark: never fetched', 'ark', null],
   ['ark: not authenticated', 'ark', { status: 'needs_auth' }],
   ['ark: arkcli missing', 'ark', { status: 'needs_install' }],

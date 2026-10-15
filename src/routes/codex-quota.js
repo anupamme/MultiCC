@@ -4,7 +4,8 @@
 // the official backend using the on-disk OAuth token. No CDP needed: the codex
 // CLI stores its rotated credential at ~/.codex/auth.json, and the same
 // chatgpt.com/backend-api/wham/usage endpoint the CLI's /status uses returns the
-// weekly quota window, plan tier, per-feature limits, and credit balance.
+// plan's quota windows (Plus: 5h + weekly; prolite: weekly only), plan tier,
+// per-feature limits, and credit balance.
 //
 // Failure modes surfaced to the frontend:
 //   no_auth           — ~/.codex/auth.json missing / unreadable (not logged in)
@@ -14,10 +15,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { renderQuotaBar } = require('../quota/quota-bar-view');
+const { codexRateLimitWindows } = require('../codex/rate-limit-windows');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const TIMEOUT_MS = 10000;
-const WEEKLY_MIN_WINDOW_SECONDS = 24 * 60 * 60;
 
 function readCodexAuth(authFile) {
   try {
@@ -34,17 +35,6 @@ function readCodexAuth(authFile) {
 function finite(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
-}
-
-function pickWeeklyWindow(rl) {
-  const windows = [rl.primary_window, rl.secondary_window].filter(
-    (w) => w && typeof w === 'object'
-      && finite(w.used_percent) !== null
-      && finite(w.limit_window_seconds) !== null,
-  );
-  return windows
-    .filter((w) => finite(w.limit_window_seconds) >= WEEKLY_MIN_WINDOW_SECONDS)
-    .sort((a, b) => finite(b.limit_window_seconds) - finite(a.limit_window_seconds))[0] || null;
 }
 
 function windowResetsAt(w, nowMs) {
@@ -83,11 +73,15 @@ async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
   const rl = body && typeof body === 'object' ? body.rate_limit : null;
   if (!rl || typeof rl !== 'object') return { status: 'unavailable', error: 'rate_limit missing' };
 
-  const weekly = pickWeeklyWindow(rl);
-  if (!weekly) return { status: 'unavailable', error: 'no weekly window exposed' };
-
-  const usedPercent = finite(weekly.used_percent);
-  const resetsAt = windowResetsAt(weekly, nowMs);
+  const windows = codexRateLimitWindows(rl, nowMs).map((w) => ({
+    window: w.window,
+    usedPercent: w.usedPercent,
+    remainingPercent: Math.max(0, 100 - w.usedPercent),
+    windowSeconds: w.windowSeconds,
+    resetsAt: w.resetsAt,
+  }));
+  if (!windows.length) return { status: 'unavailable', error: 'no rate-limit window exposed' };
+  const weekly = windows.find((w) => w.window === '1wk') || null;
 
   // Per-feature additional limits (e.g. GPT-5.3-Codex-Spark)
   const additional = Array.isArray(body.additional_rate_limits)
@@ -106,12 +100,12 @@ async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
     planType: typeof body.plan_type === 'string' ? body.plan_type : null,
     email: typeof body.email === 'string' ? body.email : null,
     limitReached: rl.limit_reached === true,
-    weekly: {
-      usedPercent,
-      remainingPercent: Math.max(0, 100 - usedPercent),
-      windowSeconds: finite(weekly.limit_window_seconds),
-      resetsAt,
-    },
+    // Every window, short → long (resetsAt in epoch seconds).
+    windows,
+    // The weekly window alone, kept for callers that predate `windows`.
+    weekly: weekly
+      ? { usedPercent: weekly.usedPercent, remainingPercent: weekly.remainingPercent, windowSeconds: weekly.windowSeconds, resetsAt: weekly.resetsAt }
+      : null,
     additional,
     credits: body.credits && typeof body.credits === 'object'
       ? {
