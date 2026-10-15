@@ -7,6 +7,7 @@ const test = require('node:test');
 const { createOfficialAccountStore } = require('../src/official-accounts');
 const oauth = require('../src/claude-auth/official-oauth');
 const { createClaudeAccountCredentialService } = require('../src/claude-auth/account-credentials');
+const { createClaudeAccountRefreshSupervisor } = require('../src/claude-auth/accounts-refresh');
 const { mountClaudeAccountRoutes } = require('../src/routes/claude-accounts');
 
 const fs = require('node:fs');
@@ -162,11 +163,11 @@ test('credential service returns a live stored token without any network', async
   assert.equal(calls.length, 0);
 });
 
-test('expired token → singleflight refresh, concurrent readers share one POST', async () => {
+test('到期前三分钟即续期，并发读取只发一次 POST', async () => {
   const { store, account } = storeWithClaudeAccount({
     access_token: 'oat-dead',
     refresh_token: 'ort-live',
-    expired: new Date(Date.now() - 1000).toISOString(),
+    expired: new Date(Date.now() + 3 * 60_000).toISOString(),
   });
   const { fetch, calls } = mockFetch({
     '/v1/oauth/token': { status: 200, body: { access_token: 'oat-fresh', expires_in: 3600 } },
@@ -237,6 +238,60 @@ test('readOfficialCredential: account context → refresh-on-read, string → sh
   const sharedResult = await svc.readOfficialCredential('Claude Code-credentials');
   assert.equal(sharedResult.token, 'oat-keychain');
   assert.deepEqual(sharedCalls, ['Claude Code-credentials']);
+});
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+test('仍有效的令牌读取和认证恢复都等待同账号续期，其他账号不受阻塞', async t => {
+  const { store, account } = storeWithClaudeAccount({
+    access_token: 'old-a', refresh_token: 'refresh-a', expired: new Date(Date.now() + 3600e3).toISOString(),
+  });
+  t.after(() => fs.rmSync(store.root, { recursive: true, force: true }));
+  const other = store.createClaudeAccount({ label: '另一账号' });
+  store.writeClaudeCredential(other.id, { access_token: 'live-b', expired: new Date(Date.now() + 3600e3).toISOString() });
+  const supervisor = createClaudeAccountRefreshSupervisor({ accounts: store });
+  const { fetch, calls } = mockFetch({});
+  const service = createClaudeAccountCredentialService({ accounts: store, fetch, exclusive: supervisor.exclusive });
+  const started = deferred(), release = deferred();
+  t.after(() => release.resolve());
+  const rotation = supervisor.exclusive(account.id, async () => {
+    started.resolve();
+    await release.promise;
+    store.writeClaudeCredential(account.id, { access_token: 'new-a', refresh_token: 'refresh-new', expired: new Date(Date.now() + 3600e3).toISOString() });
+  });
+  await started.promise;
+  let finished = 0;
+  const reads = Array.from({ length: 8 }, () => service.readAccountToken(account.id).then(r => { finished++; return r; }));
+  const recoveries = Array.from({ length: 8 }, () => service.recoverAccountToken(account.id, 'old-a').then(r => { finished++; return r; }));
+  assert.equal((await service.readAccountToken(other.id)).token, 'live-b');
+  assert.equal(finished, 0, '同账号尚未保存新凭据时不得读旧令牌');
+  release.resolve();
+  await rotation;
+  const results = await Promise.all([...reads, ...recoveries]);
+  assert.ok(results.every(r => r.token === 'new-a'));
+  assert.equal(calls.length, 0, '等待后台续期，不额外发起续期');
+});
+
+test('已续期直接采用新凭据；无变化、已过期或已删除都不盲目重试或强制续期', async t => {
+  const { store, account } = storeWithClaudeAccount({
+    access_token: 'new-a', refresh_token: 'refresh-a', expired: new Date(Date.now() + 3600e3).toISOString(),
+  });
+  t.after(() => fs.rmSync(store.root, { recursive: true, force: true }));
+  const { fetch, calls } = mockFetch({});
+  const service = createClaudeAccountCredentialService({ accounts: store, fetch });
+  assert.equal((await service.recoverOfficialCredential({ accountId: account.id }, 'old-a')).token, 'new-a');
+  assert.equal((await service.recoverAccountToken(account.id, 'new-a')).token, null);
+  assert.equal((await service.recoverAccountToken(account.id, '')).token, null);
+  store.writeClaudeCredential(account.id, { expired: new Date(Date.now() - 1000).toISOString() });
+  assert.equal((await service.recoverAccountToken(account.id, 'old-a')).token, null);
+  store.deleteClaudeAccount(account.id);
+  assert.equal((await service.recoverAccountToken(account.id, 'old-a')).token, null);
+  assert.equal((await service.recoverOfficialCredential('Claude Code-credentials', 'shared')).reason, 'unmanaged_login');
+  assert.equal(calls.length, 0);
 });
 
 // ── routes ───────────────────────────────────────────────────────────────────

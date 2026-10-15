@@ -2173,6 +2173,15 @@
       ]
     },
     {
+      "path": "tests/test-claude-oauth-proxy-recovery.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:provider-router",
+      "entrypoints": [
+        "npm:test:provider-router"
+      ]
+    },
+    {
       "path": "tests/test-claude-oauth-refresh.js",
       "tier": "core",
       "lane": "deterministic"

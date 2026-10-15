@@ -1329,7 +1329,7 @@ function handleProxyOutcome(event) {
 }
 const { createProxyBroadcasters } = require('./src/chat/proxy-broadcast');
 providerRouterRuntime.mountProtocolProxies(app, {
-  protocols: ['claude'], authorizeProxyRequest: providerAttemptRuntime.authorizeProxyRequest, claudeProxy: { readOfficialCredential: arg => claudeAccountCredentials.readOfficialCredential(arg) }, // multi-account: marked providers resolve the account credential (refresh-on-read); the shared login keeps the default Keychain read
+  protocols: ['claude'], authorizeProxyRequest: providerAttemptRuntime.authorizeProxyRequest, claudeProxy: { readOfficialCredential: arg => claudeAccountCredentials.readOfficialCredential(arg), recoverOfficialCredential: (arg, token) => claudeAccountCredentials.recoverOfficialCredential(arg, token) },
   onUsageObserved: handleProxyUsage,
   onProxyOutcome: handleProxyOutcome,
   // A 409 here is a host decision, and it used to leave no trace at all.
