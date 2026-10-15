@@ -240,7 +240,8 @@ const CLIS = deepFreeze({
     name: 'DSH',
     colour: '#4d6bfe',
     mark: 'D',
-    providerless: true,
+    // 2026-10-15 起接入 Anthropic 协议线路池（DEEPSEEK_BASE_URL 实测遵守），
+    // 不再 providerless；自有账号登录仍保留为默认选项。
     update: { package: '@deepseek-ai/dsh', command: 'npm install -g @deepseek-ai/dsh' },
   },
   gemini: {
@@ -263,7 +264,8 @@ const CLIS = deepFreeze({
     name: 'Grok',
     colour: '#8c8f96',
     mark: 'R',
-    providerless: true,
+    // 2026-10-15 起接入线路池：config.toml [model.*] 的 api_backend 支持
+    // messages/responses 两种协议（chat_completions 刻意不接），私有 GROK_HOME 隔离。
     update: { package: '@xai-official/grok', command: 'npm install -g @xai-official/grok' },
     lanes: { chat: [{ id: 'grok', engine: 'grok acp' }], terminal: [{ id: 'grok' }] },
   },

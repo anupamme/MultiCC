@@ -52,12 +52,12 @@ test('CC-Switch import treats meta.apiFormat as the protocol source of truth', (
   const chat = providers.getProviderSummary('codex', 'cc-chat');
   assert.equal(chat.apiFormat, 'openai_responses');
   assert.equal(chat.wireApi, 'responses');
-  assert.deepEqual(chat.compatibleClis, ['codex', 'codex-exp', 'opencode', 'zcode', 'kimi']);
+  assert.deepEqual(chat.compatibleClis, ['codex', 'codex-exp', 'opencode', 'zcode', 'kimi', 'grok']);
   assert.equal(chat.requiresConversionFor, undefined);
 
   const anthropic = providers.getProviderSummary('claude', 'cc-anthropic');
   assert.equal(anthropic.apiFormat, 'anthropic');
-  assert.deepEqual(anthropic.compatibleClis, ['claude', 'claude-exp', 'opencode', 'zcode']);
+  assert.deepEqual(anthropic.compatibleClis, ['claude', 'claude-exp', 'opencode', 'zcode', 'dsh', 'grok']);
 });
 
 test('startup migration upgrades old provider records once and is byte-idempotent', () => {
@@ -213,6 +213,23 @@ test('protocol compatibility gives ZCode both pools while Qoder stays providerle
   assert.deepEqual(providers.appTypesForCli('opencode'), ['claude', 'codex']);
   assert.deepEqual(providers.appTypesForCli('qoder'), []);
   assert.deepEqual(providers.appTypesForCli('zcode'), ['claude', 'codex']);
+  assert.deepEqual(providers.appTypesForCli('dsh'), ['claude']);
+  assert.deepEqual(providers.appTypesForCli('grok'), ['claude', 'codex']);
+  assert.equal(providers.providerSupportsCli({
+    appType: 'claude', apiFormat: 'anthropic',
+    baseUrl: 'https://anthropic.example', hasToken: true,
+  }, 'dsh'), true);
+  assert.equal(providers.providerSupportsCli({
+    appType: 'claude', apiFormat: 'anthropic', isOfficial: true,
+  }, 'dsh'), false, 'DSH cannot replay a Claude OAuth subscription');
+  assert.equal(providers.providerSupportsCli({
+    appType: 'codex', apiFormat: 'openai_responses',
+    baseUrl: 'https://responses.example/v1', hasToken: true,
+  }, 'grok'), true);
+  assert.equal(providers.providerSupportsCli({
+    appType: 'claude', apiFormat: 'anthropic',
+    baseUrl: 'https://anthropic.example', hasToken: true,
+  }, 'grok'), true);
   assert.equal(providers.normalizeApiFormat(null, 'claude', {}), 'anthropic');
   assert.equal(providers.normalizeApiFormat(null, 'codex', {}), 'openai_responses');
   assert.equal(providers.normalizeApiFormat(null, 'codex', { proxyTarget: { mode: 'chat-to-responses' } }), 'openai_responses');
@@ -230,4 +247,43 @@ test('protocol compatibility gives ZCode both pools while Qoder stays providerle
     appType: 'codex', apiFormat: 'openai_responses',
     baseUrl: '', hasToken: false, isOfficial: true,
   }, 'zcode'), false, 'another CLI cannot replay Codex OAuth');
+});
+
+test('DSH route injects DEEPSEEK_* env only; Grok materializes a private GROK_HOME', () => {
+  // DSH: Anthropic-format provider → env-only route, model passed through as a
+  // bare wire id, provider credential never written to disk.
+  const dshSpawn = providers.resolveSpawnEnv({
+    id: 'dsh-route-test', cli: 'dsh', provider: 'cc-anthropic', model: 'claude-test',
+  });
+  assert.equal(dshSpawn.env.DEEPSEEK_BASE_URL, 'https://anthropic.example');
+  assert.equal(dshSpawn.env.DEEPSEEK_API_KEY, 'anthropic-secret');
+  assert.equal(dshSpawn.qualifiedModel, 'claude-test');
+  assert.equal(dshSpawn.providerModel, 'claude-test');
+  assert.equal(dshSpawn.grokHome, undefined);
+  assert.ok(!Object.keys(dshSpawn.env).some(k => /GROK_HOME|ZCODE_DATA/.test(k)), 'DSH route touches no home tree');
+
+  // Grok on an Anthropic provider: private home + config.toml api_backend=messages,
+  // key travels via env_key, never into the file.
+  const grokAnthropic = providers.resolveSpawnEnv({
+    id: 'grok-anthropic-test', cli: 'grok', provider: 'cc-anthropic', model: 'claude-test',
+  });
+  assert.ok(grokAnthropic.env.GROK_HOME.startsWith(providers.GROK_HOMES_DIR));
+  assert.equal(grokAnthropic.env.MULTICC_GROK_API_KEY, 'anthropic-secret');
+  assert.equal(grokAnthropic.qualifiedModel, 'claude-test');
+  const grokToml = fs.readFileSync(path.join(grokAnthropic.env.GROK_HOME, 'config.toml'), 'utf8');
+  assert.match(grokToml, /api_backend\s*=\s*"messages"/);
+  assert.match(grokToml, /base_url\s*=\s*"https:\/\/anthropic\.example"/);
+  assert.match(grokToml, /env_key\s*=\s*"MULTICC_GROK_API_KEY"/);
+  assert.equal(grokToml.includes('anthropic-secret'), false, 'API key never lands in config.toml');
+  assert.equal(fs.statSync(path.join(grokAnthropic.env.GROK_HOME, 'config.toml')).mode & 0o777, 0o600);
+
+  // Grok on a Responses provider: same home layout, api_backend=responses.
+  const grokResponses = providers.resolveSpawnEnv({
+    id: 'grok-responses-test', cli: 'grok', provider: 'cc-chat', model: 'chat-model',
+  });
+  const grokResponsesToml = fs.readFileSync(path.join(grokResponses.env.GROK_HOME, 'config.toml'), 'utf8');
+  assert.match(grokResponsesToml, /api_backend\s*=\s*"responses"/);
+  assert.match(grokResponsesToml, /base_url\s*=\s*"https:\/\/chat\.example\/v1"/);
+  assert.equal(grokResponsesToml.includes('chat-secret'), false);
+  assert.notEqual(grokResponses.env.GROK_HOME, grokAnthropic.env.GROK_HOME, 'each session gets an isolated GROK_HOME');
 });

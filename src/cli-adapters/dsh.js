@@ -125,7 +125,12 @@ function createDshAdapter({ cmd, homeDir, runnerSrcDir } = {}) {
       bootstrap();
       const so = env.spawnOpts;
       const args = ['--profile', DSH_PROFILE];
-      if (so.rawModel && DSH_MODELS.includes(String(so.rawModel))) args.push('--multicc-model', so.rawModel);
+      // DSH_MODELS 白名单只管自有账号（DeepSeek 官方网关只认这两个模型）；
+      // 走 MultiCC 线路池时（providerModel 非空）模型是池线路的字面 wire id，
+      // 池里可以是 glm/deepseek 等任意模型，vendor/dsh-runner 本身不限模型名。
+      if (so.rawModel && (so.providerModel || DSH_MODELS.includes(String(so.rawModel)))) {
+        args.push('--multicc-model', so.rawModel);
+      }
       if (!env.historyHandle.isFirstTurn && env.historyHandle.cliSessionId) {
         args.push('--multicc-resume', env.historyHandle.cliSessionId);
       }

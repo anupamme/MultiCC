@@ -204,7 +204,6 @@
       name: 'DSH',
       colour: '#4d6bfe',
       mark: 'D',
-      providerless: true,
       update: { package: '@deepseek-ai/dsh', command: 'npm install -g @deepseek-ai/dsh' },
     },
     gemini: {
@@ -227,7 +226,6 @@
       name: 'Grok',
       colour: '#8c8f96',
       mark: 'R',
-      providerless: true,
       update: { package: '@xai-official/grok', command: 'npm install -g @xai-official/grok' },
       lanes: { chat: [{ id: 'grok', engine: 'grok acp' }], terminal: [{ id: 'grok' }] },
     },

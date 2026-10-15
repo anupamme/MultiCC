@@ -135,6 +135,10 @@ const ZCODE_HOMES_DIR = path.join(os.homedir(), '.multicc', 'zcode-homes');
 // Per-provider KIMI_CODE_HOME dirs so Kimi Code sessions bound to a MultiCC
 // provider never touch (or leak into) the user's native ~/.kimi-code login.
 const KIMI_HOMES_DIR = path.join(os.homedir(), '.multicc', 'kimi-homes');
+// Same isolation for Grok Build: provider-bound sessions get a private
+// GROK_HOME (default ~/.grok holds the user's own login) carrying a generated
+// config.toml that points one [model.*] entry at the provider.
+const GROK_HOMES_DIR = path.join(os.homedir(), '.multicc', 'grok-homes');
 
 const APP_TYPES = ['claude', 'codex'];
 const API_FORMATS = Object.freeze({
@@ -155,20 +159,30 @@ function normalizeApiFormat(value, appType, cfg = {}) {
 }
 
 function compatibleClisForFormat(apiFormat) {
-  if (apiFormat === API_FORMATS.ANTHROPIC) return ['claude', 'claude-exp', 'opencode', 'zcode'];
+  // DSH joins the Anthropic pool: its only LLM client speaks Anthropic Messages
+  // (default endpoint https://api.deepseek.com/anthropic, DEEPSEEK_BASE_URL
+  // replaces the whole base — verified in dsh-llm-deepseek). Grok joins both
+  // pools: its config.toml [model.*] api_backend accepts "messages" and
+  // "responses" (docs/user-guide/11-custom-models.md). WorkBuddy/Qoder CN were
+  // probe-tested 2026-10-15 and ignore endpoint overrides entirely — they stay
+  // providerless by vendor design, not by our choice.
+  if (apiFormat === API_FORMATS.ANTHROPIC) return ['claude', 'claude-exp', 'opencode', 'zcode', 'dsh', 'grok'];
   // Kimi Code joins the OpenAI-family pool (moonshot's own API is
   // OpenAI-compatible).
-  return ['codex', 'codex-exp', 'opencode', 'zcode', 'kimi'];
+  return ['codex', 'codex-exp', 'opencode', 'zcode', 'kimi', 'grok'];
 }
+
+// These CLIs replay a provider over plain HTTP: an OAuth-subscription entry
+// (Claude/Codex official) has no credential they can use, so they only appear
+// on providers with a real baseUrl+token. Their official logins stay on the
+// provider-less native route.
+const CREDENTIAL_GATED_CLIS = new Set(['zcode', 'kimi', 'dsh', 'grok']);
 
 function providerSupportsCli(provider, cli) {
   if (!provider || !cli) return false;
   const format = normalizeApiFormat(provider.apiFormat || provider.protocol, provider.appType, parseConfig(provider.settingsConfig));
   if (!compatibleClisForFormat(format).includes(String(cli))) return false;
-  if (cli !== 'zcode' && cli !== 'kimi') return true;
-  // Claude/Codex OAuth subscriptions cannot be replayed by an unrelated CLI.
-  // ZCode/Kimi-backed MultiCC providers must expose ordinary HTTP credentials;
-  // their official logins stay on the provider-less native route.
+  if (!CREDENTIAL_GATED_CLIS.has(String(cli))) return true;
   const summary = provider.settingsConfig ? summarize(provider) : provider;
   return !!(summary && summary.baseUrl && summary.hasToken);
 }
@@ -181,11 +195,15 @@ function providerSupportsCli(provider, cli) {
 function appTypeForCli(cli) {
   if (cli === 'codex' || cli === 'codex-exp') return 'codex';
   if (cli === 'claude' || cli === 'claude-exp' || cli === 'opencode') return 'claude';
+  // DSH speaks only Anthropic Messages — its pool is the claude-side one.
+  if (cli === 'dsh') return 'claude';
   return null;
 }
 
 function appTypesForCli(cli) {
-  if (cli === 'opencode' || cli === 'zcode' || cli === 'kimi') return ['claude', 'codex'];
+  // Grok's per-model api_backend accepts both "messages" and "responses", so it
+  // resolves providers globally by id like OpenCode/ZCode/Kimi.
+  if (cli === 'opencode' || cli === 'zcode' || cli === 'kimi' || cli === 'grok') return ['claude', 'codex'];
   const type = appTypeForCli(cli);
   return type ? [type] : [];
 }
@@ -632,7 +650,7 @@ function summarize(p, opts = {}) {
     protocol: apiFormat,
     wireApi: apiFormat === API_FORMATS.ANTHROPIC ? 'messages' : 'responses',
     compatibleClis: compatibleClisForFormat(apiFormat)
-      .filter(cli => (cli !== 'zcode' && cli !== 'kimi') || (!!baseUrl && !!token)),
+      .filter(cli => !CREDENTIAL_GATED_CLIS.has(cli) || (!!baseUrl && !!token)),
     name: p.name,
     // Optional explicit quota classification override (frontend quotaKindForProvider
     // honors it; 'none' disables the badge) for proxy-hosted providers whose
@@ -1481,6 +1499,97 @@ function buildKimiCodeRoute(provider, session) {
   };
 }
 
+// DSH route: no private home needed — dsh-llm-deepseek reads its endpoint and
+// key purely from DEEPSEEK_BASE_URL / DEEPSEEK_API_KEY, and env credentials
+// outrank the `dsh web` credentials store. The provider must be an
+// Anthropic-format one: dsh POSTs {DEEPSEEK_BASE_URL}/v1/messages, the same
+// convention as ANTHROPIC_BASE_URL.
+function buildDshRoute(provider, session) {
+  const cfg = parseConfig(provider.settingsConfig);
+  const summary = summarize(provider);
+  const src = cfg.env || {};
+  const key = src.ANTHROPIC_AUTH_TOKEN || src.ANTHROPIC_API_KEY || '';
+  const baseUrl = src.ANTHROPIC_BASE_URL || summary.baseUrl || '';
+  if (!key) throw new Error('DSH Provider 缺少可用的 API Key');
+  if (!baseUrl) throw new Error('DSH Provider 缺少可用的 Base URL');
+  // 池线路的模型是字面 wire id（glm-4.6 等），与 kimi/zcode 一样没有档位间接层；
+  // 档位别名在这里折成 provider 自己的模型（resolveTierWireModel）。
+  const sessionModel = resolveTierWireModel(summary, session && session.model);
+  const models = uniqueModels([sessionModel, summary.model, ...(summary.modelOptions || [])]);
+  const selected = sessionModel || summary.model || models[0] || '';
+  return {
+    env: { DEEPSEEK_BASE_URL: baseUrl, DEEPSEEK_API_KEY: key },
+    qualifiedModel: selected || null,
+    providerModel: summary.model || null,
+    providerModels: models,
+    providerName: provider.name,
+  };
+}
+
+function grokSessionHome(session) {
+  const rawId = session && (session.id || session.sessionId);
+  if (!rawId) throw new Error('Grok provider routing requires a stable session id');
+  const raw = String(rawId);
+  const slug = raw.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72)
+    || 'session';
+  const digest = crypto.createHash('sha256').update(raw).digest('hex').slice(0, 12);
+  return path.join(GROK_HOMES_DIR, `${slug}-${digest}`);
+}
+
+// Grok Build route: private GROK_HOME + a generated config.toml holding one
+// [model.<id>] entry that points at the provider. api_backend maps the pool's
+// wire format onto grok's supported protocols — "messages" for Anthropic-format
+// providers, "responses" for OpenAI-format ones (chat_completions is
+// deliberately not bridged). The key travels as an env var (env_key), never in
+// the file. The -m flag names the catalog key, which is the wire id itself.
+function buildGrokRoute(provider, session) {
+  const cfg = parseConfig(provider.settingsConfig);
+  const summary = summarize(provider);
+  let key = '';
+  let baseUrl = '';
+  let apiBackend = '';
+  if (summary.apiFormat === API_FORMATS.ANTHROPIC) {
+    const src = cfg.env || {};
+    key = src.ANTHROPIC_AUTH_TOKEN || src.ANTHROPIC_API_KEY || '';
+    baseUrl = src.ANTHROPIC_BASE_URL || summary.baseUrl || '';
+    apiBackend = 'messages';
+  } else {
+    key = (cfg.proxyTarget && cfg.proxyTarget.apiKey)
+      || (cfg.auth && cfg.auth.OPENAI_API_KEY) || '';
+    baseUrl = (cfg.proxyTarget && cfg.proxyTarget.originalBaseUrl)
+      || summary.baseUrl || tomlValue(cfg.config, 'base_url') || '';
+    apiBackend = 'responses';
+  }
+  if (!key) throw new Error('Grok Provider 缺少可用的 API Key');
+  if (!baseUrl) throw new Error('Grok Provider 缺少可用的 Base URL');
+  const sessionModel = resolveTierWireModel(summary, session && session.model);
+  const models = uniqueModels([sessionModel, summary.model, ...(summary.modelOptions || [])]);
+  const selected = sessionModel || summary.model || models[0] || '';
+  if (!selected) throw new Error('Grok Provider 没有可用模型');
+  const home = grokSessionHome(session);
+  ensurePrivateDir(home);
+  const configFile = path.join(home, 'config.toml');
+  atomicWriteText(configFile, TOML.stringify({
+    model: {
+      [selected]: {
+        model: selected,
+        base_url: baseUrl,
+        api_backend: apiBackend,
+        env_key: 'MULTICC_GROK_API_KEY',
+      },
+    },
+  }));
+  secureFile(configFile);
+  return {
+    env: { GROK_HOME: home, MULTICC_GROK_API_KEY: key },
+    qualifiedModel: selected,
+    providerModel: summary.model || null,
+    providerModels: models,
+    providerName: provider.name,
+    grokHome: home,
+  };
+}
+
 // Compute env overrides + flags to apply when spawning a child for `session`.
 //   - env: object merged into the child's process env (only this child).
 //   - skipDefaultModel: claude routes elsewhere → don't force the global --model.
@@ -1488,7 +1597,7 @@ function resolveSpawnEnv(session) {
   const providerId = session && session.provider;
   if (!providerId) return { env: {}, skipDefaultModel: false, aliasOnly: false, providerModel: null, providerModels: [], providerName: null };
   const appType = appTypeForCli(session.cli);
-  const globalPoolCli = session.cli === 'opencode' || session.cli === 'zcode' || session.cli === 'kimi';
+  const globalPoolCli = session.cli === 'opencode' || session.cli === 'zcode' || session.cli === 'kimi' || session.cli === 'grok';
   if (!appType && !globalPoolCli) return { env: {}, skipDefaultModel: false, aliasOnly: false, providerModel: null, providerModels: [], providerName: null };
   const p = getProvider(globalPoolCli ? undefined : appType, providerId);
   if (!p || !providerSupportsCli(p, session.cli)) {
@@ -1504,6 +1613,12 @@ function resolveSpawnEnv(session) {
       // silently degrade into the user's native Kimi login.
       throw new Error('Kimi Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证');
     }
+    if (session.cli === 'dsh') {
+      throw new Error('DSH Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证');
+    }
+    if (session.cli === 'grok') {
+      throw new Error('Grok Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证');
+    }
     return { env: {}, skipDefaultModel: false, aliasOnly: false, providerModel: null, providerModels: [], providerName: null };
   }
   if (session.cli === 'opencode') {
@@ -1516,6 +1631,12 @@ function resolveSpawnEnv(session) {
   }
   if (session.cli === 'kimi') {
     return { ...buildKimiCodeRoute(p, session), skipDefaultModel: false, aliasOnly: false };
+  }
+  if (session.cli === 'dsh') {
+    return { ...buildDshRoute(p, session), skipDefaultModel: false, aliasOnly: false };
+  }
+  if (session.cli === 'grok') {
+    return { ...buildGrokRoute(p, session), skipDefaultModel: false, aliasOnly: false };
   }
   const cfg = p.appType === 'codex' ? effectiveCodexSettings(p) : parseConfig(p.settingsConfig);
 
@@ -2327,9 +2448,13 @@ module.exports = {
   CODEX_SESSION_HOMES_DIR,
   ZCODE_HOMES_DIR,
   KIMI_HOMES_DIR,
+  GROK_HOMES_DIR,
   zcodeSessionHome,
   kimiSessionHome,
+  grokSessionHome,
   buildKimiCodeRoute,
+  buildDshRoute,
+  buildGrokRoute,
   WIRE_DEFAULT_MODEL,
   probeRelayModels,
   claudeProbeRouteEnv,
