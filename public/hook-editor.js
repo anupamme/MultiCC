@@ -31,6 +31,7 @@
     ['task.running', 'hookEvRunning'],
     ['turn.completed', 'hookEvTurn'],
   ]);
+  const NEW_SESSION = '__new__'; // 「注入到」里代表“每次触发新建一个会话”的哨兵值
   const ACTION_OPTIONS = Object.freeze([
     ['notify', 'hookActNotify'],
     ['webhook', 'hookActWebhook'],
@@ -52,7 +53,7 @@ dialog.hook-dialog .hook-events{display:grid;grid-template-columns:1fr 1fr;gap:6
 dialog.hook-dialog label.hook-check{flex-direction:row;align-items:center;justify-content:flex-start;gap:8px}
 dialog.hook-dialog label.hook-check>input[type=checkbox]{flex:0 0 auto;width:16px;height:16px;margin:0;padding:0}
 dialog.hook-dialog label.hook-check>span{flex:1;min-width:0}
-dialog.hook-dialog [data-kind]{display:flex;flex-direction:column;gap:12px}
+dialog.hook-dialog [data-kind],dialog.hook-dialog [data-newsession]{display:flex;flex-direction:column;gap:12px}
 dialog.hook-dialog [hidden]{display:none !important}
 dialog.hook-dialog .hook-note{margin:0;color:#6b7f93;font-size:12px;line-height:1.5}
 dialog.hook-dialog .hook-error{margin:0;min-height:1em;color:#c0392b;font-size:12px}
@@ -79,6 +80,8 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
   let session = null;   // { id, label } fixed owner when opened from a chat page
   let editing = null;   // the item being edited: { scope, sessionId, rule }
   let sessionChoices = [];
+  let dirChoices = [];
+  let cliChoices = [];
   let onSaved = null;
 
   function ensureDialog() {
@@ -110,6 +113,11 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
           h('span', { text: tr('hookIncludeConclusion') }))),
       h('div', { 'data-kind': 'inject-prompt' },
         h('label', {}, h('span', { text: tr('hookInjectTarget') }), h('select', { name: 'target' })),
+        h('div', { 'data-newsession': true },
+          h('label', {}, h('span', { text: tr('hookNewDir') }), h('select', { name: 'newDir' })),
+          h('label', {}, h('span', { text: tr('hookNewCli') }), h('select', { name: 'newCli' })),
+          h('label', {}, h('span', { text: tr('hookNewTitle') }), h('input', { type: 'text', name: 'newTitle', maxlength: '120' })),
+          h('p', { class: 'hook-note', text: tr('hookNewHint') })),
         h('label', {}, h('span', { text: tr('hookInjectPrompt') }),
           h('textarea', { name: 'prompt', rows: '4', maxlength: '4000', placeholder: tr('hookInjectPromptPh') })),
         h('p', { class: 'hook-note', text: tr('hookInjectHint') })),
@@ -125,6 +133,7 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     document.body.append(dialog);
 
     form.elements.kind.onchange = syncKind;
+    form.elements.target.onchange = syncTarget;
     form.elements.scope.onchange = syncScope;
     form.querySelector('#hook-close').onclick = () => dialog.close();
     form.querySelector('#hook-cancel').onclick = () => dialog.close();
@@ -134,6 +143,13 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
   function syncKind() {
     const kind = form.elements.kind.value;
     for (const part of form.querySelectorAll('[data-kind]')) part.hidden = part.dataset.kind !== kind;
+    syncTarget();
+  }
+
+  // 「注入到」选“新建会话”时才露出工作区 / CLI / 标题三项。
+  function syncTarget() {
+    const part = form.querySelector('[data-newsession]');
+    if (part) part.hidden = form.elements.kind.value !== 'inject-prompt' || form.elements.target.value !== NEW_SESSION;
   }
 
   function syncScope() {
@@ -145,6 +161,29 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     for (const [value, label] of options) select.append(h('option', { value, text: label }));
     select.value = selected;
     if (select.value !== selected) select.value = options.length ? options[0][0] : '';
+  }
+
+  async function loadSessions() {
+    try {
+      const list = await request('/api/sessions');
+      return (Array.isArray(list) ? list : [])
+        .filter(entry => entry && entry.id && entry.type !== 'aux' && !String(entry.id).startsWith('__'))
+        .map(entry => ({ id: entry.id, label: entry.label || entry.id }));
+    } catch (_) { return []; }
+  }
+
+  async function loadDirs() {
+    try {
+      const list = await request('/api/directories');
+      return (Array.isArray(list) ? list : []).filter(entry => entry && entry.id).map(entry => [entry.id, entry.name || entry.id]);
+    } catch (_) { return []; }
+  }
+
+  async function loadClis() {
+    try {
+      const catalog = await request('/api/events/catalog');
+      return Array.isArray(catalog && catalog.clis) ? catalog.clis : [];
+    } catch (_) { return []; }
   }
 
   async function loadSecrets() {
@@ -180,8 +219,16 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     form.elements.scope.disabled = Boolean(item);
     form.elements.scopeSession.disabled = Boolean(item);
 
-    const targets = [['', tr('hookInjectSource')], ...sessionChoices];
-    fillOptions(form.elements.target, targets, action.targetSessionId || '');
+    const targets = [['', tr('hookInjectSource')], [NEW_SESSION, tr('hookInjectNew')], ...sessionChoices];
+    // 编辑时目标会话可能已被删除：保留它的 id 当选项，免得静默改成“触发事件的会话”。
+    if (action.targetSessionId && !targets.some(([value]) => value === action.targetSessionId)) {
+      targets.push([action.targetSessionId, action.targetSessionId]);
+    }
+    fillOptions(form.elements.target, targets, action.newSession ? NEW_SESSION : (action.targetSessionId || ''));
+    const spec = action.newSession || {};
+    fillOptions(form.elements.newDir, [['', tr('hookNewDirSource')], ...dirChoices], spec.dirId || '');
+    fillOptions(form.elements.newCli, [['', tr('hookNewCliSource')], ...cliChoices.map(cli => [cli, cli])], spec.cli || '');
+    form.elements.newTitle.value = spec.title || '';
     syncKind();
     syncScope();
   }
@@ -208,7 +255,12 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
       action.includeConclusion = form.elements.includeConclusion.checked;
     } else {
       action.prompt = form.elements.prompt.value.trim();
-      if (form.elements.target.value) action.targetSessionId = form.elements.target.value;
+      const target = form.elements.target.value;
+      if (target === NEW_SESSION) {
+        action.newSession = {
+          dirId: form.elements.newDir.value, cli: form.elements.newCli.value, title: form.elements.newTitle.value.trim(),
+        };
+      } else if (target) action.targetSessionId = target;
     }
     const filter = { ...((editing && editing.rule.filter) || {}) };
     if (form.elements.skipCancelled.checked) filter.cancelled = false;
@@ -253,7 +305,12 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     session = opts.session || null;
     editing = opts.item || null;
     onSaved = opts.onSaved || null;
-    sessionChoices = (opts.sessions || []).map(entry => [entry.id, entry.label || entry.id]);
+    // 会话 / 工作区 / CLI 由编辑器自己取，两个入口（会话页头、触发器 tab）选项一致。
+    const [sessions, dirs, clis] = await Promise.all([
+      opts.sessions ? Promise.resolve(opts.sessions) : loadSessions(), loadDirs(), loadClis()]);
+    sessionChoices = sessions.map(entry => [entry.id, entry.label || entry.id]);
+    dirChoices = dirs;
+    cliChoices = clis;
     fillForm(editing);
     if (session) {
       form.elements.scope.value = 'session';

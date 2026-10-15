@@ -49,6 +49,8 @@ function createEventsHost(deps) {
     lookup: (host) => dns.promises.lookup(host, { all: true }),
     httpPost: postJson,
     allowPrivateWebhooks: process.env.MULTICC_EVENT_WEBHOOK_ALLOW_PRIVATE === '1',
+    createSession: (input) => deps.createChatTask(input),
+    sessionInfo: (id) => { const record = persistedSessions.get(id); return record ? { dirId: record.dirId, cli: record.cli } : null; },
     injectPrompt: (sessionId, prompt) => {
       const chat = chatSessions.get(sessionId);
       if (!persistedSessions.has(sessionId) || (chat && chat.isStreaming)) return false;

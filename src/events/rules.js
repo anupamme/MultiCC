@@ -50,6 +50,17 @@ function validateAction(raw) {
       if (!target) return { error: 'invalid targetSessionId' };
       action.targetSessionId = target;
     }
+    // Create a fresh chat session per firing instead of reusing one. dirId / cli
+    // may be empty: the runtime then follows the session that raised the event.
+    if (raw.newSession) {
+      if (action.targetSessionId) return { error: 'targetSessionId and newSession are mutually exclusive' };
+      const spec = raw.newSession && typeof raw.newSession === 'object' ? raw.newSession : {};
+      const [dirId] = idList(spec.dirId);
+      if (spec.dirId && !dirId) return { error: 'invalid newSession.dirId' };
+      const cli = String(spec.cli || '');
+      if (cli && !/^[a-z][a-z0-9-]{0,31}$/.test(cli)) return { error: 'invalid newSession.cli' };
+      action.newSession = { dirId: dirId || '', cli, title: textField(spec.title, 120).trim() };
+    }
   } else if (kind === 'webhook') {
     const problem = validateWebhookUrl(raw.url);
     if (problem) return { error: problem };

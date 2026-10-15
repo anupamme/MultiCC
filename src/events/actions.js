@@ -122,12 +122,32 @@ async function runNotify(event, rule, ctx) {
   return { ok: result !== false };
 }
 
+// Each firing gets its own chat task/session. The clientMsgId is derived from the
+// event so a retried delivery of the same event cannot create a second one.
+async function createTargetSession(event, rule, ctx) {
+  const spec = rule.action.newSession;
+  const source = event.sessionId ? ctx.sessionInfo(event.sessionId) : null;
+  const dirId = spec.dirId || (source && source.dirId) || event.dirId || '';
+  if (!dirId) return { error: 'no workspace for the new session' };
+  const title = spec.title || rule.name || String(event.data.goal || '').slice(0, 60) || 'Hook';
+  const created = await ctx.createSession({
+    dirId, title: title.slice(0, 120), cli: spec.cli || (source && source.cli) || 'claude',
+    clientMsgId: `hook:${event.eventId}:${rule.id}`.replace(/[^\w.:-]/g, '_').slice(0, 160),
+  });
+  return created && created.sessionId ? { sessionId: created.sessionId } : { error: 'session create failed' };
+}
+
 async function runInject(event, rule, ctx) {
-  const target = rule.action.targetSessionId || event.sessionId;
+  let target = rule.action.targetSessionId || event.sessionId;
+  if (rule.action.newSession) {
+    const made = await createTargetSession(event, rule, ctx);
+    if (made.error) return { ok: false, error: made.error };
+    target = made.sessionId;
+  }
   if (!target) return { ok: false, error: 'no target session' };
   const prompt = renderInjection(event, rule.action.prompt);
   const accepted = ctx.injectPrompt(target, prompt);
-  return accepted ? { ok: true, target } : { ok: false, error: 'target busy or missing' };
+  return accepted ? { ok: true, target, created: Boolean(rule.action.newSession) } : { ok: false, error: 'target busy or missing' };
 }
 
 const ACTIONS = Object.freeze({

@@ -43,10 +43,10 @@ const MIGRATION_DEBT = Object.freeze({
   // 同行挂载、压注释抵偿字节，实测 3012/154975，按棘轮下调。
   // 2026-10-11 统一消息准备入口后，字节上限继续降至 154948。
   // 会话医生（src/doctor/host.js）同行挂载，压缩迁移注释抵偿，实测 3009/154893。
-  // 2026-10-14 事件层（src/events/host.js）同行挂载并压缩 setTaskState 注释，实测 3005/154883；事件信封接 loadChatHistory 并压缩 bridge 注释后 3004/154820。
+  // 2026-10-14 事件层（src/events/host.js）同行挂载并压缩 setTaskState 注释，实测 3005/154883；事件信封接 loadChatHistory 并压缩 bridge 注释后 3004/154820；触发器「新建会话」接 createChatTask 并压缩心跳注释后 3002/154715。
   'server.js': Object.freeze({
-    ceiling: 3004,
-    byteCeiling: 154820,
+    ceiling: 3002,
+    byteCeiling: 154715,
     target: 3000,
     reason: 'over 3000 again after v2.4.1 (official-account and host-battery route additions); registered at the measured high-water mark',
   }),
@@ -393,8 +393,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
     // +5 键（airCliUpdatePinned/Unpin*）：*_CMD 钉住派生路径时的升级前提示与「改用新版」，实测 9014/573401。
     // +62 键（hook*）：钩子/触发器 UI（会话页头 🪝、触发器任务 tab、共用规则表单），实测 9138/579516。
-    maxLines: 9138,
-    maxBytes: 579516,
+    // +9 键（hookInject*/hookNew*/hookTarget*）：触发器注入目标可选「指定会话 / 新建会话」，实测 9156/580615。
+    maxLines: 9156,
+    maxBytes: 580615,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

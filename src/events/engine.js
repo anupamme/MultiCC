@@ -25,6 +25,8 @@ function createEventRuleEngine(deps) {
     now,
     notify: deps.notify || (() => false),
     injectPrompt: deps.injectPrompt || (() => false),
+    createSession: deps.createSession || (async () => { throw new Error('no session factory'); }),
+    sessionInfo: deps.sessionInfo || (() => null),
     resolveSecret: deps.resolveSecret || (() => null),
     lookup: deps.lookup || (async () => []),
     httpPost: deps.httpPost || (async () => { throw Object.assign(new Error('no transport'), { code: 'NO_TRANSPORT' }); }),

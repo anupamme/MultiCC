@@ -4563,5 +4563,14 @@
   "hookDeleteConfirm": "Delete this trigger?",
   "hookDeleteFailed": "Delete failed: {msg}",
   "hookToggleFailed": "Update failed: {msg}",
-  "hookLoadFailed": "Failed to load triggers: {msg}"
+  "hookLoadFailed": "Failed to load triggers: {msg}",
+  "hookInjectNew": "A new session (created on each firing)",
+  "hookNewDir": "Workspace of the new session",
+  "hookNewDirSource": "The workspace of the triggering session",
+  "hookNewCli": "CLI of the new session",
+  "hookNewCliSource": "Same as the triggering session",
+  "hookNewTitle": "Title of the new session (optional; defaults to the rule name)",
+  "hookNewHint": "Each firing creates a new session and sends it the instruction below with the source details.",
+  "hookTargetNew": "new session",
+  "hookTargetSession": "session {id}"
 }
