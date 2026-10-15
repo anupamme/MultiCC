@@ -29,10 +29,17 @@ function staticRoutes() {
   routes['/api/secrets'] = () => json([{ name: 'HOOK_SECRET' }]);
   routes['/api/directories'] = () => json([{ id: 'd1', name: '主仓' }, { id: 'd2', name: '营销仓' }]);
   routes['/api/events/catalog'] = () => json({ events: [], aliases: {}, actions: [], clis: ['claude', 'codex', 'opencode'] });
-  routes['/api/sessions'] = () => json([
-    { id: 's1', label: '发布会话', type: 'chat' }, { id: 's2', label: '测试会话', type: 'chat' },
-    { id: '__aux__', label: 'AI', type: 'aux' },
-  ]);
+  // 注入目标只列聊天会话（task.sessionId）：终端、aux、归档、只读历史都不该出现。
+  routes['/api/air'] = () => json({
+    ok: true, directories: [{ id: 'd1', name: '主仓' }, { id: 'd2', name: '营销仓' }], clis: [], migration: { errors: [] },
+    tasks: [
+      { id: 'a', sessionId: 's1', title: '发布会话', dirId: 'd1', status: 'active', readOnly: false, lastMessageAt: 20 },
+      { id: 'b', sessionId: 's2', title: '测试会话', dirId: 'd2', status: 'active', readOnly: false, lastMessageAt: 10 },
+      { id: 'c', sessionId: 's3', title: '已归档', dirId: 'd1', status: 'archived', readOnly: true, lastMessageAt: 30 },
+      { id: 'd', sessionId: null, title: '无会话的观察记录', dirId: 'd1', status: 'active', readOnly: false, lastMessageAt: 40 },
+    ],
+    sessions: [{ id: 'metaads', kind: 'terminal' }, { id: 'codex-acct-login-x', kind: 'terminal', label: 'Codex 登录 · x' }],
+  });
   return routes;
 }
 
@@ -207,7 +214,8 @@ test('chat header hook button: count badge and the shared form scoped to this se
       f.querySelectorAll('input[name=ev]').forEach(b => { b.checked = b.value === 'task.done'; });
       f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); f.elements.prompt.value = '整理发布说明'; })()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelector('.hook-dialog form').elements.target.options].map(o => [o.value, o.textContent])`), [
-      ['', '触发事件的会话'], ['__new__', '新建会话（每次触发新建一个）'], ['s1', '发布会话'], ['s2', '测试会话']]);
+      ['', '触发事件的会话'], ['__new__', '新建会话（每次触发新建一个）'], ['s1', '发布会话（主仓）'], ['s2', '测试会话（营销仓）']]);
+    assert.ok(!(await page.evaluate(`document.querySelector('.hook-dialog form').elements.target.textContent`)).match(/metaads|登录|已归档|观察记录/), '终端/归档/无会话的不出现');
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('.hook-dialog [data-newsession]')).display`), 'none', '没选新建会话时不露出工作区/CLI');
     await page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form'); f.elements.target.value = '__new__'; f.elements.target.onchange(); })()`);
     assert.notEqual(await page.evaluate(`getComputedStyle(document.querySelector('.hook-dialog [data-newsession]')).display`), 'none');

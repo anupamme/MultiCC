@@ -163,12 +163,18 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     if (select.value !== selected) select.value = options.length ? options[0][0] : '';
   }
 
+  // 能接收注入的是聊天会话：它们是任务专属会话（task.sessionId），不在 /api/sessions 里；
+  // 那里只有终端 / 登录终端 / aux，终端收不了指令，所以不能拿它当来源。
+  const MAX_SESSION_CHOICES = 80;
   async function loadSessions() {
     try {
-      const list = await request('/api/sessions');
-      return (Array.isArray(list) ? list : [])
-        .filter(entry => entry && entry.id && entry.type !== 'aux' && !String(entry.id).startsWith('__'))
-        .map(entry => ({ id: entry.id, label: entry.label || entry.id }));
+      const air = await request('/api/air');
+      const dirName = new Map(((air && air.directories) || []).map(dir => [dir.id, dir.name]));
+      return ((air && air.tasks) || [])
+        .filter(task => task && task.sessionId && !task.readOnly && task.status !== 'archived')
+        .sort((a, b) => (b.lastMessageAt || b.updatedAt || 0) - (a.lastMessageAt || a.updatedAt || 0))
+        .slice(0, MAX_SESSION_CHOICES)
+        .map(task => ({ id: task.sessionId, label: `${task.title || task.sessionId}（${dirName.get(task.dirId) || '—'}）` }));
     } catch (_) { return []; }
   }
 

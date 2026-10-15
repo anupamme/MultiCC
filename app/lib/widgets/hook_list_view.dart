@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/event_trigger_service.dart';
-import '../services/session_service.dart';
+import '../services/air_service.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
 
@@ -120,23 +120,20 @@ class HookListViewState extends State<HookListView> {
 
   /// 外部（FAB）调用：新建；[item] 非空 = 编辑。
   Future<void> openEditor({HookItem? item}) async {
-    final sessionSvc = SessionService(settings: widget.settings);
-    // 三份选项互不依赖，任何一份取不到都只是少几个选项，不阻塞编辑器。
+    final air = AirService(settings: widget.settings);
+    // 会话与工作区来自同一份 Air 快照；快照或 CLI 清单取不到都只是少几个选项，不阻塞编辑器。
     final results = await Future.wait([
-      sessionSvc.fetchSessions().then<List<({String id, String label})>>(
-        (list) => [
-          for (final s in list)
-            if (!s.id.startsWith('__'))
-              (id: s.id, label: (s.label ?? '').isEmpty ? s.id : s.label!),
-        ],
-        onError: (_) => <({String id, String label})>[],
-      ),
-      sessionSvc.fetchDirectories().then<List<({String id, String label})>>(
-        (list) => [for (final d in list) (id: d.id, label: d.name)],
-        onError: (_) => <({String id, String label})>[],
-      ),
+      air.load().then<AirSnapshot?>((v) => v, onError: (_) => null),
       _svc.fetchClis(),
     ]);
+    air.close();
+    final snapshot = results[0] as AirSnapshot?;
+    final sessions = snapshot == null
+        ? <HookChoice>[]
+        : hookSessionChoices(snapshot);
+    final dirs = snapshot == null
+        ? <HookChoice>[]
+        : [for (final d in snapshot.directories) (id: d.id, label: d.name)];
     if (!mounted) return;
     final saved = await showModalBottomSheet<bool>(
       context: context,
@@ -148,9 +145,9 @@ class HookListViewState extends State<HookListView> {
       builder: (_) => HookEditor(
         service: _svc,
         item: item,
-        sessions: results[0] as List<({String id, String label})>,
-        dirs: results[1] as List<({String id, String label})>,
-        clis: results[2] as List<String>,
+        sessions: sessions,
+        dirs: dirs,
+        clis: results[1] as List<String>,
       ),
     );
     if (saved == true) await refresh();
