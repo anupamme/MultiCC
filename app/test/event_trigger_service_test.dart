@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:multicc_app/services/air_service.dart';
 import 'package:multicc_app/services/event_trigger_service.dart';
 import 'package:multicc_app/services/settings_service.dart';
 
@@ -336,4 +337,63 @@ void main() {
       expect(await failSvc.fetchClis(), isEmpty, reason: '老后端/取不到时不阻塞编辑器');
     },
   );
+
+  Map<String, dynamic> task(
+    String id,
+    String? sessionId, {
+    String status = 'active',
+    bool readOnly = false,
+    int last = 0,
+    String dirId = 'd1',
+    String title = '',
+  }) => {
+    'id': id,
+    'dirId': dirId,
+    'title': title.isEmpty ? '任务$id' : title,
+    'status': status,
+    'recordType': 'observed',
+    'updatedAt': last,
+    'lastMessageAt': last,
+    'readOnly': readOnly,
+    'sessionId': sessionId,
+    'resource': {},
+  };
+
+  test('hookSessionChoices lists only live chat sessions, newest first', () {
+    final snapshot = AirSnapshot.fromJson({
+      'directories': [
+        {'id': 'd1', 'name': '主仓', 'path': '/p'},
+        {'id': 'd2', 'name': '营销仓', 'path': '/q'},
+      ],
+      'tasks': [
+        task('old', 'task-old', last: 10, title: '旧会话'),
+        task('new', 'task-new', last: 30, dirId: 'd2', title: '新会话'),
+        task('arch', 'task-arch', status: 'archived', last: 50),
+        task('ro', 'task-ro', readOnly: true, last: 60),
+        task('none', null, last: 70),
+      ],
+      // 终端 / 登录终端只在 sessions 里，绝不能出现在注入目标里。
+      'sessions': [
+        {'id': 'metaads', 'kind': 'terminal'},
+        {'id': 'codex-acct-login-x', 'kind': 'terminal'},
+      ],
+    });
+    expect(hookSessionChoices(snapshot), [
+      (id: 'task-new', label: '新会话（营销仓）'),
+      (id: 'task-old', label: '旧会话（主仓）'),
+    ]);
+  });
+
+  test('hookSessionChoices caps the list at the most recent sessions', () {
+    final snapshot = AirSnapshot.fromJson({
+      'tasks': [
+        for (var i = 0; i < kHookMaxSessionChoices + 20; i++)
+          task('t$i', 's$i', last: i),
+      ],
+    });
+    final choices = hookSessionChoices(snapshot);
+    expect(choices, hasLength(kHookMaxSessionChoices));
+    expect(choices.first.id, 's${kHookMaxSessionChoices + 19}');
+    expect(choices.last.label, contains('（—）'), reason: '没有工作区名时用 —');
+  });
 }

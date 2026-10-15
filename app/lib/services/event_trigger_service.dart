@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'air_service.dart';
 import 'settings_service.dart';
 
 /// 触发器（事件 → 动作）— 镜像网页 public/hook-editor.js 与
@@ -9,6 +10,33 @@ import 'settings_service.dart';
 ///
 /// 一条规则：`on`（事件模式，可多选）发生时执行 `action`。传给下一个动作的参数
 /// 是后端拼好的固定信封，这里不让用户定义变量，注入类动作只写「指令」。
+
+/// 「注入到 / 作用范围」下拉的一个选项。
+typedef HookChoice = ({String id, String label});
+
+/// 下拉里最多列多少个会话（按最近活动倒序），其余靠已选目标保留。
+const int kHookMaxSessionChoices = 80;
+
+/// 能接收注入的是聊天会话 = 任务专属会话（有 sessionId）。终端、登录终端、aux 收不了
+/// 指令，已归档 / 只读的历史任务也不该出现；快照里的 `sessions` 只有终端，不能当来源。
+List<HookChoice> hookSessionChoices(AirSnapshot snapshot) {
+  final dirName = {for (final d in snapshot.directories) d.id: d.name};
+  final tasks =
+      snapshot.tasks
+          .where(
+            (t) => (t.sessionId ?? '').isNotEmpty && !t.readOnly && !t.closed,
+          )
+          .toList()
+        ..sort((a, b) => b.lastMessageAt.compareTo(a.lastMessageAt));
+  return [
+    for (final t in tasks.take(kHookMaxSessionChoices))
+      (
+        id: t.sessionId!,
+        label:
+            '${t.title.isEmpty ? t.sessionId! : t.title}（${dirName[t.dirId] ?? '—'}）',
+      ),
+  ];
+}
 
 /// 事件模式与中文名。别名（task.done / task.attention）放最前。
 const List<(String, String)> kHookEvents = [
