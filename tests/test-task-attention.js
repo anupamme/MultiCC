@@ -77,6 +77,25 @@ test('runtime: queue events write the mark, markTaskSeen clears + broadcasts, bo
   assert.equal(attention.pendingAttention(again.getBoard().tasks.x), null, 'seen persisted');
 });
 
+// Production order (logs 2026-10-15): the classify verdict writes runState
+// first, the scheduler's `completed` arrives after and sees nothing changed.
+// The mark must not depend on which of the two lands first.
+test('runtime: a classify verdict that beats the scheduler event still leaves the mark', t => {
+  const f = mkRuntime();
+  t.after(() => fs.rmSync(path.dirname(f.file), { recursive: true, force: true }));
+  const board = f.runtime.getBoard();
+  board.tasks.x = { id: 'x', title: 'X', status: 'active', origin: 'session', refs: [], areas: [] };
+  f.runtime.onQueueEvent({ taskId: 'x', type: 'started', at: 1000 });
+  f.runtime.onClassifyGoal('sess-1', 'X', 'done', { taskId: 'x', runState: 'succeeded' });
+  assert.equal(board.tasks.x.runState, 'succeeded');
+  assert.equal(attention.pendingAttention(board.tasks.x)?.kind, 'completed');
+  f.runtime.onQueueEvent({ taskId: 'x', type: 'completed', turnOutcome: 'succeeded', at: 2000 });
+  assert.equal(attention.pendingAttention(board.tasks.x)?.kind, 'completed');
+
+  f.runtime.onClassifyGoal('sess-1', 'X', 'planning', { taskId: 'x', runState: 'waiting' });
+  assert.equal(attention.pendingAttention(board.tasks.x)?.kind, 'waiting');
+});
+
 test('GET /api/air/tasks/:id/open is where every client marks the task seen', async () => {
   const routes = new Map();
   const seen = [];

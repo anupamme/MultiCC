@@ -989,6 +989,10 @@ function createTaskBoardRuntime(deps) {
         changed = true;
       }
       if (turn.runState && task.runState !== turn.runState) {
+        // Same reducer as onQueueEvent: the deterministic classify verdict
+        // (evidence=turn_succeeded) lands before the scheduler's `completed`,
+        // which then sees no change — skipping this left no attention mark.
+        attention.noteRunState(task, task.runState, turn.runState);
         task.runState = turn.runState;
         task.updatedAt = now;
         changed = true;
