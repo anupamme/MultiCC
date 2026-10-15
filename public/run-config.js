@@ -1176,7 +1176,10 @@
       const own = providerless(currentCli);
       renderLineSelect();
       show(lineField, !own);
-      show(modelField, !own || currentCli === 'opencode');
+      // 自持账号的车道只是没有 MultiCC 线路池；模型仍从它自己的目录里挑
+      // （buildModelChoices 的 qoder/codebuddy/dsh/gemini/grok/commandcode 分支），
+      // 与 App 端 run_config_sheet 一致 —— 那边对自持车道也只藏线路、不藏模型。
+      show(modelField, true);
       renderModel();
       renderEffort();
       renderSub();
@@ -1851,6 +1854,17 @@
     }
 
     // ── 交互 ────────────────────────────────────────────────────────────────
+    // 自持账号 CLI 的模型目录是异步拉的（qoder --list-models 1 天缓存、
+    // codebuddy --help 1 小时缓存）；冷缓存先按内置表画，拉回来再画一遍。
+    // OpenCode 的原生线路同理，但只在认不出任何原生线路时才补拉。
+    function warmNativeModels(cli, marker) {
+      const rebuild = () => { if (marker === epoch) { renderFixed(); renderFooter(); } };
+      if (cli === 'opencode') {
+        if (!aiApi.openCodeNativeProviders().length) aiApi.refreshOpenCodeModels(rebuild);
+      } else if (cli === 'qoder') aiApi.refreshQoderModels(rebuild);
+      else if (cli === 'codebuddy') aiApi.refreshCodebuddyModels(rebuild);
+    }
+
     function selectCli(cli) {
       currentCli = cli;
       providerValue = '';
@@ -1858,15 +1872,14 @@
       error.textContent = '';
       setBusy(true);
       const current = ++epoch;
+      // 模型缓存与线路目录互不依赖（自持车道甚至没有线路目录），先拉起来。
+      warmNativeModels(cli, current);
       loadCatalog(cli).then(() => {
         if (current !== epoch) return;
         providers = providersOf(cli);
         setBusy(false);
         renderFixed();
         renderFooter();
-        if (cli === 'opencode' && !aiApi.openCodeNativeProviders().length) {
-          aiApi.refreshOpenCodeModels(() => { if (current === epoch) renderFixed(); });
-        }
       }, () => {
         if (current !== epoch) return;
         providers = [];
@@ -1995,11 +2008,9 @@
       renderAuto();
       renderFooter();
       warmOtherClis();
-      // OpenCode 自己的线路（Zen / Go / auth login 过的）靠那张 1 天的模型缓存认出来；
-      // 第一次打开是冷的，拉回来之后再画一遍 —— 上面记下的 pendingNative 这时才认得出。
-      if (currentCli === 'opencode' && !aiApi.openCodeNativeProviders().length) {
-        aiApi.refreshOpenCodeModels(() => { renderFixed(); renderFooter(); });
-      }
+      // 自持账号 CLI（qoder/codebuddy）与 OpenCode 原生线路的模型目录是异步缓存；
+      // 第一次打开是冷的，拉回来之后重画一遍 —— 上面记下的 pendingNative 这时才认得出。
+      warmNativeModels(currentCli, epoch);
     }
 
     async function warmOtherClis() {
