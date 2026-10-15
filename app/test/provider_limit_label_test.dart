@@ -18,20 +18,27 @@ void main() {
   // / shared/format.js) treats a stamp <= 0 as "no stamp", so a clock near 1970
   // cannot express an hours-old reading. 2023-11-14T22:13:20Z.
   final now = 1_700_000_000_000;
-  Map<String, dynamic> provider(Map<String, dynamic> limit) =>
-      {'id': 'p1', 'name': 'GLM', 'limit': limit};
+  Map<String, dynamic> provider(Map<String, dynamic> limit) => {
+    'id': 'p1',
+    'name': 'GLM',
+    'limit': limit,
+  };
 
   test('no cache entry is a clean absence', () {
     expect(providerLimitLabel(null, nowMs: now), '');
     expect(providerLimitLabel(const {}, nowMs: now), '');
     expect(providerLimitLabel({'limit': null}, nowMs: now), '');
-    expect(providerLimitLabel(const {'id': 'p1', 'name': 'GLM'}, nowMs: now),
-        '');
+    expect(
+      providerLimitLabel(const {'id': 'p1', 'name': 'GLM'}, nowMs: now),
+      '',
+    );
   });
 
   test('summary only, and stale without a summary means nothing to age', () {
-    expect(providerLimitLabel(provider({'summaryText': '5h 80%'}), nowMs: now),
-        ' · 5h 80%');
+    expect(
+      providerLimitLabel(provider({'summaryText': '5h 80%'}), nowMs: now),
+      ' · 5h 80%',
+    );
     expect(providerLimitLabel(provider({'stale': true}), nowMs: now), '');
   });
 
@@ -48,6 +55,35 @@ void main() {
       ' · 5h 80% · 更新于 20 秒前',
     );
   });
+
+  test(
+    'canonical server bar replaces legacy summaries and resolves reset times',
+    () {
+      final value = provider({
+        'summaryText': '7d 36%',
+        'stale': true,
+        'lastError': 'already represented by server',
+        'bar': {
+          'text':
+              '5h 55% {cd:${now + 7200000}|5h} · '
+              '1wk 64% {cd:${now + 86400000}|1wk} · 查询失败 · 过期',
+          'color': '#58a6ff',
+        },
+      });
+      expect(
+        providerLimitDetail(value, nowMs: now),
+        '5h 55% 2h · 1wk 64% 1d · 查询失败 · 过期',
+      );
+      expect(
+        providerLimitLabel(value, nowMs: now + 3600000),
+        ' · 5h 55% 1h · 1wk 64% 23h · 查询失败 · 过期',
+      );
+      expect(
+        providerLimitDetail(value, nowMs: now + 10800000),
+        '5h 55% 4h · 1wk 64% 21h · 查询失败 · 过期',
+      );
+    },
+  );
 
   test('last fetch failed keeps the cached summary but drops the age', () {
     expect(
@@ -78,8 +114,10 @@ void main() {
   });
 
   test('failure without any cached summary still says so', () {
-    expect(providerLimitLabel(provider({'lastError': 'boom'}), nowMs: now),
-        ' · 查询失败');
+    expect(
+      providerLimitLabel(provider({'lastError': 'boom'}), nowMs: now),
+      ' · 查询失败',
+    );
   });
 
   test('english catalog phrases the same states', () {

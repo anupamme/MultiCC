@@ -603,16 +603,15 @@
   }
 
   function normalizeProviderLimit(value) {
-    // Public projection of the server-side limit cache entry. Deliberately a
-    // NEW frozen object that keeps only display-safe scalars — the structured
-    // `summary` is large and the cache's `barText` carries time placeholders
-    // ({cd}/{ago}) that must stay server-side.
+    // Keep the server-rendered bar alongside the legacy scalar projection.
+    // Its time tokens are expanded by QuotaBarView, exactly as in chat.
     const source = value && typeof value === 'object' ? value : null;
     if (!source) return null;
     return Object.freeze({
       kind: text(source.kind, 30) || null,
       status: text(source.status, 20) || null,
       summaryText: text(source.summaryText, 300),
+      bar: source.bar && typeof source.bar.text === 'string' ? source.bar : null,
       fetchedAt: number(source.fetchedAt) || null,
       updatedAt: number(source.updatedAt) || null,
       lastError: text(source.lastError, 120) || null,

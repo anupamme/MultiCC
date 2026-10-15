@@ -1324,13 +1324,63 @@ function idleQuotaBars() {
   return bars;
 }
 
+// Provider cards and pickers consume a passive view of the same quota bar.
+// Rebuild window rows from durable summaries so old caches (including the
+// official-account writer's former used-percent/7d text) recover countdowns
+// without another network fetch. Formatting still goes through windowSeg.
+function providerLimitBar(entry) {
+  if (!entry) return null;
+  const summary = entry.summary || {};
+  const cycle = label => ({ session: '5h', five_hour: '5h', '7d': '1wk',
+    weekly: '1wk', seven_day: '1wk', monthly: '1m', '30d': '1m' }[label] || label);
+  let rows = Array.isArray(summary.windows) ? summary.windows : [];
+  if (!rows.length && finiteNumber(summary.usedPercentage) !== null) {
+    const cachedWindow = /\b(5h|1wk|1m)\s+\d/.exec(entry.barText || entry.summaryText || '');
+    rows = [{ window: summary.window || (cachedWindow && cachedWindow[1])
+        || (summary.provider === 'codex' ? '1wk' : '5h'),
+      usedPercent: summary.status === 'rejected' ? 100 : summary.usedPercentage,
+      resetMs: summary.resetsAtMs }];
+  }
+  rows = rows.filter(row => row && finiteNumber(row.usedPercent) !== null)
+    .map(row => ({ ...row, window: cycle(row.window || row.label) }));
+  let base;
+  if (rows.length) {
+    const entries = rows.map(row => {
+      const name = (entry.kind === 'claude' || summary.provider === 'claude')
+        && row.label && row.label !== row.window
+        ? claudeRowName(row.window, row.label) : row.window;
+      return { window: row.window, seg: windowSeg(name, row.usedPercent, row.resetMs) };
+    });
+    base = partsView([part(null, null, sortSegs(entries).join(' · '))],
+      unifiedColorFromRemaining(unifiedRemaining(Math.max(...rows.map(row => Number(row.usedPercent))))),
+      rows.filter(row => CLAUDE_WINDOW_ZH[row.window]).sort((a, b) => windowRank(a.window) - windowRank(b.window))
+        .map(row => windowDetailLine(row.window, Number(row.usedPercent), row.resetMs)));
+  } else if (entry.kind === 'balance') {
+    base = balanceBar(summary);
+  } else {
+    // Other vendor snapshots already contain canonical server-rendered text.
+    // Keep countdown tokens; only remove refresh controls and the old age cell.
+    const text = String(entry.barText || entry.summaryText || '')
+      .replace(/\s*⟳.*$/, '').replace(/\{ago:-?\d+\}/g, '')
+      .split('·').map(cell => cell.trim()).filter(Boolean).join(' · ');
+    base = partsView(text ? [part(null, null, text)] : [], COLOR.gray, []);
+  }
+  const textParts = [...base.textParts];
+  if (entry.lastError) textParts.push(part('limitFetchFailed', null, '查询失败'));
+  else {
+    const ago = agoTag(entry.fetchedAt);
+    if (ago) textParts.push(part('limitUpdatedAgo', { ago }, `更新于 ${ago}`));
+  }
+  if (entry.stale && base.text) textParts.push(part('limitStale', null, '过期'));
+  return textParts.length ? partsView(textParts, base.color, base.titleParts) : null;
+}
+
 /**
  * A persisted, client-agnostic fingerprint of a quota bar's text. The live bar
  * carries client-expanded placeholders (`{cd:<ms>}` countdown, `{ago:<ms>}`
- * relative time) and a trailing `⟳ 刷新` action segment that are meaningless
- * when the text is stored and re-shown inside a provider picker. Stripping them
- * yields a compact, sortable summary (e.g. `5h 20% 1.2h · 1wk 50% 3d 5h`) that
- * both the provider-limit cache and the Web/App selectors can render verbatim.
+ * relative time) and a trailing `⟳ 刷新` action segment. Stripping them yields
+ * a static legacy summary (e.g. `5h 20% · 1wk 50%`). Current provider cards and
+ * selectors use providerLimitBar instead so reset anchors are preserved.
  */
 function compactBarText(text) {
   if (!text) return '';
@@ -1358,5 +1408,6 @@ module.exports = {
   arkPlanFromBaseUrl,
   arkWindowLabel,
   compactBarText,
+  providerLimitBar,
   COLOR,
 };

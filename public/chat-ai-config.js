@@ -586,16 +586,17 @@
   function providerLimitLabel(provider, tr, nowMs) {
     const limit = provider && provider.limit;
     if (!limit) return '';
-    const parts = [];
-    if (limit.summaryText) parts.push(limit.summaryText);
-    if (limit.lastError) {
-      parts.push(typeof tr === 'function' ? tr('limitFetchFailed') : '查询失败');
-    } else if (limit.fetchedAt) {
-      const ago = limitAgoText(limit.fetchedAt, nowMs);
-      if (ago) parts.push(typeof tr === 'function' ? tr('limitUpdatedAgo', { ago }) : `更新于 ${ago}`);
+    const view = quotaBarView();
+    if (view) {
+      const resolved = view.resolveProviderLimit(limit, { now: nowMs,
+        translate: typeof tr === 'function' ? (key, params, fallback) => {
+          const translated = tr(key, params);
+          return translated && translated !== key ? translated : fallback;
+        } : undefined,
+        rolled: typeof tr === 'function' ? tr('quotaRolledWindow') : undefined });
+      return resolved.text ? ` · ${resolved.text}` : '';
     }
-    if (limit.stale && limit.summaryText) parts.push(typeof tr === 'function' ? tr('limitStale') : '过期');
-    return parts.length ? ` · ${parts.join(' · ')}` : '';
+    return '';
   }
 
   // 子任务（子 agent）线路的判定只有一份：chat 的 AI 配置弹窗、Air 的任务 AI

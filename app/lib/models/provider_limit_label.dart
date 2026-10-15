@@ -1,15 +1,15 @@
 import '../i18n.dart';
 import '../utils/format.dart';
+import 'quota_bar_view.dart';
 
 /// Compact suffix appended to a provider option: the cached limit summary plus
 /// freshness / failure / stale markers. Returns '' when there is no cache entry
 /// (never queried, cache disabled, or a provider that predates the cache) so the
 /// option reads exactly as before — no data is a clean, intentional absence.
 ///
-/// Mirrors the web picker's `providerLimitLabel` (public/chat-ai-config.js) so
-/// both clients age and phrase the cached limit the same way. The `limit` field
-/// arrives inside each provider DTO of `/api/providers` as
-/// `{kind, status, summaryText, fetchedAt, updatedAt, lastError, stale}`.
+/// Both clients resolve the server's `limit.bar` with the shared quota time
+/// rules. The summary/freshness code below is only for older servers which
+/// don't return that bar yet.
 ///
 /// [nowMs] injects a fixed clock for deterministic tests; defaults to now.
 String providerLimitLabel(Map<String, dynamic>? provider, {int? nowMs}) {
@@ -24,12 +24,18 @@ String providerLimitLabel(Map<String, dynamic>? provider, {int? nowMs}) {
 String providerLimitDetail(Map<String, dynamic>? provider, {int? nowMs}) {
   final limit = provider?['limit'];
   if (limit is! Map) return '';
+  final bar = limit['bar'];
+  if (bar is Map) {
+    return resolveQuotaBar(Map<String, dynamic>.from(bar), now: nowMs)?.text ??
+        '';
+  }
   final parts = <String>[];
   final summaryText = (limit['summaryText'] ?? '').toString();
   if (summaryText.isNotEmpty) parts.add(summaryText);
   final lastError = (limit['lastError'] ?? '').toString();
-  final fetchedAt =
-      (limit['fetchedAt'] is num) ? (limit['fetchedAt'] as num).toInt() : 0;
+  final fetchedAt = (limit['fetchedAt'] is num)
+      ? (limit['fetchedAt'] as num).toInt()
+      : 0;
   if (lastError.isNotEmpty) {
     parts.add(t('limitFetchFailed'));
   } else if (fetchedAt > 0) {

@@ -599,6 +599,14 @@ function testEverySourceKeepsItsCycles() {
     { window: '5h', label: 'Current session', usedPercent: 10, resetMs: clock.now() + 3600_000 },
     { window: '7d', label: 'Weekly', usedPercent: 100, resetMs: later },
   ] });
+  const official = cache.get('claude', 'claude-official-a');
+  ok(official.summaryText === '5h 90% · 1wk 0%', 'official cache uses canonical remaining percentages and week token');
+  ok(official.barText.includes(`{cd:${clock.now() + 3600_000}|5h}`)
+    && official.barText.includes(`{cd:${later}|1wk}`), 'official cache retains both reset anchors');
+  recorder.recordOfficialWindows('codex', 'codex-official-a', { windows: [
+    { window: '7d', label: 'Weekly', usedPercent: 30, resetMs: later },
+  ] });
+  ok(cache.get('codex', 'codex-official-a').kind === 'codex', 'official Codex snapshots retain their vendor identity');
   recorder.recordSession('any', { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.2, resetsAt: Math.trunc((clock.now() + 3600_000) / 1000) }, 'claude-official-a');
   const claude = cache.get('claude', 'claude-official-a');
   ok(claude.summary.windows.length === 2 && claude.summary.windows.some(w => w.window === '7d' && w.usedPercent === 100),

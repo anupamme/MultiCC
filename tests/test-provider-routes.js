@@ -787,7 +787,7 @@ test('GET /api/providers attaches the persisted limit summary and freshness', as
   // Seed one provider's last-known-good summary.
   cache.record('claude', 'claude-one', {
     kind: 'window',
-    summary: { kind: 'window', provider: 'glm', status: 'allowed', usedPercentage: 20 },
+    summary: { kind: 'window', provider: 'glm', status: 'allowed', usedPercentage: 20, resetsAtMs: 3_601_000 },
     summaryText: '5h 80%',
     barText: '5h 80% {cd:123}',
     fetchedAt: 900,
@@ -810,8 +810,11 @@ test('GET /api/providers attaches the persisted limit summary and freshness', as
   assert.equal(limit.summaryText, '5h 80%');
   assert.equal(limit.stale, false); // fetchedAt 900, now 1000, window 600s
   assert.equal(limit.summary.usedPercentage, 20);
-  // The public projection never leaks the raw bar placeholders.
-  assert.equal(JSON.stringify(limit).includes('{cd'), false);
+  // Countdown tokens travel in the canonical display DTO, not raw cache text.
+  assert.equal(limit.bar.text, '5h 80% {cd:3601000|5h} · 更新于 {ago:900}');
+  assert.equal(require('../public/quota-bar-view').resolveQuotaBar(limit.bar, { now: 1000 }).text,
+    '5h 80% 1h · 更新于 刚刚');
+  assert.equal(Object.hasOwn(limit, 'barText'), false);
   // Deleting the provider prunes the orphan on the next catalog read.
   assert.equal(cache.get('claude', 'claude-one') !== null, true);
 });

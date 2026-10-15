@@ -23,6 +23,65 @@ const fixture = require('./fixtures/quota-bar-golden.json');
 const zhCatalog = require('../app/assets/i18n/zh.json');
 const enCatalog = require('../app/assets/i18n/en.json');
 
+test('legacy official caches recover canonical remaining percentages, window names and reset times', () => {
+  const now = 1_700_000_000_000;
+  const bar = Renderer.providerLimitBar({ kind: 'claude', fetchedAt: now - 60_000,
+    summaryText: '7d 36% · 5h 45%', barText: '7d 36% · 5h 45%',
+    summary: { windows: [
+      { window: '7d', label: 'Weekly', usedPercent: 36, resetMs: now + 3 * 86_400_000 },
+      { window: '5h', label: 'Current session', usedPercent: 45, resetMs: now + 2 * 3_600_000 },
+    ] } });
+  const view = resolveQuotaBar(bar, { now });
+  assert.equal(view.text, '5h 55% 2h · 1wk 64% 3d · 更新于 1 分钟前');
+  assert.match(view.title, /2h 后重置/);
+  assert.match(view.title, /3d 后重置/);
+  assert.equal(view.color, '#58a6ff');
+  assert.equal(view.action, null);
+  assert.doesNotMatch(view.text, /7d|⟳|\{/);
+});
+
+test('provider views share chat window segments, colors and rollover arithmetic', () => {
+  const now = 1_700_000_000_000;
+  const summary = { provider: 'codex', status: 'allowed', usedPercentage: 92,
+    resetsAtMs: now - 3_600_000, windows: [
+      { window: '1wk', usedPercent: 25, resetMs: now + 86_400_000 },
+      { window: '5h', usedPercent: 92, resetMs: now - 3_600_000 },
+    ] };
+  const provider = resolveQuotaBar(Renderer.providerLimitBar({ kind: 'window', summary }), { now });
+  const chat = resolveQuotaBar(Renderer.windowEventBar({ ...summary,
+    windows: summary.windows.map(w => ({ ...w, resetsAtMs: w.resetMs })) }), { now });
+  assert.equal(provider.text, chat.text);
+  assert.equal(provider.color, chat.color);
+  assert.equal(provider.text, '5h 8% 4h · 1wk 75% 1d');
+});
+
+test('provider views keep missing reset data absent, balances intact and failed snapshots readable', () => {
+  const now = 1_700_000_000_000;
+  const bar = Renderer.providerLimitBar({ kind: 'claude', stale: true, lastError: 'network',
+    summary: { windows: [{ window: '1wk', label: 'All models', usedPercent: 80, resetMs: null }] } });
+  assert.equal(resolveQuotaBar(bar, { now }).text, '1wk-ALL 20% · 查询失败 · 过期');
+  assert.equal(bar.color, '#d29922');
+  const balance = Renderer.providerLimitBar({ kind: 'balance',
+    summary: { available: true, total: 12.5, currency: 'CNY' } });
+  assert.equal(balance.text, Renderer.balanceBar({ available: true, total: 12.5, currency: 'CNY' }).text);
+  assert.equal(balance.color, '#d29922');
+  const vendor = Renderer.providerLimitBar({ kind: 'qoder', fetchedAt: now,
+    barText: `1m 70% {cd:${now + 86_400_000}|1m} · {ago:${now - 60_000}} ⟳` });
+  assert.equal(resolveQuotaBar(vendor, { now }).text, '1m 70% 1d · 更新于 刚刚');
+  assert.equal(Renderer.providerLimitBar(null), null);
+  assert.equal(Renderer.providerLimitBar({ stale: true, summaryText: '' }), null);
+});
+
+test('a single Codex five-hour window is never relabelled as weekly', () => {
+  const now = 1_700_000_000_000;
+  const entry = { kind: 'window', barText: `5h 80% {cd:${now + 3600_000}|5h}`,
+    summary: { provider: 'codex', usedPercentage: 20, resetsAtMs: now + 3600_000 } };
+  assert.equal(resolveQuotaBar(Renderer.providerLimitBar(entry), { now }).text, '5h 80% 1h');
+  entry.summary.window = '5h';
+  delete entry.barText;
+  assert.equal(resolveQuotaBar(Renderer.providerLimitBar(entry), { now }).text, '5h 80% 1h');
+});
+
 test('the golden fixture is non-empty and anchored to a fixed now', () => {
   assert.ok(Number.isFinite(fixture.now));
   assert.ok(fixture.cases.length >= 20, `expected broad coverage, got ${fixture.cases.length}`);
@@ -218,6 +277,14 @@ const BAR_INPUTS = [
 // DeepSeek balance, plus the two labels the server wraps them in when the
 // session is routed through a borrowed provider.
 const EXTRA_BARS = [
+  ['provider limit: remaining windows and localized freshness', () => Renderer.providerLimitBar({
+    kind: 'claude', fetchedAt: AGO_MS, stale: true,
+    summary: { windows: [{ window: '7d', label: 'All models', usedPercent: 72, resetMs: NOW_MS + 86_400_000 }] },
+  })],
+  ['provider limit: failed query preserves the cached reading', () => Renderer.providerLimitBar({
+    kind: 'window', lastError: 'network', stale: true,
+    summary: { provider: 'glm', usedPercentage: 80, resetsAtMs: NOW_MS + 3600_000 },
+  })],
   ['window event: GLM five-hour, labelled as routed provider', () => {
     const glm = Renderer.normalizeWindowEvent({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.44, resetsAt: (NOW_MS + 3600_000) / 1000, provider: 'glm' }, NOW_MS);
     return Renderer.labelRoutedProvider(Renderer.windowEventBar(glm), 'glm');

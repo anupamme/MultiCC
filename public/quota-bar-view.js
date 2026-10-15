@@ -266,5 +266,25 @@
     };
   }
 
-  return { resolveQuotaBar, resolveText, humanizeCountdown, relativeAgo, renderQuotaParts };
+  // All provider surfaces share this adapter, including the compatibility
+  // path for a server which predates limit.bar. No caller writes quota words.
+  function resolveProviderLimit(limit, opts) {
+    if (!limit) return null;
+    if (limit.bar) return resolveQuotaBar(limit.bar, opts);
+    const o = opts || {};
+    const tr = (key, params, fallback) => {
+      const value = typeof o.translate === 'function' ? o.translate(key, params, fallback) : null;
+      return typeof value === 'string' && value !== key ? value : fallback;
+    };
+    const parts = limit.summaryText ? [limit.summaryText] : [];
+    if (limit.lastError) parts.push(tr('limitFetchFailed', null, '查询失败'));
+    else if (limit.fetchedAt) {
+      const ago = relativeAgo(limit.fetchedAt, finiteNumber(o.now) ?? Date.now());
+      if (ago) parts.push(tr('limitUpdatedAgo', { ago }, `更新于 ${ago}`));
+    }
+    if (limit.stale && limit.summaryText) parts.push(tr('limitStale', null, '过期'));
+    return { text: parts.join(' · '), color: '#8b949e', title: '', action: null };
+  }
+
+  return { resolveQuotaBar, resolveProviderLimit, resolveText, humanizeCountdown, relativeAgo, renderQuotaParts };
 });
