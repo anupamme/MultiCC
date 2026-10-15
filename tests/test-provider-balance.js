@@ -91,6 +91,48 @@ test('queryOne resolves a pollable provider to its adapter DTO', async () => {
   assert.equal(result.dto.total, 12.5);
 });
 
+test('只读共享缓存不触发上游查询，响应携带规范快照', async () => {
+  const h = harness({ cached: CACHED_WINDOW });
+  const result = h.runtime.readCached('claude', 'glm-1');
+  assert.equal(result.type, 'provider_limit_updated');
+  assert.equal(result.providerId, 'glm-1');
+  assert.equal(result.cached, true);
+  assert.match(result.bar.text, /5h 42%/);
+  assert.deepEqual(h.seen, []);
+  assert.equal(h.runtime.readCached('codex', 'glm-1').reason, 'not_found');
+  assert.equal(h.runtime.readCached('claude', 'plain-1').reason, 'no_cached_limit');
+});
+
+test('普通查询与重查共享同一个进行中请求，并返回已持久化的快照', async () => {
+  const { createProviderLimitCache } = require('../src/quota/provider-limit-cache');
+  const { createLimitRecorder } = require('../src/quota/limit-cache-recorder');
+  const dir = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'provider-balance-'));
+  const cache = createProviderLimitCache({ file: require('path').join(dir, 'limits.db'), now: () => 1_700_000_000_000 });
+  const recorder = createLimitRecorder({ cache, persistedSessions: new Map(), providers: {} });
+  let queries = 0;
+  let release;
+  const runtime = createProviderBalanceRuntime({
+    listProviders: () => PROVIDERS,
+    getProvider: (_type, id) => PROVIDERS.find(p => p.id === id),
+    getProviderLimitTarget: (_type, id) => TARGETS[id],
+    onResult: recorder.recordProvider,
+    lookupCached: cache.get,
+    now: () => 1_700_000_000_000,
+    adapters: { 'glm-monitor': () => { queries++; return new Promise(resolve => { release = resolve; }); } },
+  });
+  try {
+    const first = runtime.queryOne('claude', 'glm-1');
+    const second = runtime.refreshOne('claude', 'glm-1');
+    release({ kind: 'window', provider: 'glm', rateLimitType: 'five_hour', status: 'allowed', utilization: 0.25, resetsAt: 1_700_003_600 });
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(queries, 1);
+    assert.equal(a, b);
+    assert.equal(a.snapshot.updatedAt, cache.get('claude', 'glm-1').updatedAt);
+    assert.equal(a.dto.fetchedAt, a.snapshot.fetchedAt);
+    assert.deepEqual(a.snapshot.bar, runtime.readCached('claude', 'glm-1').bar);
+  } finally { cache.close(); require('fs').rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('Codex-compatible GLM provider renders GLM windows, not the host Codex account', async () => {
   const result = await harness().runtime.queryOne('codex', 'codex-glm');
   assert.equal(result.ok, true);

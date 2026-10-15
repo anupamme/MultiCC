@@ -52,6 +52,14 @@ class QuotaService {
     '/api/providers/${Uri.encodeComponent(appType)}/${Uri.encodeComponent(providerId)}/balance',
   );
 
+  /// 仅读取供应商共享快照，不调用上游额度接口。
+  Future<Map<String, dynamic>?> fetchProviderLimitSnapshot(
+    String appType,
+    String providerId,
+  ) => _get(
+    '/api/providers/${Uri.encodeComponent(appType)}/${Uri.encodeComponent(providerId)}/balance?cached=1',
+  );
+
   /// Open a visible login window for opencode.ai on the server's managed Chrome
   /// profile. Used when the Go subscription scrape reports no session
   /// (needs_login / chrome_unavailable). Returns false on any transport/HTTP

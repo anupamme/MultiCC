@@ -174,7 +174,7 @@ function createLimitRecorder({ cache, persistedSessions, providers, now = Date.n
     if (!dto || typeof dto !== 'object') return null;
     const at = now();
     if (dto.kind === 'window') {
-      const normalized = normalizeWindowEvent(dto, at);
+      const normalized = normalizeWindowEvent(dto, dto.fetchedAt || at);
       if (!normalized) return null;
       const bar = windowEventBar(normalized);
       const summary = {
@@ -224,7 +224,7 @@ function createLimitRecorder({ cache, persistedSessions, providers, now = Date.n
         summary,
         summaryText: compactBarText(bar ? bar.text : ''),
         barText: bar ? bar.text : null,
-        fetchedAt: at,
+        fetchedAt: dto.fetchedAt || at,
       });
     }
     return null;

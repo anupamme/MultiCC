@@ -714,11 +714,10 @@ const directoriesStore = stateBootstrap.directoriesStore;
 const _state = stateBootstrap.state;
 const persistedSessions = _state.persistedSessions; mountPublicSessionAccessGuard(app, { records: persistedSessions, logger, v1NotFound: (req, res) => v1Error(req, res, 404, 'session not found', 'session_not_found') });
 
-// Last-known-good per-provider limit/usage cache for the Web/App pickers;
-// producers feed it via src/quota/limit-cache-recorder.js.
+// 供应商余量共享缓存：写入成功后向使用该线路的会话同步展示快照。
 const { createProviderLimitCache } = require('./src/quota/provider-limit-cache'); const { createLimitRecorder } = require('./src/quota/limit-cache-recorder'); const { createQuotaBarCache } = require('./src/quota/quota-bar-cache');
 const providerLimitCache = createProviderLimitCache({ file: MULTICC_PATHS.providerLimitDbFile, legacyJsonFile: MULTICC_PATHS.providerLimitCacheFile });
-const limitRecorder = createLimitRecorder({ cache: providerLimitCache, persistedSessions, providers });
+const limitRecorder = createLimitRecorder({ cache: providerLimitCache, persistedSessions, providers }); require('./src/quota/provider-limit-sync').connectProviderLimitSync({ cache: providerLimitCache, persistedSessions, providers, broadcast: (id, data) => chatBroadcast(id, data) });
 const quotaBarCache = createQuotaBarCache({ file: MULTICC_PATHS.quotaBarCacheFile });
 // Host-injected store port. Production delegates directly to StateStore's
 // atomic tmp+fsync+rename write. Isolated integration tests may place a marker
@@ -2286,14 +2285,10 @@ const subscribeDispatchProgress = createDispatchProgressSubscription({
 });
 
 // Usage-limit poller — the active-poll half of the limit subsystem. Claude 5h /
-// ChatGPT-codex report limits in response headers (extracted passively by the
-// proxy); GLM Coding Plan and DeepSeek expose quota only via a separate
-// authenticated request, polled at each turn boundary. Wiring lives in
-// src/chat/usage-limit-wiring so server.js stays thin. Best-effort throughout.
 const usageLimitPoller = require('./src/chat/usage-limit-wiring').createUsageLimitWiring({
   persistedSessions, providers, chatBroadcast,
   createPoller: require('./src/usage-limit-poller').createUsageLimitPoller,
-  recordLimit: limitRecorder.recordSession,
+  recordLimit: limitRecorder.recordSession, recordClaude: limitRecorder.recordClaude,
 });
 
 // ── WeChat Bridge ──

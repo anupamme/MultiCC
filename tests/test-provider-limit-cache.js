@@ -635,6 +635,47 @@ async function withFetch(body, fn) {
   try { return await fn(); } finally { globalThis.fetch = original; }
 }
 
+function testSharedSnapshots() {
+  const { connectProviderLimitSync } = require('../src/quota/provider-limit-sync');
+  const clock = fixedClock(1_700_000_000_000);
+  const cache = createProviderLimitCache({ file: tmpDb('shared'), now: clock.now });
+  const sessions = new Map([
+    ['a', { cli: 'claude', provider: 'shared' }],
+    ['b', { cli: 'claude-exp', provider: 'shared' }],
+    ['other', { cli: 'claude', provider: 'different' }],
+    ['protocol', { cli: 'codex', provider: 'shared' }],
+    ['auto', { cli: 'claude', providerSelection: { candidates: [{ providerId: 'shared' }] } }],
+  ]);
+  const sent = [];
+  const stop = connectProviderLimitSync({ cache, persistedSessions: sessions,
+    providers: { appTypeForCli: cli => cli.startsWith('claude') ? 'claude' : 'codex' },
+    broadcast: (id, data) => sent.push({ id, data }),
+  });
+  cache.subscribe(() => { throw new Error('disconnected'); });
+  const entry = cache.record('claude', 'shared', { kind: 'window', fetchedAt: clock.now(),
+    summary: { provider: 'glm', usedPercentage: 25, resetsAtMs: clock.now() + 3_600_000, secret: 'private-token' } });
+  ok(sent.map(e => e.id).join(',') === 'a,b,auto', '同供应商的会话同步，其他供应商及协议隔离');
+  ok(JSON.stringify(sent[0].data.bar) === JSON.stringify(sent[1].data.bar), '两个会话收到完全相同的共享余量条');
+  ok(!JSON.stringify(sent).includes('private-token'), '共享事件不包含原始响应字段');
+  const ignored = cache.record('claude', 'shared', { kind: 'window', fetchedAt: clock.now() - 1,
+    summary: { usedPercentage: 99 } });
+  ok(ignored.updatedAt === entry.updatedAt && sent.length === 3, '过期读数不能覆盖或重新推送新读数');
+  const next = cache.record('claude', 'shared', { kind: 'window', fetchedAt: clock.now(),
+    summary: { usedPercentage: 40 } });
+  ok(next.updatedAt > entry.updatedAt, '同毫秒内的缓存版本也严格递增');
+  const failure = cache.recordFailure('claude', 'shared', { error: 'private-failure' });
+  ok(failure.summary.usedPercentage === 40 && failure.updatedAt > next.updatedAt, '失败只更新诊断版本，保留最近成功读数');
+  ok(!JSON.stringify(sent).includes('private-failure'), '推送不泄露失败详情');
+  const count = sent.length;
+  cache.record('claude', 'shared', { kind: 'availability', summary: { status: 'rejected' } });
+  ok(sent.length === count, '线路健康状态不冒充余量快照');
+  stop();
+  cache.record('claude', 'shared', { kind: 'window', summary: { usedPercentage: 50 } });
+  ok(sent.length === count, '取消订阅后停止推送');
+  cache.close();
+}
+
+testSharedSnapshots();
 testCompactBarText();
 testSqliteSchema();
 testStore();

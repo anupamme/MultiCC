@@ -302,13 +302,13 @@
       try {
         const res = await fetch(opts.getUrl(), { method: 'POST', credentials: 'same-origin' });
         let data = null; try { data = await res.json(); } catch (_) {}
-        if (requestRevision !== revision) return current;
+        if (requestRevision !== revision || (currentProviderSnapshot?.kind === opts.kind)) return current;
         if (!data) data = { status: 'unavailable', error: 'invalid response' };
         current = data;
         if (data.status === 'ok') { lastErrorAt = 0; store.save(data); }
         else lastErrorAt = Date.now();
       } catch (_) {
-        if (requestRevision !== revision) return current;
+        if (requestRevision !== revision || (currentProviderSnapshot?.kind === opts.kind)) return current;
         lastErrorAt = Date.now();
         current = { status: 'unavailable', error: 'fetch failed' };
       } finally { if (requestRevision === revision) inFlight = false; }
@@ -417,6 +417,7 @@
   let currentLimitBar = null;    // server-rendered bar from the rate_limit_event
   let currentClaudeUsage = null; // scrape response (its .bar is the full Claude bar)
   let currentProviderWindowBar = null;
+  let currentProviderSnapshot = null;
   let claudeUsageFetchInFlight = false;
   let claudeLoginPending = false;
   let claudeLastErrorAt = 0;
@@ -516,20 +517,20 @@
     try {
       const res = await fetch(`/api/quota/bars/refresh${quotaBarParams({ kind: 'claude', force: force ? '1' : '' })}`, { method: 'POST', credentials: 'same-origin' });
       let data = null; try { data = await res.json(); } catch (_) {}
-      if (requestRevision !== providerRevision) return currentClaudeUsage;
+      if (requestRevision !== providerRevision || currentProviderSnapshot) return currentClaudeUsage;
       if (!data) data = { status: 'unavailable', error: 'invalid response' };
       currentClaudeUsage = data;
       if (data.status === 'ok') { claudeLastErrorAt = 0; claudeStore.save(data); }
       else claudeLastErrorAt = Date.now();
     } catch (_) {
-      if (requestRevision !== providerRevision) return currentClaudeUsage;
+      if (requestRevision !== providerRevision || currentProviderSnapshot) return currentClaudeUsage;
       claudeLastErrorAt = Date.now();
       currentClaudeUsage = { status: 'unavailable', error: 'fetch failed' };
     } finally { if (requestRevision === providerRevision) claudeUsageFetchInFlight = false; }
     renderCurrent();
     return currentClaudeUsage;
   }
-  function restoreClaudeUsage() { currentClaudeUsage = claudeStore.load(); renderCurrent(); return currentClaudeUsage; }
+  function restoreClaudeUsage() { if (!currentProviderSnapshot) currentClaudeUsage = claudeStore.load(); renderCurrent(); return currentClaudeUsage; }
 
   function consumeRateLimitEvent(info, sessionName, bar) {
     currentSession = String(sessionName || currentSession || '').trim();
@@ -541,7 +542,24 @@
   }
 
   let providerLimitInFlightKey = null;
-  async function refreshProviderLimit() {
+  function consumeProviderLimitSnapshot(data) {
+    if (!data || !data.bar || data.providerId !== currentProviderId || data.appType !== currentProviderAppType) return false;
+    if (currentProviderSnapshot && Number(data.updatedAt) < Number(currentProviderSnapshot.updatedAt)) return false;
+    currentProviderSnapshot = data;
+    const response = { status: 'ok', fetchedAt: data.fetchedAt, bar: data.bar };
+    if (data.kind === 'ark') arkSlot.setCurrent(response);
+    else if (data.kind === 'kimi') kimiSlot.setCurrent(response);
+    else if (isClaudeCli(currentCli) && isClaudeProvider(currentProviderBaseUrl) && data.dto?.kind === 'window') {
+      currentClaudeUsage = response;
+      currentProviderWindowBar = null;
+    } else {
+      currentProviderWindowBar = data.dto?.kind === 'window' ? data.bar : null;
+      currentBalanceBar = data.dto?.kind === 'balance' ? data.bar : null;
+    }
+    renderAll();
+    return true;
+  }
+  async function refreshProviderLimit(preferCache = false) {
     if (!currentProviderAppType || !currentProviderId) return null;
     // Click-reachable (the provider window bar's ⟳): one query at a time for a
     // given provider. Keyed on the identity, not a bare flag: a provider switch
@@ -555,9 +573,17 @@
     const revision = providerRevision;
     providerLimitInFlightKey = inFlightKey;
     try {
-      const res = await fetch(`/api/providers/${encodeURIComponent(currentProviderAppType)}/${encodeURIComponent(currentProviderId)}/balance`, { credentials: 'same-origin' });
+      const url = `/api/providers/${encodeURIComponent(currentProviderAppType)}/${encodeURIComponent(currentProviderId)}/balance`;
+      if (preferCache) {
+        const cached = await fetch(`${url}?cached=1`, { credentials: 'same-origin' }).then(res => res.json()).catch(() => null);
+        if (revision !== providerRevision) return null;
+        if (cached?.type === 'provider_limit_updated' && consumeProviderLimitSnapshot(cached) && !cached.stale) return cached.bar;
+      }
+      const res = await fetch(url, { credentials: 'same-origin' });
       const data = await res.json();
       if (revision !== providerRevision || !data || data.ok !== true) return null;
+      if (data.snapshot) { consumeProviderLimitSnapshot(data.snapshot); return data.snapshot.bar; }
+      if (currentProviderSnapshot) return currentProviderSnapshot.bar;
       const kind = data.dto?.kind;
       currentProviderWindowBar = kind === 'window' ? (data.bar || null) : null;
       currentBalanceBar = kind === 'balance' ? (data.bar || null) : null;
@@ -612,6 +638,7 @@
     paintBar(element, currentBalanceBar);
   }
   function consumeBalanceEvent(info, sessionName, bar) {
+    if (currentProviderSnapshot) return currentBalanceBar;
     currentSession = String(sessionName || currentSession || '').trim();
     currentBalanceBar = bar || null;
     if (currentBalanceBar && currentSession) {
@@ -622,6 +649,7 @@
     return currentBalanceBar;
   }
   function restoreBalance(sessionName) {
+    if (currentProviderSnapshot) return currentBalanceBar;
     currentSession = String(sessionName || currentSession || '').trim();
     const s = browserStorage();
     if (s) { try { currentBalanceBar = JSON.parse(s.getItem(balanceStorageKey(currentSession)) || 'null'); } catch (_) { currentBalanceBar = null; } }
@@ -647,10 +675,10 @@
       opencodeSlot.setCurrent(cacheEntryToResponse(bars.opencode));
       qoderSlot.setCurrent(cacheEntryToResponse(bars.qoder));
       codexSlot.setCurrent(cacheEntryToResponse(bars.codex));
-      arkSlot.setCurrent(cacheEntryToResponse(bars.ark));
-      kimiSlot.setCurrent(cacheEntryToResponse(bars.kimi));
+      if (currentProviderSnapshot?.kind !== 'ark') arkSlot.setCurrent(cacheEntryToResponse(bars.ark));
+      if (currentProviderSnapshot?.kind !== 'kimi') kimiSlot.setCurrent(cacheEntryToResponse(bars.kimi));
       const claude = cacheEntryToResponse(bars.claude);
-      currentClaudeUsage = claude;
+      if (!currentProviderSnapshot) currentClaudeUsage = claude;
       renderAll();
       return data;
     } catch (_) {
@@ -715,6 +743,7 @@
       // Different accounts can share a baseUrl. Drop every provider-owned
       // display before fetching the new selection.
       currentLimitInfo = null; currentLimitBar = null; currentProviderWindowBar = null; currentBalanceBar = null;
+      currentProviderSnapshot = null;
       currentClaudeUsage = null; claudeUsageFetchInFlight = false;
       claudeLoginPending = false; claudeLastErrorAt = 0;
       arkSlot.reset(); kimiSlot.reset();
@@ -738,7 +767,7 @@
     if (firstReport || changed) {
       arkSlot.clearBackoff(); kimiSlot.clearBackoff();
       restoreServerQuotaBars();
-      refreshProviderLimit();
+      refreshProviderLimit(true);
       arkSlot.refresh(); kimiSlot.refresh();
     }
   }
@@ -746,6 +775,7 @@
   const api = Object.freeze({
     setCli, setProviderBaseUrl,
     consumeRateLimitEvent, consumeBalanceEvent,
+    consumeProviderLimitSnapshot,
     restoreFiveHourRateLimit, restoreBalance, restoreClaudeUsage,
     refreshClaudeUsage,
     refreshProviderLimit,

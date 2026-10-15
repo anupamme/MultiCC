@@ -44,12 +44,7 @@ const MIGRATION_DEBT = Object.freeze({
   // 2026-10-11 统一消息准备入口后，字节上限继续降至 154948。
   // 会话医生（src/doctor/host.js）同行挂载，压缩迁移注释抵偿，实测 3009/154893。
   // 2026-10-14 事件层（src/events/host.js）同行挂载并压缩 setTaskState 注释，实测 3005/154883；事件信封接 loadChatHistory 并压缩 bridge 注释后 3004/154820；触发器「新建会话」接 createChatTask 并压缩心跳注释后 3002/154715。
-  'server.js': Object.freeze({
-    ceiling: 3002,
-    byteCeiling: 154715,
-    target: 3000,
-    reason: 'over 3000 again after v2.4.1 (official-account and host-battery route additions); registered at the measured high-water mark',
-  }),
+  // 供应商余量同步接线后清除旧说明，server.js 已回到默认预算，移除迁移例外。
   // 消息准备移到入队后的统一入口，turn-engine.js 已降回 3000 行以内。
 // app/lib/screens/main_shell.dart was registered here (ceiling 3167/122298) after
   // it crossed 3000 in 039c6e43 (跨目录控制台). 2026-09-27 删掉整块任务板 UI（老首页、
