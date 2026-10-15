@@ -281,7 +281,7 @@ test('when the CLI cannot refresh, the slot is cleared and the inline refresh st
 test('a request arriving mid CLI refresh waits for it instead of spending the same token', async () => {
   const t = await setup({ env: { FAKE_CLAUDE_DELAY_MS: '400' } });
   try {
-    const id = t.addAccount('frank', 30 * 1000);
+    const id = t.addAccount('frank', 3 * MIN);
     const credentials = createClaudeAccountCredentialService({ accounts: t.accounts, fetch: t.server.fetch, exclusive: t.supervisor.exclusive });
     const sweep = t.supervisor.checkAll('test');
     await new Promise(r => setTimeout(r, 100)); // the CLI is now mid-refresh

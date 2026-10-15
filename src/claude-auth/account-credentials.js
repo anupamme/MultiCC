@@ -2,16 +2,15 @@
 
 // Per-account Claude credential reader with refresh-on-read — the cpr claude
 // proxy's injected readOfficialCredential and the per-account quota route both
-// go through here. Unlike the shared Keychain login (which the CLI refreshes
-// itself), account credential files are owned by multicc and NOTHING else
-// refreshes them, so an expired access token is rotated inline: singleflight
-// per account + Retry-After honouring backoff, exactly CPA's policy
-// (claudeRefreshGroup / claudeRefreshBlock, 5s–5min clamps).
+// go through here. Both inline refresh and the background CLI supervisor own
+// these files, so EVERY read joins their account lock, including locally fresh
+// tokens. A CLI rotation can revoke the old access token before its probe ends
+// and the supervisor adopts the new credential.
 
 const { refreshTokens, fetchProfile, ClaudeOAuthError, REFRESH_MIN_BACKOFF_MS } = require('./official-oauth');
 const { isCliCopy } = require('../official-accounts');
 
-const EXPIRY_MARGIN_MS = 60 * 1000; // treat tokens expiring within a minute as expired
+const EXPIRY_MARGIN_MS = 5 * 60 * 1000; // 与官方 CLI 一样，提前五分钟检查续期
 
 function createClaudeAccountCredentialService(options = {}) {
   const accounts = options.accounts;
@@ -21,8 +20,8 @@ function createClaudeAccountCredentialService(options = {}) {
   const now = options.now || (() => Date.now());
   // Shared with the per-account CLI refresher (accounts-refresh.js): one
   // rotation per account at a time, or two holders spend one single-use token.
-  const exclusive = typeof options.exclusive === 'function' ? options.exclusive : (id, fn) => fn();
-  const fresh = expiresAt => expiresAt == null || expiresAt > now() + EXPIRY_MARGIN_MS;
+  const exclusive = typeof options.exclusive === 'function' ? options.exclusive : async (id, fn) => fn();
+  const fresh = (expiresAt, margin = EXPIRY_MARGIN_MS) => expiresAt == null || expiresAt > now() + margin;
 
   const inflight = new Map();     // accountId -> Promise (singleflight)
   const blockedUntil = new Map(); // accountId -> epoch ms (Retry-After backoff)
@@ -90,25 +89,36 @@ function createClaudeAccountCredentialService(options = {}) {
   // The cpr-facing read: {token} on success, {token:null, reason} otherwise.
   // Sync-shape contract (cpr awaits the result, so async is fine).
   async function readAccountToken(id) {
-    const stored = readStored(id);
-    if (!stored.ok) return { token: null, reason: stored.reason };
-    if (fresh(stored.expiresAt)) return { token: stored.accessToken };
-    // Expired (or nearly): singleflight refresh, then re-read the file.
     let pending = inflight.get(id);
     if (!pending) {
       pending = exclusive(id, () => {
-        // A CLI refresh of this account may have landed while we waited.
+        // 即使本地尚未过期，也必须等后台轮换结束后再读。
         const current = readStored(id);
-        if (current.ok && fresh(current.expiresAt)) {
+        if (!current.ok) return { ok: false, reason: current.reason };
+        if (fresh(current.expiresAt, current.cliCopy ? 60_000 : EXPIRY_MARGIN_MS)) {
           return { ok: true, accessToken: current.accessToken, expiresAt: current.expiresAt };
         }
-        return refreshOwn(id, current.ok ? current : stored);
+        return refreshOwn(id, current);
       }).finally(() => inflight.delete(id));
       inflight.set(id, pending);
     }
     const refreshed = await pending;
     if (!refreshed.ok) return { token: null, reason: refreshed.reason };
     return { token: refreshed.accessToken };
+  }
+
+  async function recoverAccountToken(id, failedToken) {
+    if (!failedToken) return { token: null, reason: 'failed_token_missing' };
+    // 现有账号锁就是续期进行中标记：排在它后面，等保存完成后重读。
+    // 异常恢复不再发起续期；没有新令牌就保留原错误，避免重复续期。
+    return exclusive(id, () => {
+      const current = readStored(id);
+      if (!current.ok) return { token: null, reason: current.reason };
+      if (current.accessToken !== failedToken && fresh(current.expiresAt)) {
+        return { token: current.accessToken };
+      }
+      return { token: null, reason: 'credential_unchanged' };
+    });
   }
 
   function status(id) {
@@ -133,7 +143,13 @@ function createClaudeAccountCredentialService(options = {}) {
     return sharedLoginReader(arg);
   }
 
-  return Object.freeze({ readAccountToken, readOfficialCredential, status });
+  function recoverOfficialCredential(arg, failedToken) {
+    // 共享钥匙串登录仍由原生 CLI 管理，不能在此花它的刷新令牌。
+    if (!arg || typeof arg !== 'object') return Promise.resolve({ token: null, reason: 'unmanaged_login' });
+    return recoverAccountToken(arg.accountId, failedToken);
+  }
+
+  return Object.freeze({ readAccountToken, readOfficialCredential, recoverAccountToken, recoverOfficialCredential, status });
 }
 
 module.exports = { createClaudeAccountCredentialService, EXPIRY_MARGIN_MS };

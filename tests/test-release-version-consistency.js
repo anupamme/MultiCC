@@ -254,13 +254,16 @@ test('core runner covers every selected path and expands declared variants', () 
   //     （GET /api/event-triggers、POST/PUT/DELETE 规则路由、draft body、校验）。plain
   //     test()，MockClient + mock SharedPreferences，无 widget 树/模拟器/真 socket。
   // 313 + 2 = 315，deterministic 267 + 1 = 268，flutter 21 + 1 = 22，commands 295 + 1 = 296。
-  assert.equal(core.length, 315, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 315);
+  // 补齐此前登记的 cli-key-accounts（临时目录与假密钥、无真实登录），以及本次
+  // claude-oauth-proxy-recovery（本地模拟上游、假凭据）。两者验证核心鉴权不变量，
+  // 均无需真实服务或账号；315 + 2 = 317，deterministic 270，commands 298。
+  assert.equal(core.length, 317, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 317);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 268);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 270);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 22,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -270,8 +273,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 296,
-    '291 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 298,
+    '295 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

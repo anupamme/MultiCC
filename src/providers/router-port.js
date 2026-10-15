@@ -9,6 +9,7 @@ const {
 } = require('./binding');
 const { mountCodexOfficialRelay } = require('../codex/official-relay');
 const { createCodexHistoryHooks } = require('./codex-history-hooks');
+const { createClaudeOAuthProxyRecovery } = require('../claude-auth/proxy-recovery');
 const {
   createProviderProxyAdmission,
   createProviderProxyGuard,
@@ -472,10 +473,9 @@ function createProviderRouterPort(options = {}) {
         `/${String(mountOptions.claudeProxyPath || '/claude-proxy').replace(/^\/+|\/+$/g, '')}`,
         createProviderProxyGuard({ protocol: 'claude', authorizeProxyRequest, ...(onRejected ? { onRejected } : {}) }),
       );
-      mounted.claude = requireMethod(backend, 'mountClaudeProxy', mode === 'cpr' ? 'router' : 'legacy')(
-        admission ? admission.app : app,
-        { ...common, ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent } : {}), ...(mountOptions.claudeProxyPath ? { claudeProxyPath: String(mountOptions.claudeProxyPath) } : {}), ...(mountOptions.claudeProxy || {}) },
-      );
+      const recovery = createClaudeOAuthProxyRecovery(admission ? admission.app : app,
+        { ...common, ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent } : {}), ...(mountOptions.claudeProxyPath ? { claudeProxyPath: String(mountOptions.claudeProxyPath) } : {}), ...(mountOptions.claudeProxy || {}) });
+      mounted.claude = requireMethod(backend, 'mountClaudeProxy', mode === 'cpr' ? 'router' : 'legacy')(recovery.app, recovery.options);
     }
     if (protocols.includes('codex')) {
       const admission = authorizeProxyRequest ? createProviderProxyAdmission({
