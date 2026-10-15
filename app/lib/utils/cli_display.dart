@@ -231,7 +231,7 @@ const Map<String, CliFamily> kCliFamilies = <String, CliFamily>{
       update: CliUpdate(package: '@moonshot-ai/kimi-code', command: 'npm install -g @moonshot-ai/kimi-code')),
   'codebuddy': CliFamily('WorkBuddy', AppColors.codebuddy, mark: 'W', providerless: true,
       update: CliUpdate(package: '@tencent-ai/codebuddy-code', command: 'npm install -g @tencent-ai/codebuddy-code')),
-  'dsh': CliFamily('DSH', AppColors.dsh, mark: 'D', providerless: true,
+  'dsh': CliFamily('DSH', AppColors.dsh, mark: 'D',
       update: CliUpdate(package: '@deepseek-ai/dsh', command: 'npm install -g @deepseek-ai/dsh')),
   'gemini': CliFamily('Gemini', AppColors.gemini, mark: 'G', providerless: true,
       update: CliUpdate(package: '@google/gemini-cli', command: 'npm install -g @google/gemini-cli'),
@@ -245,7 +245,7 @@ const Map<String, CliFamily> kCliFamilies = <String, CliFamily>{
         'chat': <CliLane>[CliLane('commandcode', engine: 'command-code -p --output-format json')],
         'terminal': <CliLane>[CliLane('commandcode', engine: 'command-code')],
       }),
-  'grok': CliFamily('Grok', AppColors.grok, mark: 'R', providerless: true,
+  'grok': CliFamily('Grok', AppColors.grok, mark: 'R',
       update: CliUpdate(package: '@xai-official/grok', command: 'npm install -g @xai-official/grok'),
       lanes: <String, List<CliLane>>{
         'chat': <CliLane>[CliLane('grok', engine: 'grok acp')],

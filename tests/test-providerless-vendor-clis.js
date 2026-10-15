@@ -7,24 +7,26 @@ const path = require('node:path');
 
 const providers = require('../src/providers/core');
 
-test('vendor-auth CLIs stay providerless while ZCode resolves both MultiCC provider pools', () => {
+test('vendor-auth CLIs stay providerless while pool-capable CLIs resolve MultiCC provider pools', () => {
   assert.equal(providers.appTypeForCli('claude'), 'claude');
   assert.equal(providers.appTypeForCli('opencode'), 'claude');
   assert.equal(providers.appTypeForCli('codex'), 'codex');
   assert.equal(providers.appTypeForCli('qoder'), null);
   assert.equal(providers.appTypeForCli('kimi'), null);
   assert.equal(providers.appTypeForCli('codebuddy'), null);
-  assert.equal(providers.appTypeForCli('dsh'), null);
-  // gemini / grok ride the ACP lane and sign in with their own vendor account,
-  // so they expose no MultiCC pool either.
+  // DSH speaks Anthropic Messages over DEEPSEEK_BASE_URL, so it joins the
+  // claude-side pool (probe-verified 2026-10-15).
+  assert.equal(providers.appTypeForCli('dsh'), 'claude');
+  // gemini still rides its own vendor account with no MultiCC pool.
   assert.equal(providers.appTypeForCli('gemini'), null);
+  // Grok resolves globally by provider id (both messages/responses backends).
   assert.equal(providers.appTypeForCli('grok'), null);
   assert.equal(providers.appTypeForCli('zcode'), null);
   assert.deepEqual(providers.appTypesForCli('qoder'), []);
   assert.deepEqual(providers.appTypesForCli('codebuddy'), []);
-  assert.deepEqual(providers.appTypesForCli('dsh'), []);
+  assert.deepEqual(providers.appTypesForCli('dsh'), ['claude']);
   assert.deepEqual(providers.appTypesForCli('gemini'), []);
-  assert.deepEqual(providers.appTypesForCli('grok'), []);
+  assert.deepEqual(providers.appTypesForCli('grok'), ['claude', 'codex']);
   assert.deepEqual(providers.appTypesForCli('zcode'), ['claude', 'codex']);
 });
 
@@ -45,14 +47,6 @@ test('stale vendor provider ids cannot silently fall through to another account'
     providerModels: [],
     providerName: null,
   });
-  assert.deepEqual(providers.resolveSpawnEnv({ cli: 'dsh', provider: 'stale-provider' }), {
-    env: {},
-    skipDefaultModel: false,
-    aliasOnly: false,
-    providerModel: null,
-    providerModels: [],
-    providerName: null,
-  });
   assert.deepEqual(providers.resolveSpawnEnv({ cli: 'gemini', provider: 'stale-provider' }), {
     env: {},
     skipDefaultModel: false,
@@ -61,14 +55,16 @@ test('stale vendor provider ids cannot silently fall through to another account'
     providerModels: [],
     providerName: null,
   });
-  assert.deepEqual(providers.resolveSpawnEnv({ cli: 'grok', provider: 'stale-provider' }), {
-    env: {},
-    skipDefaultModel: false,
-    aliasOnly: false,
-    providerModel: null,
-    providerModels: [],
-    providerName: null,
-  });
+  // Pool-capable CLIs fail closed on a stale binding instead of silently
+  // degrading to the vendor's own account.
+  assert.throws(
+    () => providers.resolveSpawnEnv({ cli: 'dsh', provider: 'stale-provider' }),
+    /Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证/,
+  );
+  assert.throws(
+    () => providers.resolveSpawnEnv({ cli: 'grok', provider: 'stale-provider' }),
+    /Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证/,
+  );
   assert.throws(
     () => providers.resolveSpawnEnv({ cli: 'zcode', provider: 'stale-provider' }),
     /Provider 不存在、协议不兼容或缺少可用的 HTTP 凭证/,
