@@ -13,6 +13,7 @@ const {
   createReadOnlyShadowRouter,
 } = require('./router-adapter');
 const { toLegacyProviderView } = require('./binding');
+const { applyCliKeyAccountEnv, selectedAccountId } = require('../cli-key-accounts');
 
 const DEFAULT_MODE = 'legacy';
 
@@ -94,6 +95,9 @@ function createProviderRouterRuntime(options = {}) {
       'CPR_LEGACY_ONLY',
     );
   }
+  // Per-session API-key accounts (src/cli-key-accounts.js). Without a store a
+  // session's pick still fails closed instead of spawning on the CLI's login.
+  const keyAccounts = options.keyAccounts || { readKey: () => null };
   const providerStore = createProviderStoreAdapter(providers);
   const legacy = createLegacyProviderRouterAdapter({ providers, router, now: options.now });
   const embeddingPaths = createHostEmbeddingPaths({
@@ -146,25 +150,32 @@ function createProviderRouterRuntime(options = {}) {
       && providers.isOfficialCodexOAuthProvider(provider);
   }
 
+  // The account rides on top of whatever the route produced, on both launch
+  // paths: chat children (buildChildEnv) and terminals (resolveSpawnEnv env).
+  function withKeyAccount(result, session, cli) {
+    if (!result || !selectedAccountId(session, cli)) return result;
+    return { ...result, env: applyCliKeyAccountEnv(result.env || {}, session, keyAccounts, cli) };
+  }
+
   function resolveSpawnEnv(session, overrides) {
     const binding = createBinding(session, overrides);
     // CPR's generic Codex materializer copies provider/global auth.json before
     // an attempt route exists. Official OAuth is a host-only credential, so
     // select MultiCC's credential-free relay home at this earliest boundary.
-    if (hostOwnsOfficialCodexHome(binding)) {
-      return legacy.resolveSpawnEnv(toLegacyProviderView(binding));
-    }
-    return port.resolveSpawn(binding);
+    const result = hostOwnsOfficialCodexHome(binding)
+      ? legacy.resolveSpawnEnv(toLegacyProviderView(binding))
+      : port.resolveSpawn(binding);
+    return withKeyAccount(result, session, binding.cli);
   }
 
   function buildChildEnv(base, session, extra = {}, overrides) {
     const binding = createBinding(session, overrides);
     // Shadow comparisons are intentionally limited to summary/model/spawn.
     // Child-env construction can materialize Codex state, so it stays legacy.
-    if (mode === 'shadow' || hostOwnsOfficialCodexHome(binding)) {
-      return legacy.buildChildEnv(base, toLegacyProviderView(binding), extra);
-    }
-    return port.buildChildEnv(base, binding, extra);
+    const result = mode === 'shadow' || hostOwnsOfficialCodexHome(binding)
+      ? legacy.buildChildEnv(base, toLegacyProviderView(binding), extra)
+      : port.buildChildEnv(base, binding, extra);
+    return withKeyAccount(result, session, binding.cli);
   }
 
   return Object.freeze({

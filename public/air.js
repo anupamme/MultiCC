@@ -1164,6 +1164,10 @@
           bindings: quickRoles, expectedVersion: 0, clientMsgId: `${attempt.createId}-roles`,
         });
       }
+      // API-key 账户（Command Code / OpenCode）不在建任务的 runtime 里：建好会话后、第一条消息前补上。
+      if (quickRuntime.cliAccounts && Object.keys(quickRuntime.cliAccounts).length) {
+        await api(`/api/sessions/${encodeURIComponent(created.sessionId)}`, { cliAccounts: quickRuntime.cliAccounts }, 'PATCH');
+      }
       await api(`/api/task-shell-tasks/${encodeURIComponent(created.taskId)}/messages`, {
         text, clientMsgId: attempt.sendId, intent: 'work', ...(goal ? { goal: true, goalLimits: goalLimits || {} } : {}),
       });

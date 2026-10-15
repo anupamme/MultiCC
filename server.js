@@ -310,6 +310,7 @@ function recordProviderRouterShadowComparison(report) {
 const providerRouterRuntime = createProviderRouterRuntime({
   env: process.env,
   providers,
+  keyAccounts: require('./src/cli-key-accounts').sharedCliKeyAccountStore(), // per-session Command Code/OpenCode API-key accounts, layered onto every child env
   dataRoot: MULTICC_PATHS.root,
   codexHomesDir: providers.CODEX_HOMES_DIR,
   onShadowDiff: recordProviderRouterShadowComparison,
@@ -2118,7 +2119,7 @@ providerRoutes.mountCatalogRoutes(app);
 // GET /api/opencode/models — list models the local opencode CLI exposes
 // (provider/model strings, cached for 1 day). Used by the chat picker when an
 // opencode session has no multicc-managed provider's model list to render.
-mountOpenCodeModelRoutes(app); require('./src/routes/codex-models').mountCodexModelRoutes(app); // account-entitled Codex app-server model/list, 60s cache + explicit refresh
+mountOpenCodeModelRoutes(app); require('./src/routes/cli-key-accounts').mountCliKeyAccountRoutes(app, { store: require('./src/cli-key-accounts').sharedCliKeyAccountStore(), sessionPersistence }); require('./src/routes/codex-models').mountCodexModelRoutes(app); // account-entitled Codex app-server model/list, 60s cache + explicit refresh
 require('./src/routes/pricing').mountPricingRoutes(app, { priceTable: require('./src/pricing/price-table').sharedPriceTable(), asyncHandler }); // GET /api/pricing/status|lookup|search + POST /api/pricing/refresh — process-wide models.dev price table for the Auto router (src/pricing/price-table.js)
 
 // GET /api/qoder/models — the Qoder CN catalog entitled to the logged-in

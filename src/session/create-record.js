@@ -6,7 +6,7 @@ function createSessionRecordFactory(deps) {
   // not reach into src/cli for the lane table (tests/test-architecture-boundaries.js).
   if (typeof deps?.isResidentSession !== 'function') throw new TypeError('[session/create-record] isResidentSession port is required');
   const { isResidentSession, sharedWorkspace, SUPPORTED_CHAT_CLIS, validateExperimentalSession, tuiChatMirrorEnabled, normalizeEffort, validEffortForCli, codexDefaultReasoningLevel, normalizeCliAgent, validateProviderSelection, providers, primaryProviderCandidate, providerDefaults, validProviderId, allocateSessionId, persistedSessions, ensureDirGitReady, friendlyDirReason, WORKTREE_SUBDIR, gitWorktreeAdd, gitWorktreeRollbackCreate, sanitizeLoginEnv, ensureCliStates, sessionPersistence, savePersistedSessionsBestEffort, appendEvent, cliForLoginFlow, loginWorkspacePath = () => null } = deps;
-async function createSessionRecord({ dir, cli, kind, label = null, id = null, ephemeral = false, model = null, provider = undefined, providerSelection = null, effort = null, agent = null, subagent = null, rolePrompt = null, rolePresetId = null, type = null, taskExecutionSlot = false, experimentalMode = null, loginFlow = null, loginEnv = null, persistence = 'bestEffort', persistenceSource = 'runtime.create-session', taskBoundTaskId = null, autoCommit = true, workspaceOwnerSessionId = null, workspaceBaseCommit = null, validateOnly = false }) {
+async function createSessionRecord({ dir, cli, kind, label = null, id = null, ephemeral = false, model = null, provider = undefined, providerSelection = null, effort = null, agent = null, subagent = null, cliAccounts = null, rolePrompt = null, rolePresetId = null, type = null, taskExecutionSlot = false, experimentalMode = null, loginFlow = null, loginEnv = null, persistence = 'bestEffort', persistenceSource = 'runtime.create-session', taskBoundTaskId = null, autoCommit = true, workspaceOwnerSessionId = null, workspaceBaseCommit = null, validateOnly = false }) {
   if (!dir) return { ok: false, error: 'directory not found' };
   if (!SUPPORTED_CHAT_CLIS.includes(cli)) return { ok: false, error: `cli must be ${SUPPORTED_CHAT_CLIS.join(', ')}` };
   if (!['terminal', 'chat'].includes(kind)) return { ok: false, error: 'kind must be terminal or chat' };
@@ -110,6 +110,12 @@ async function createSessionRecord({ dir, cli, kind, label = null, id = null, ep
   };
   if (rp) session.rolePrompt = rp;
   if (subagentChecked.value) session.subagent = subagentChecked.value;
+  // Per-lane API-key account picks, already validated by the caller against the
+  // account store (src/cli-key-accounts.js) — this context only copies them.
+  if (cliAccounts && typeof cliAccounts === 'object' && !Array.isArray(cliAccounts)) {
+    const picks = Object.fromEntries(Object.entries(cliAccounts).filter(([, id]) => typeof id === 'string' && id));
+    if (Object.keys(picks).length) session.cliAccounts = picks;
+  }
   if (rolePresetId) session.rolePresetId = String(rolePresetId).trim();
   if (type) session.type = type;   // commander (and future roles) — round-trips via bootstrap/state + session-persistence
   if (loginFlow) { session.loginFlow = loginFlow; session.cwd = loginWorkspacePath(sid); }

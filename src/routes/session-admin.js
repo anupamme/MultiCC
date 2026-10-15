@@ -286,6 +286,7 @@ function createSessionAdminRuntime(rawDeps) {
       provider: record.provider || null,
       providerSelection: providerSelectionDto(record.providerSelection),
       providerBaseUrl: deps.sessionProviderBaseUrl(record),
+      cliAccounts: record.cliAccounts || null, // per-lane API-key account picks (ids only, never keys)
       experimentalMode: record.experimentalMode || null,
       subagent: runtime.subagent,
       cliStates: deps.cliStateSummary(record),
