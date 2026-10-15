@@ -1039,6 +1039,7 @@ final class ComputerUseHUD: NSObject {
   private var pauseButton: NSButton?
   private var cancelButton: NSButton?
   private var previous = ""
+  private var showButtons = true
   private let size = NSSize(width: 300, height: 38)
 
   @objc func togglePause() { humanInput.setPaused(!humanInput.isPaused); log(humanInput.isPaused ? "paused from the control bar" : "resumed from the control bar") }
@@ -1074,22 +1075,32 @@ final class ComputerUseHUD: NSObject {
     view.addSubview(l)
     let pause = button(156, #selector(togglePause)), stop = button(226, #selector(cancel))
     stop.title = "取消"
-    view.addSubview(pause); view.addSubview(stop)
+    // A stop notice has nothing left to click, so its window carries no buttons.
+    if showButtons { view.addSubview(pause); view.addSubview(stop) }
     p.contentView = view
     panel = p; label = l; pauseButton = pause; cancelButton = stop
   }
 
   func update() {
     let state = humanInput.snapshot(at: inputClock())
-    guard state.visible || control.automationLeaseActive else { panel?.orderOut(nil); previous = ""; return }
-    if panel == nil { build() }
     let halted = control.isHalted
+    // A cancel is a confirmation, not a state to sit in: its notice shows for a
+    // few seconds and then the bar leaves, lease or no lease. Everything else
+    // keeps the bar up for as long as the AI session holds the lease.
+    let show = halted ? control.stopNoticeActive() : (state.visible || control.automationLeaseActive)
+    guard show else { panel?.orderOut(nil); panel = nil; previous = ""; return }
+    // A dead button bezel kept painting itself on the translucent panel when it
+    // was only hidden, so a change of mode builds a fresh window instead.
+    if panel == nil || showButtons == halted {
+      panel?.orderOut(nil); panel = nil; previous = ""
+      showButtons = !halted
+      build()
+    }
     let text = halted ? "已取消 · 自动操作已停止" : (state.phase == "paused" ? "已暂停" : "AI 正在操作")
     let title = state.phase == "paused" ? "继续" : "暂停"
-    let key = text + "|" + title + "|" + (halted ? "1" : "0")
+    let key = text + "|" + title
     if key != previous {
       label?.stringValue = text; pauseButton?.title = title
-      pauseButton?.isHidden = halted; cancelButton?.isHidden = halted
       previous = key
     }
     panel?.orderFrontRegardless()
@@ -1118,11 +1129,13 @@ final class Control {
   private let lock = NSLock()
   private var halted = false
   private var haltedAt: Date?
+  private var stopNoticeUntil = Date.distantPast
   private var active = 0
   private var lastMutationAt = Date.distantPast
   private var leaseHolder: String?
   private var leaseUntil = Date.distantPast
   static let leaseSeconds: TimeInterval = 120
+  static let stopNoticeSeconds: TimeInterval = 4
 
   var isHalted: Bool { lock.lock(); defer { lock.unlock() }; return halted }
 
@@ -1132,7 +1145,7 @@ final class Control {
     lock.lock(); defer { lock.unlock() }
     if active > 0 || Date().timeIntervalSince(lastMutationAt) < 20 {
       if !halted { log("user pressed Esc: computer use stopped") }
-      halted = true; haltedAt = Date()
+      haltLocked()
     }
   }
   // The control bar's cancel button: unlike Esc it is an explicit click on our
@@ -1140,7 +1153,19 @@ final class Control {
   func userStop() {
     lock.lock(); defer { lock.unlock() }
     if !halted { log("cancelled from the control bar: computer use stopped") }
+    haltLocked()
+  }
+  private func haltLocked() {
     halted = true; haltedAt = Date()
+    stopNoticeUntil = Date().addingTimeInterval(Control.stopNoticeSeconds)
+  }
+  // The stop is announced and then the bar leaves, even though the session may
+  // still be holding its lease: nothing happens until someone resumes, so
+  // leaving the notice up for the rest of the two-minute lease just reads as
+  // stuck. Callers pass a clock so the window is testable.
+  func stopNoticeActive(at now: Date = Date()) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    return halted && stopNoticeUntil > now
   }
   // An AI session still holds the lease (renewed by each operation, dropped by
   // release): the control bar stays up through the model's thinking time between
@@ -1150,7 +1175,10 @@ final class Control {
     if let h = leaseHolder, h != "remote-screen", leaseUntil > Date() { return true }
     return false
   }
-  func resume(_ session: String) { lock.lock(); halted = false; lock.unlock(); log("resumed by \(session)") }
+  func resume(_ session: String) {
+    lock.lock(); halted = false; stopNoticeUntil = Date.distantPast; lock.unlock()
+    log("resumed by \(session)")
+  }
 
   func holderConflict(_ session: String) -> String? {
     lock.lock(); defer { lock.unlock() }

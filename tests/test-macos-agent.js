@@ -127,6 +127,12 @@ test('computer use: only the control bar pauses dispatch; own cursor/keyboard ac
   const wait = source.slice(source.indexOf('func waitForHumanIdle()'), source.indexOf('// MARK: - Safety:'));
   const mutation = source.slice(source.indexOf('enum MutKind'), source.indexOf('// MARK: - Operations'));
   assert.ok(!/func sampleHumanInput|func recordHumanInput/.test(source), 'automatic keyboard/mouse detection must stay removed');
+  const hud = source.slice(source.indexOf('final class ComputerUseHUD'), source.indexOf('let computerUseHUD ='));
+  assert.match(hud, /halted \? control\.stopNoticeActive\(\) : \(state\.visible \|\| control\.automationLeaseActive\)/,
+    'the cancelled notice must expire on its own instead of riding the lease');
+  assert.match(hud, /if showButtons \{ view\.addSubview\(pause\); view\.addSubview\(stop\) \}/,
+    'a stop notice must not carry dead buttons');
+  assert.match(hud, /if panel == nil \|\| showButtons == halted/, 'a mode change must rebuild the bar, not mutate it');
   const file = path.join(root, 'main.swift');
   fs.writeFileSync(file, `import Foundation
 import CoreGraphics
@@ -194,7 +200,14 @@ DispatchQueue.global().async {
   precondition(cancelled["reason"] as? String == "user-stopped")
   precondition(cancelled["retrySafe"] as? Bool == false)
   precondition(!humanInput.isPaused)
+  // Cancel is announced and then the bar leaves: the halt (and the session's
+  // lease) outlive the notice, but the notice itself must not.
+  let stoppedAt = Date()
+  precondition(control.isHalted)
+  precondition(control.stopNoticeActive(at: stoppedAt))
+  precondition(!control.stopNoticeActive(at: stoppedAt.addingTimeInterval(Control.stopNoticeSeconds + 0.1)))
   control.resume("test")
+  precondition(!control.isHalted && !control.stopNoticeActive(at: Date()))
   precondition(control.release("test"))
   // 4. Esc (optional tap) still stops while driving.
   DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { control.userEsc() }
