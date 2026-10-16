@@ -151,7 +151,19 @@ async function cleanup() {
   if (first.assistantEvents !== 2 || first.snapshotEvents !== 2) {
     throw new Error(`Qoder reply was not reconciled as two live snapshots: ${JSON.stringify(first)}`);
   }
-  const sessionDocument = JSON.parse(fs.readFileSync(path.join(dataRoot, 'sessions.json'), 'utf8'));
+  // The session store is written by the server; under load the flush can land
+  // just after the turn's stream_end, so wait briefly for the file instead of
+  // racing it. A missing file past the wait is a real failure, reported with
+  // the data root listing and the server's own stderr.
+  const sessionsFile = path.join(dataRoot, 'sessions.json');
+  for (let attempt = 0; attempt < 50 && !fs.existsSync(sessionsFile); attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (!fs.existsSync(sessionsFile)) {
+    throw new Error(`sessions.json was never written under ${dataRoot}: `
+      + `${fs.readdirSync(dataRoot).join(', ')}\nserver stderr:\n${stderr}`);
+  }
+  const sessionDocument = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
   const records = Array.isArray(sessionDocument) ? sessionDocument : sessionDocument.data;
   const persisted = records.find(item => item.id === sessionId);
   if (persisted?.cliSessionId !== 'native-qoder-1') {
