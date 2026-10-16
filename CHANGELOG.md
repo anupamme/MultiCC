@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.6.0 — API-key accounts, per-plan Codex quota windows, and one-shot Esc (2026-10-16)
+
+### Highlights
+
+- **Keep several API keys per CLI and pick one per session** — CLIs that authenticate with a plain key rather than an OAuth login (Command Code, and OpenCode's own `opencode.ai` Zen/Go lines) can now hold a named list of accounts, and each session picks one per lane (`session.cliAccounts`). The key reaches only the spawned child — never the CLI's global files — so a session without a pick keeps the CLI's own login exactly as before (`src/cli-key-accounts.js`, `src/routes/cli-key-accounts.js`).
+- **The Codex quota bar reads the real windows, not the slot names** — `chatgpt.com`'s usage endpoint names its windows `primary`/`secondary`, but which cycle each holds is plan-dependent (Plus puts the 5h window in primary; prolite has only a weekly one). The windows are now classified by their actual length into 5h / 1wk / 1m, and the same classifier drives both the turn-boundary poller and the click-to-refresh route so the passive and clicked bars can never disagree (`src/codex/rate-limit-windows.js`, `src/quota/quota-bar-view.js`).
+- **A Claude OAuth 401 recovers without replaying the turn** — the host now stages the first authentication rejection, refreshes the credential, and re-runs the original handler; a successful stream is never cached, so neither the turn nor its tool calls replay (`src/claude-auth/proxy-recovery.js`).
+- **Event triggers can spawn a fresh session** — a rule action gains `newSession` (dir / CLI / title) to create a new chat session per firing instead of reusing one, and the App's trigger screen follows (`src/events/rules.js`).
+- **One Esc is one cancel, not a latched halt** — the macOS agent used to latch a halt that blocked every later computer-use call until a manual resume; a halt now clears when the interrupted operation ends (or at the next dispatch if nothing was in flight) (`scripts/macos-agent/MultiCCAgent.swift`).
+- **The App's background-task board and hook editor grow up** — the task board renders richer per-task state, and the trigger/hook editor gains full create/edit/test coverage with matching tests (`app/lib/models/background_task_board.dart`, `app/lib/widgets/hook_list_view.dart`).
+
 ## v2.5.2 — Event triggers, a clearer re-login path, and a human-handoff README (2026-10-14)
 
 ### Highlights
