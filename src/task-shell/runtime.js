@@ -882,6 +882,12 @@ function createTaskShellRuntime(ports) {
     // owned task like a host continuation so downstream attribution stays on the
     // task and the turn actually runs.
     if (options.scheduledMessageId) { options.taskId = task.id; return null; }
+    // Same for a hook/trigger firing (events/host.js, triggers/index.js emit
+    // chat:run with originTrigger). It is host-authored — the task-shell WS
+    // path whitelists client fields, so a browser can never set it — and it
+    // has no receipt either. Without this the hook's prompt was rejected here,
+    // broadcast to a page nobody had open, and the run was still logged ok.
+    if (options.originTrigger === true) { options.taskId = task.id; return null; }
     return { ok: false, code: 'task_shell_route_required' };
   }
   // Task-level directory move (Air 任务「移动」): the board relocates the

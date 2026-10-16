@@ -51,11 +51,17 @@ function createEventsHost(deps) {
     allowPrivateWebhooks: process.env.MULTICC_EVENT_WEBHOOK_ALLOW_PRIVATE === '1',
     createSession: (input) => deps.createChatTask(input),
     sessionInfo: (id) => { const record = persistedSessions.get(id); return record ? { dirId: record.dirId, cli: record.cli } : null; },
-    injectPrompt: (sessionId, prompt) => {
+    injectPrompt: async (sessionId, prompt) => {
       const chat = chatSessions.get(sessionId);
       if (!persistedSessions.has(sessionId) || (chat && chat.isStreaming)) return false;
-      bus.emit('chat:run', sessionId, prompt, { originTrigger: true });
-      return true;
+      if (!deps.admit) { bus.emit('chat:run', sessionId, prompt, { originTrigger: true }); return true; }
+      // Await the admission so the run log records what really happened —
+      // fire-and-forget logged ok even when every gate refused the prompt.
+      try { return await deps.admit(sessionId, prompt, { originTrigger: true }) || { ok: false, code: 'not_admitted' }; }
+      catch (error) {
+        if (logger && logger.warn) logger.warn('event_inject_admission_failed', { sessionId, error: String(error && error.message || error).slice(0, 120) });
+        return { ok: false, code: 'admission_failed' };
+      }
     },
   });
   if (app) mountEventRoutes(app, { hub, engine });

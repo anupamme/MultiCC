@@ -205,8 +205,15 @@ test('chat header hook button: count badge and the shared form scoped to this se
     assert.equal(await page.evaluate(`document.getElementById('hook-btn').dataset.state`), 'set');
     assert.match(await page.evaluate(`document.getElementById('hook-btn').title`), /已启用 1 个/);
 
+    // 已有钩子：先列出来（启用 + 停用的 event 钩子都在，post-turn 不在），能看能改，再从这里新建。
     await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-list-dialog')?.open === true`));
+    assert.equal(await page.evaluate(`document.querySelectorAll('.hook-list-dialog .hook-list-item').length`), 2);
+    assert.equal(await page.evaluate(`document.querySelectorAll('.hook-list-dialog .hook-list-item.off').length`), 1);
+    assert.match(await page.evaluate(`document.querySelector('.hook-list-dialog').textContent`), /编辑规则/);
+    await click(page, `[...document.querySelectorAll('.hook-list-dialog button')].find(b => b.textContent === '新建钩子')`);
     assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    assert.equal(await page.evaluate(`document.querySelector('.hook-list-dialog').open`), false);
     // 会话入口：不出现“作用范围”，因为归属已固定为本会话。
     assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('hook-scope-row')).display`), 'none');
     // 「注入到」三选一：触发事件的会话 / 新建会话 / 指定会话（会话页头入口也能选其它会话）。

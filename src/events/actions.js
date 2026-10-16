@@ -146,8 +146,11 @@ async function runInject(event, rule, ctx) {
   }
   if (!target) return { ok: false, error: 'no target session' };
   const prompt = renderInjection(event, rule.action.prompt);
-  const accepted = ctx.injectPrompt(target, prompt);
-  return accepted ? { ok: true, target, created: Boolean(rule.action.newSession) } : { ok: false, error: 'target busy or missing' };
+  // injectPrompt answers true/false (busy or missing) or the admission result
+  // { ok, code }: a refused admission must show up as a failed run, not ok.
+  const result = await ctx.injectPrompt(target, prompt);
+  if (result === true || (result && result.ok === true)) return { ok: true, target, created: Boolean(rule.action.newSession) };
+  return { ok: false, target, error: (result && result.code) || 'target busy or missing' };
 }
 
 const ACTIONS = Object.freeze({
