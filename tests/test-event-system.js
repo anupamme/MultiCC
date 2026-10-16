@@ -468,6 +468,33 @@ test('engine: no workspace resolvable, or create failure, is a recorded failure 
   assert.equal(boom.engine.recentResults().at(-1).ok, false);
 });
 
+test('engine: a refused admission is a failed run, not ok (hook prompt silently dropped)', async () => {
+  const h = engineHarness({ injectPrompt: async (...a) => ({ ok: false, code: 'task_shell_route_required', args: a }) });
+  h.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p' } });
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle(); await h.settle();
+  const last = h.engine.recentResults().at(-1);
+  assert.equal(last.ok, false);
+  assert.equal(last.error, 'task_shell_route_required');
+});
+
+test('events host: injectPrompt awaits admission with originTrigger and returns its result', async () => {
+  const { createEventsHost } = require('../src/events/host');
+  const { bus } = harness();
+  const admitted = [];
+  const host = createEventsHost({ bus, app: null, persistedSessions: new Map([['s1', { id: 's1', dirId: 'd' }]]), chatSessions: new Map(),
+    saveBestEffort: () => {}, rulesFile: require('path').join(require('os').tmpdir(), `ev-${process.pid}-${Date.now()}.json`), logger: { warn() {} },
+    secretsVault: { reveal: () => null }, notify: () => {}, createChatTask: async () => ({}),
+    admit: async (id, text, opts) => { admitted.push([id, opts]); return { ok: false, code: 'task_shell_route_required' }; } });
+  host.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p' } });
+  host.start();
+  host.hub.emit('task.failed', 's1', { goal: 'g' });
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+  await host.stop();
+  assert.deepEqual(admitted, [['s1', { originTrigger: true }]]);
+  assert.equal(host.engine.recentResults().at(-1).error, 'task_shell_route_required');
+});
+
 test('engine: the new session finishing does not spawn another one (loop latch follows the new id)', async () => {
   const h = newSessionHarness();
   h.persistedSessions.set('task-new-1', { id: 'task-new-1', dirId: 'dir1', triggers: [] });

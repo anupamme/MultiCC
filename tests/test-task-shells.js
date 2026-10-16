@@ -331,6 +331,16 @@ test('a durable scheduled message is admitted to a shell-owned session and bound
     'a live client message without a shell receipt stays rejected');
 });
 
+test('a hook/trigger injection is admitted to a shell-owned session and bound to its task', async t => {
+  const f = fixture(t), first = await f.runtime.send(f.a.id, input('work'));
+  const triggerOpts = { originTrigger: true };
+  assert.equal(f.runtime.guardAdmission(first.sessionId, '钩子注入的指令', triggerOpts), null,
+    'a hook prompt must not be dropped with task_shell_route_required');
+  assert.equal(triggerOpts.taskId, first.taskId);
+  assert.equal(f.runtime.guardAdmission(first.sessionId, 'forged', { originTrigger: 'true' }).code, 'task_shell_route_required',
+    'only the host boolean counts');
+});
+
 test('F02: lost acceptance uses the same downstream idempotency key across restart', async t => {
   const accepted = new Set(), attempts = [];
   let lost = true;
