@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  let scope = null, taskId = null, items = [], query = '', opened = false, stopped = false;
+  let scope = null, taskId = null, sessionId = null, items = [], query = '', opened = false, stopped = false;
   let timer, request, generation = 0, pollEpoch = 0, signature = '', toggle, panel, list, search, status, title;
   const t = key => root.t('taskArtifacts' + key);
   const node = (tag, text, className) => {
@@ -61,6 +61,29 @@
       status.textContent = t('Copied');
     } catch (_) { status.textContent = t('CopyFailed'); }
   }
+  const updating = new Set();
+  async function updateRetention(item, field) {
+    if (updating.has(item.url)) return;
+    const current = generation, owner = taskId, source = sessionId;
+    updating.add(item.url); renderList();
+    try {
+      const registered = Boolean(item.registryId);
+      const body = { [field]: !item[field] };
+      if (!registered) Object.assign(body, { kind: item.kind, title: item.title, url: item.url, taskId: owner, sessionId: source });
+      const response = await fetch(registered ? `/api/docs-registry/${encodeURIComponent(item.registryId)}` : '/api/docs-registry', {
+        method: registered ? 'PATCH' : 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (current !== generation || stopped) return;
+      request?.abort(); request = null; signature = '';
+      await refreshList();
+    } catch (error) {
+      if (current === generation && !stopped) status.textContent = `${t('UpdateFailed')} · ${error.message}`;
+    } finally {
+      updating.delete(item.url);
+      if (current === generation && !stopped) renderList();
+    }
+  }
   function renderList() {
     const visible = items.filter(item => `${item.title} ${item.url}`.toLowerCase().includes(query));
     list.replaceChildren(...visible.map(item => {
@@ -70,9 +93,18 @@
       const meta = node('div', null, 'task-artifacts-meta');
       const time = item.createdAt ? new Date(item.createdAt) : null;
       meta.append(node('span', [t(item.kind === 'page' ? 'Page' : 'File'), time && !Number.isNaN(+time) ? time.toLocaleDateString() : ''].filter(Boolean).join(' · ')));
+      if (item.permanent || item.retained) meta.append(node('span', root.t(item.permanent ? 'artifactKeepForever' : 'artifactKeptRelated'), 'task-artifacts-retained'));
+      if (item.pinned) meta.append(node('span', root.t('airAdminPinned')));
       if (item.expired) meta.append(node('span', t('Expired'), 'task-artifacts-expired'));
       const button = node('button', t('Copy')); button.type = 'button'; button.setAttribute('aria-label', `${t('Copy')} · ${item.title}`); button.onclick = () => copy(item.url);
-      meta.append(button); row.append(link, path, meta); return row;
+      meta.append(button);
+      const actions = node('div', null, 'task-artifacts-retention');
+      for (const [field, label] of [['pinned', item.pinned ? 'airAdminUnpin' : 'airAdminPinned'], ['permanent', item.permanent ? 'artifactKeepForeverOff' : 'artifactKeepForever']]) {
+        const control = node('button', root.t(label)); control.type = 'button'; control.dataset.action = field;
+        control.setAttribute('aria-label', `${root.t(label)} · ${item.title}`); control.setAttribute('aria-pressed', String(item[field] === true));
+        control.disabled = updating.has(item.url); control.onclick = () => updateRetention(item, field); actions.append(control);
+      }
+      row.append(link, path, meta, actions); return row;
     }));
     if (!visible.length) list.append(node('li', t(query ? 'NoMatch' : 'Empty'), 'task-artifacts-empty'));
   }
@@ -93,6 +125,7 @@
         let preferred = false; try { preferred = localStorage.getItem(`task-artifacts:${taskId}`) === 'true'; } catch (_) {}
         setOpen(preferred, false);
       }
+      sessionId = data.sessionId || null;
       title.textContent = data.title || t('NoTask');
       items = (data.items || []).filter(item => typeof item.url === 'string' && /^\/artifacts\/[\w-]+(?:\/[\w./@+-]*)?(?:[?#][^\s\\]*)?$/.test(item.url)
         && !item.url.split(/[?#]/)[0].split('/').some(p => p === '.' || p === '..'));

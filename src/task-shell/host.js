@@ -484,6 +484,7 @@ function createTaskShellHost(deps) {
     listTasks: () => getRuntime().listTasks(),
     taskGraphData: () => getRuntime().taskGraphData(),
     getSnapshot: id => getRuntime().getSnapshot(id),
+    artifactTaskTitle: id => ensureStore().get('task', id)?.title || null,
     artifactTaskId: id => getRuntime().owns(id)?.id || deps.records.get(id)?.taskBoundTaskId || null,
     stateTarget: id => getRuntime().stateTarget(id), stateSources: id => getRuntime().stateSources(id),
     purgeTasks: ids => getRuntime().purgeTasks(ids),

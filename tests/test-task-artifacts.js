@@ -66,3 +66,31 @@ test('task artifact routes follow the shell cursor, read historical tasks and do
   assert.deepEqual((await get(`/api/task-shells/${f.b.id}/artifacts`)).body.items, []);
   assert.deepEqual({ sends: f.sends.length, creations: f.creations.length, view: f.runtime.view(f.a.id) }, before);
 });
+
+test('task artifacts expose registry controls and sort permanent and pinned outputs above newer ones', () => {
+  const result = collectTaskArtifacts(entry([message('/artifacts/unregistered/index.html')]), [
+    row('plain', { id: 'plain-id', taskId: 'tsk_a', createdAt: '2026-10-16' }),
+    row('pinned', { id: 'pin-id', taskId: 'tsk_a', pinned: true, createdAt: '2026-10-14' }),
+    row('kept', { id: 'kept-id', taskId: 'tsk_a', permanent: true, createdAt: '2026-10-13' }),
+    row('input', { id: 'input-id', taskId: 'tsk_a', retained: true, createdAt: '2026-10-12' }),
+  ]);
+  assert.deepEqual(result.items.slice(0, 3).map(i => i.artifactId), ['kept', 'pinned', 'plain']);
+  assert.equal(result.items[0].registryId, 'kept-id');
+  assert.equal(result.items[1].pinned, true);
+  assert.equal(result.items.find(i => i.artifactId === 'input').retained, true);
+  assert.equal(result.items.find(i => i.artifactId === 'unregistered').registryId, null);
+});
+
+test('registry task titles are readable before the shell runtime has started', t => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const { createTaskShellHost } = require('../src/task-shell/host');
+  const { createTaskShellStore } = require('../src/task-shell/store');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-artifact-task-title-'));
+  const file = path.join(dir, 'shell.sqlite');
+  const store = createTaskShellStore(file);
+  store.set('task', 'tsk_saved', { id: 'tsk_saved', title: 'Saved title' }); store.close();
+  const host = createTaskShellHost({ file, records: new Map() });
+  t.after(() => { host.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  assert.equal(host.artifactTaskTitle('tsk_saved'), 'Saved title');
+  assert.equal(host.artifactTaskTitle('tsk_missing'), null);
+});

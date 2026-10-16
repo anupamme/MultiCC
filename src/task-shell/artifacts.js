@@ -9,16 +9,19 @@ function collectTaskArtifacts(entry, registry, exists = () => null) {
   const taskId = entry.task.id, items = new Map();
   const urlOf = ref => `/artifacts/${ref.artifactId}/${ref.relativePath || 'index.html'}`;
   const rows = registry.filter(row => row.kind !== 'service' && typeof row.url === 'string' && row.url.startsWith('/artifacts/'));
-  const metadata = new Map();
+  const metadata = new Map(), retained = new Set();
   for (const row of rows) {
     const ref = extractArtifactReferences(row.url)[0];
-    if (ref) metadata.set(urlOf(ref), row);
+    if (ref) {
+      metadata.set(urlOf(ref), row);
+      if (row.permanent || row.retained) retained.add(ref.artifactId);
+    }
   }
   function add(ref, ts) {
     const url = urlOf(ref), row = metadata.get(url), previous = items.get(url);
     const date = new Date(Number(ts));
     const createdAt = row?.createdAt || (Number(ts) > 0 && !Number.isNaN(+date) ? date.toISOString() : null);
-    const item = { url: row?.url || url, artifactId: ref.artifactId, title: row?.title || ref.relativePath || ref.artifactId,
+    const item = { registryId: row?.id || null, pinned: row?.pinned === true, permanent: row?.permanent === true, retained: retained.has(ref.artifactId), url: row?.url || url, artifactId: ref.artifactId, title: row?.title || ref.relativePath || ref.artifactId,
       kind: row?.kind || (/\.html?$/i.test(url) ? 'page' : 'file'), createdAt,
       expired: exists(ref.artifactId, ref.relativePath || 'index.html') === false };
     if (!previous || String(createdAt || '') > String(previous.createdAt || '')) items.set(url, item);
@@ -37,7 +40,8 @@ function collectTaskArtifacts(entry, registry, exists = () => null) {
     if (row.taskId !== taskId && !legacyOwner) continue;
     for (const ref of extractArtifactReferences(row.url)) add(ref);
   }
-  return { taskId, title: entry.task.title, items: [...items.values()].sort((a, b) =>
+  return { taskId, sessionId: entry.sessionId, title: entry.task.title, items: [...items.values()].sort((a, b) =>
+    (b.permanent ? 2 : b.pinned ? 1 : 0) - (a.permanent ? 2 : a.pinned ? 1 : 0) ||
     String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || a.url.localeCompare(b.url)) };
 }
 

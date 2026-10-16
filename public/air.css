@@ -2457,3 +2457,9 @@ dialog { border-color: var(--hairline); border-radius: 22px; box-shadow: var(--s
 /* The page's global `input { width: 100% }` (air.css input/select/textarea rule)
    would stretch a bare checkbox into a full-width pill; checkboxes in these two
    rows are a fixed 15px box that never grows. */
+
+.air-docs-filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 17px 0}
+.air-docs-filters .air-docs-scope{margin:0;flex-shrink:0}
+.air-docs-filters input{flex:1;min-width:180px;max-width:480px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
+.air-docs-filters small{color:var(--muted)}
+@media(max-width:420px){.air-docs-scope button{padding:0 10px}.air-docs-filters input{width:100%;max-width:none}}

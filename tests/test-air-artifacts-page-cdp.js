@@ -42,6 +42,9 @@ test('the directory artifacts entry sits with the memo and opens its own page', 
     { id: 'art-svc', kind: 'service', title: '预览服务', url: '/artifacts/svc/', dir: '/projects/multicc' },
   ];
   // 旧版本的服务端：看见 ?dir= 也照旧把整张表发回来，而且行上没有 dir。
+  Object.assign(artifacts[0], { taskId: 'tsk_a', taskTitle: '巡检任务', note: 'Release QA' });
+  Object.assign(artifacts[1], { taskId: 'tsk_b', taskTitle: '报表任务' });
+  Object.assign(artifacts[2], { taskId: 'tsk_a', taskTitle: '巡检任务' });
   const unscoped = [
     { id: 'old-1', kind: 'page', title: '别处的产物', url: '/artifacts/other.html', createdAt: '2026-09-26T03:00:00.000Z' },
   ];
@@ -49,7 +52,7 @@ test('the directory artifacts entry sits with the memo and opens its own page', 
     const dir = url.searchParams.get('dir');
     if (dir === '/projects/multicc') return json(artifacts);
     if (dir === '/projects/legacy') return json(unscoped);
-    return json([]);
+    return json(dir ? [] : [...artifacts, ...unscoped]);
   };
   routes['PATCH /api/docs-registry/art-web'] = ({ body }) => { Object.assign(artifacts[1], JSON.parse(body)); return json(artifacts[1]); };
 
@@ -65,12 +68,13 @@ test('the directory artifacts entry sits with the memo and opens its own page', 
       const mode = document.getElementById('directory-mode');
       const box = document.querySelector('.directory-toolbar').getBoundingClientRect();
       const m = memo.getBoundingClientRect(), a = art.getBoundingClientRect(), s = mode.getBoundingClientRect();
+      const end = (document.getElementById('directory-schedules') || art).getBoundingClientRect();
       return { paired: memo.nextElementSibling === art, gap: Math.round(a.left - m.right),
-        artRight: Math.round(box.right - a.right), memoLeft: Math.round(m.left - box.left),
+        groupRight: Math.round(box.right - end.right), memoLeft: Math.round(m.left - box.left),
         modeLeft: Math.round(s.left - box.left), barWidth: Math.round(box.width) };
     })()`);
     assert.equal(bar.paired, true, `产物入口要紧挨着备忘：${JSON.stringify(bar)}`);
-    assert.ok(bar.artRight <= 2, `产物入口贴住工具条右边界：${JSON.stringify(bar)}`);
+    assert.ok(bar.groupRight <= 2, `备忘、产物、定时任务这一组贴住工具条右边界：${JSON.stringify(bar)}`);
     assert.ok(bar.gap >= 0 && bar.gap <= 12, `两颗之间只有一个 gap：${JSON.stringify(bar)}`);
     assert.ok(bar.memoLeft > bar.barWidth / 2, `备忘被推回右半边，不再居中悬着：${JSON.stringify(bar)}`);
     assert.ok(bar.modeLeft < bar.barWidth / 2, `视图切换还留在左边：${JSON.stringify(bar)}`);
@@ -79,6 +83,39 @@ test('the directory artifacts entry sits with the memo and opens its own page', 
     assert.equal(await page.evaluate(`(()=>{window.open=u=>{window.artOpened=u};document.getElementById('directory-artifacts').click();return window.artOpened})()`),
       '/artifacts.html?dirId=d1');
     await page.screenshot('directory-artifacts-entry.png');
+
+    // The full services/documents page searches before grouping, keeps source
+    // order within groups and leaves unassigned legacy entries discoverable.
+    await page.navigate('/air?view=docs');
+    assert.ok(await page.waitFor(`document.querySelectorAll('#air-doc-list .air-doc-card').length === 4`));
+    await page.evaluate(`document.querySelector('#air-docs-scope [data-scope="task"]').click()`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.air-doc-group-head strong')].map(n => n.textContent)`),
+      ['巡检任务 (2)', '报表任务 (1)', '未归属任务 (1)']);
+    const searchDocs = async value => page.evaluate(`(()=>{const input=document.getElementById('air-doc-search');input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input'))})()`);
+    await searchDocs('巡检任务');
+    assert.equal(await page.evaluate(`document.querySelectorAll('#air-doc-list .air-doc-card').length`), 2);
+    assert.equal(await page.evaluate(`document.querySelectorAll('.air-doc-group').length`), 1);
+    await page.screenshot('docs-task-search.png');
+    await searchDocs('  RELEASE qa  ');
+    assert.equal(await page.evaluate(`document.querySelectorAll('#air-doc-list .air-doc-card').length`), 1);
+    await searchDocs('/artifacts/report');
+    assert.equal(await page.evaluate(`document.querySelector('.air-doc-title a').textContent`), '巡检报告');
+    await searchDocs('no-such-document');
+    assert.equal(await page.evaluate(`document.getElementById('air-doc-list').textContent`), '没有匹配的服务或文档');
+    await page.evaluate(`MultiCCAirAdmin.refresh({api:()=>Promise.reject(new Error('offline'))})`);
+    assert.ok(await page.waitFor(`document.getElementById('air-doc-list').textContent.includes('offline')`));
+    assert.equal(await page.evaluate(`document.getElementById('air-doc-search').value`), 'no-such-document');
+    await page.navigate('/air?view=docs');
+    assert.ok(await page.waitFor(`document.querySelectorAll('.air-doc-group').length === 3`), 'task grouping survives reload');
+    await searchDocs('');
+    for (const width of [390, 320]) {
+      await page.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
+      assert.equal(await page.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true);
+      const box = await page.evaluate(`(()=>{const b=document.getElementById('air-doc-search').getBoundingClientRect();return {left:b.left,right:b.right}})()`);
+      assert.ok(box.left >= 0 && box.right <= width);
+    }
+    await page.screenshot('docs-task-groups-mobile.png');
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 1366, height: 900, deviceScaleFactor: 1, mobile: false });
 
     // ── 那一页自己 ────────────────────────────────────────────────────────────
     await page.navigate('/artifacts.html?dirId=d1');
