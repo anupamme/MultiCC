@@ -332,3 +332,56 @@ test('web isLoopbackHost recognizes the loopback family only', () => {
     assert.equal(isLoopbackHost(h), false, h);
   }
 });
+
+test('related entries survive eviction and expose inherited retention independently from their own flags', () => {
+  reset();
+  const parent = reg.register({ title: 'Final', url: '/artifacts/final-keep/index.html', permanent: true, relatedArtifactIds: ['input-keep'] }).entry;
+  const input = reg.register({ title: 'Input', url: '/artifacts/input-keep/data.csv', pinned: false }).entry;
+  assert.ok(reg.listPermanentArtifactIds().includes('input-keep'));
+  const app = fakeApp(); reg.mount(app, { artifactExists: () => true });
+  const get = app.handlers.find(r => r.method === 'GET' && r.p === '/api/docs-registry').h;
+  const patch = app.handlers.find(r => r.method === 'PATCH').h;
+  let view = invoke(get).body.find(row => row.id === input.id);
+  assert.equal(view.retained, true); assert.equal(view.permanent, false); assert.equal(view.pinned, false);
+  const filler = Array.from({ length: 498 }, (_, i) => ({ id: 'fill-' + i, title: 'Filler', kind: 'page', url: '/filler/' + i }));
+  reg._resetForTests([input, parent, ...filler]);
+  assert.equal(reg.register({ title: 'new', url: '/new' }).created, true);
+  assert.ok(reg.list().some(row => row.id === input.id), 'the intermediate row cannot be evicted');
+  invoke(patch, { params: { id: parent.id }, body: { permanent: false } });
+  view = invoke(get).body.find(row => row.id === input.id);
+  assert.equal(view.retained, false);
+  reset();
+});
+
+test('task views resolve saved task titles and never infer ownership from a reused session cursor', () => {
+  reset();
+  const app = fakeApp(); reg.mount(app, {
+    artifactExists: () => true,
+    resolveTaskId: () => 'tsk_wrong-current-task',
+    resolveTaskTitle: id => id === 'tsk_original' ? 'Original task' : null,
+  });
+  reg.register({ title: 'report', url: '/artifacts/task-report/index.html', taskId: 'tsk_original', sessionId: 'reused' });
+  reg.register({ title: 'legacy', url: '/artifacts/legacy-report/index.html', sessionId: 'reused' });
+  reg.register({ title: 'dedicated', url: '/artifacts/dedicated-report/index.html', sessionId: 'task-' + 'a'.repeat(32) });
+  const views = invoke(app.handlers.find(r => r.method === 'GET' && r.p === '/api/docs-registry').h).body;
+  assert.equal(views.find(r => r.title === 'report').taskTitle, 'Original task');
+  assert.equal(views.find(r => r.title === 'legacy').taskId, null);
+  assert.equal(views.find(r => r.title === 'dedicated').taskId, 'tsk_' + 'a'.repeat(32));
+  reset();
+});
+
+test('an incomplete dependency scan pauses cleanup but keeps list and unkeep actions usable', () => {
+  reset();
+  const dir = path.join(tmp, 'artifacts', 'oversized-graph'); fs.mkdirSync(dir, { recursive: true });
+  const fd = fs.openSync(path.join(dir, 'large.js'), 'w'); fs.ftruncateSync(fd, 65 * 1024 * 1024); fs.closeSync(fd);
+  try {
+    const row = reg.register({ title: 'large', url: '/artifacts/oversized-graph/index.html', permanent: true }).entry;
+    assert.throws(() => reg.listPermanentArtifactIds(), /byte limit/);
+    assert.equal(reg.list()[0].permanent, true);
+    const app = fakeApp(); reg.mount(app, { artifactExists: () => true });
+    assert.equal(invoke(app.handlers.find(r => r.method === 'GET' && r.p === '/api/docs-registry').h).body.length, 1);
+    const result = invoke(app.handlers.find(r => r.method === 'PATCH').h, { params: { id: row.id }, body: { permanent: false } });
+    assert.equal(result.body.permanent, false);
+    assert.deepEqual(reg.listPermanentArtifactIds(), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); reset(); }
+});

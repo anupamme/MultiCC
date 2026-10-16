@@ -391,8 +391,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +10 键（hookInject*/hookNew*/hookTarget*/hookSessionSearch）：触发器注入目标可选「指定会话 / 新建会话」并可搜索，实测 9158/580724。
     // +10 键（tokenRate*）：聊天页输入框下方的实时 token 速度胶囊（chat-token-rate.js），实测 9178/581887。
     // +15 键：后台子任务类型、父任务与运行标识，生成物实测 9208/583208。
-    maxLines: 9208,
-    maxBytes: 583208,
+    // +7 keys: task grouping, document search and artifact retention controls.
+    maxLines: 9222,
+    maxBytes: 583919,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

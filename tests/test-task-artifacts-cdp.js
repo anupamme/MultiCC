@@ -7,20 +7,28 @@ const { collectTaskArtifacts } = require('../src/task-shell/artifacts');
 test('artifact sidebar: real page, scoped links, dedupe, search, copy, persistence, refresh failure and mobile', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');
   const routes = {}, screenshots = [], errors = [];
-  let fail = false;
+  let fail = false, failPatch = false;
   const entry = { ok: true, task: { id: 'tsk_a', title: '完善 MultiCC 任务会话' }, sessionId: 'task-a', ownerShellId: 'shell-a', readOnly: false,
     execution: { busy: false, status: 'idle' }, messages: [
       { role: 'user', taskId: 'tsk_a', content: '请整理本次交付的页面与测试结果。' },
       { role: 'assistant', taskId: 'tsk_a', content: '页面与测试结果已整理完成。\n\n[设计预览](/artifacts/preview/index.html)\n\n[测试结果](/artifacts/results/results.json)\n\n[旧版方案](/artifacts/old/index.html)', ts: Date.now() },
     ] };
   const registry = [
-    { kind: 'page', title: 'MultiCC Air · 任务产物边栏', url: '/artifacts/preview/index.html', taskId: 'tsk_a' },
+    { id: 'preview-id', kind: 'page', title: 'MultiCC Air · 任务产物边栏', url: '/artifacts/preview/index.html', taskId: 'tsk_a' },
     { kind: 'file', title: '浏览器验收结果.json', url: '/artifacts/results/results.json', taskId: 'tsk_a' },
     { kind: 'page', title: '旧版设计方案', url: '/artifacts/old/index.html', taskId: 'tsk_a' },
     { kind: 'page', title: 'OTHER TASK SECRET', url: '/artifacts/other/index.html', taskId: 'tsk_b' },
   ];
   const json = (body, status = 200) => ({ status, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const readArtifact = () => fail ? json({ error: 'offline' }, 503) : json(collectTaskArtifacts(entry, registry, id => id !== 'old'));
+  routes['PATCH /api/docs-registry/preview-id'] = ({ body }) => {
+    if (failPatch) return json({ error: 'failed' }, 503);
+    Object.assign(registry[0], JSON.parse(body)); return json(registry[0]);
+  };
+  routes['POST /api/docs-registry'] = ({ body }) => {
+    const update = JSON.parse(body), row = registry.find(item => item.url === update.url);
+    Object.assign(row, update, { id: 'registered-id' }); return json(row, 201);
+  };
   const publicDir = path.join(__dirname, '..', 'public');
   for (const file of fs.readdirSync(publicDir).filter(f => /\.(js|css|html)$/.test(f))) {
     routes['/' + file] = { body: fs.readFileSync(path.join(publicDir, file)), headers: { 'content-type': file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : 'text/html' } };
@@ -65,12 +73,33 @@ test('artifact sidebar: real page, scoped links, dedupe, search, copy, persisten
     const links = await page.evaluate(`Array.from(document.querySelectorAll('.task-artifacts-link'),a=>({href:a.getAttribute('href'),target:a.target,rel:a.rel}))`);
     assert.equal(links.length, 3); assert.ok(links.every(a => a.target === '_blank' && a.rel.includes('noopener')));
     assert.equal(await page.evaluate(`fetch('/artifacts/preview/index.html').then(r=>r.status)`), 200);
+    const previewRow = `Array.from(document.querySelectorAll('#task-artifacts-list li')).find(row => row.querySelector('a')?.href.includes('/preview/'))`;
+    await page.evaluate(`${previewRow}.querySelector('[data-action="pinned"]').click()`);
+    assert.ok(await page.waitFor(`${previewRow}.querySelector('[data-action="pinned"]').getAttribute('aria-pressed')==='true'`));
+    assert.equal(registry[0].pinned, true); assert.equal(registry[0].permanent, undefined);
+    await page.evaluate(`${previewRow}.querySelector('[data-action="permanent"]').click()`);
+    assert.ok(await page.waitFor(`${previewRow}.querySelector('[data-action="permanent"]').getAttribute('aria-pressed')==='true'`));
+    assert.equal(registry[0].permanent, true); assert.equal(registry[0].pinned, true);
+    failPatch = true;
+    await page.evaluate(`${previewRow}.querySelector('[data-action="permanent"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.task-artifacts-status').textContent.includes('HTTP 503')`));
+    assert.equal(registry[0].permanent, true, 'failed updates never change the flag');
+    failPatch = false;
+    await page.evaluate(`${previewRow}.querySelector('[data-action="pinned"]').click()`);
+    assert.ok(await page.waitFor(`${previewRow}.querySelector('[data-action="pinned"]').getAttribute('aria-pressed')==='false'`));
+    assert.equal(registry[0].permanent, true);
     screenshots.push(await page.screenshot('artifact-sidebar-desktop'));
     await page.evaluate(`document.querySelector('#task-artifacts-panel input').value='json';document.querySelector('#task-artifacts-panel input').dispatchEvent(new Event('input'))`);
     assert.equal(await page.evaluate(`document.querySelectorAll('.task-artifacts-link').length`), 1);
     await page.evaluate(`navigator.clipboard.writeText=async text=>window.__copied=text`);
     await click('.task-artifacts-meta button');
     assert.ok((await page.evaluate('window.__copied')).endsWith('/artifacts/results/results.json'));
+    await click('#task-artifacts-list [data-action="pinned"]');
+    assert.ok(await page.waitFor(`document.querySelector('#task-artifacts-list [data-action="pinned"]').getAttribute('aria-pressed')==='true'`));
+    assert.equal(registry[1].id, 'registered-id', 'unregistered transcript outputs can be registered from chat');
+    assert.equal(registry[1].taskId, 'tsk_a');
+    assert.equal(registry[1].sessionId, 'task-a');
+
     await click('#task-artifacts-close');
     assert.equal(await page.evaluate(`document.getElementById('task-artifacts-panel').hidden`), true);
     assert.equal(await page.evaluate(`document.getElementById('task-artifacts-toggle').getAttribute('aria-expanded')`), 'false');

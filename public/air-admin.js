@@ -714,9 +714,9 @@
   // 选择存在本机，写法同 air.js 的 air:task-sort（读取失败一律退回按时间）。
   const DOCS_SCOPE_KEY = 'air:docs-scope';
   let docsScope = 'time';
-  try { if (localStorage.getItem(DOCS_SCOPE_KEY) === 'dir') docsScope = 'dir'; } catch (_) {}
+  try { const saved = localStorage.getItem(DOCS_SCOPE_KEY); if (['dir', 'task'].includes(saved)) docsScope = saved; } catch (_) {}
   // 最近一次拉到的条目：两个视图都从这里画，切换视图时才有东西可画。
-  let docsEntries = [];
+  let docsEntries = [], docsQuery = '';
 
   function isLoopback(hostname) {
     return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(String(hostname || '').toLowerCase());
@@ -778,10 +778,11 @@
     link.rel = 'noopener noreferrer';
     titleRow.append(link);
     if (entry.permanent) titleRow.append(make('span', `🔒 ${t('artifactKeepForever')}`, 'air-doc-tag permanent'));
+    if (!entry.permanent && entry.retained) titleRow.append(make('span', t('artifactKeptRelated'), 'air-doc-tag permanent'));
     if (entry.pinned) titleRow.append(make('span', t('airAdminPinned'), 'air-doc-tag pin'));
     if (entry.expired) titleRow.append(make('span', t('airAdminExpired'), 'air-doc-tag expired'));
     const status = entry.kind === 'service' ? `${entry.status === 'up' ? t('airAdminStatusUp') : entry.status === 'starting' ? t('airAdminStatusStarting') : entry.status === 'down' ? t('airAdminStatusDown') : t('airAdminStatusUnknown')} · ` : '';
-    copy.append(titleRow, make('small', `${status}${entry.url || ''}`), make('small', [entry.source, entry.sessionId, entry.createdAt ? new Date(entry.createdAt).toLocaleString(getLocale()) : ''].filter(Boolean).join(' · ')));
+    copy.append(titleRow, make('small', `${status}${entry.url || ''}`), make('small', [entry.taskTitle || entry.taskId, entry.source, entry.sessionId, entry.createdAt ? new Date(entry.createdAt).toLocaleString(getLocale()) : ''].filter(Boolean).join(' · ')));
     const actions = make('div', null, 'air-doc-actions');
     if (entry.kind === 'service') {
       const log = make('a', t('airAdminLog'));
@@ -807,7 +808,7 @@
   function renderDocGroup(group) {
     const section = make('section', null, 'air-doc-group');
     const head = make('div', null, 'air-doc-group-head');
-    head.append(make('strong', group.name));
+    head.append(make('strong', `${group.name} (${group.entries.length})`));
     // 绝对路径是次要信息：目录名重名时（同名项目放在不同父目录下）靠它分辨。
     if (group.path) head.append(make('small', group.path));
     section.append(head, ...group.entries.map(renderDocEntry));
@@ -818,13 +819,15 @@
   // 顺序。所以永久保留那条所在的组天然在最前面（置顶同理），而不是按目录名的字母序
   // ——字母序会把「置顶的那条所在的目录」排到一个跟它毫无关系的位置去。
   // dir 为 null 的条目（旧登记、没有工作目录归属）单独成一组，永远排最后。
-  function docsDirGroups() {
+  function docsGroups(rows) {
     const groups = new Map();
-    for (const entry of docsEntries) {
-      const key = entry.dir || '';
+    for (const entry of rows) {
+      const key = (docsScope === 'task' ? entry.taskId : entry.dir) || '';
       let group = groups.get(key);
       if (!group) {
-        group = { key, name: entry.dir ? (entry.dirName || entry.dir) : t('docsNoDir'), path: entry.dir || '', entries: [] };
+        group = docsScope === 'task'
+          ? { key, name: key ? (entry.taskTitle || key) : t('docsNoTask'), path: key, entries: [] }
+          : { key, name: key ? (entry.dirName || key) : t('docsNoDir'), path: key, entries: [] };
         groups.set(key, group);
       }
       group.entries.push(entry);
@@ -839,12 +842,19 @@
   function paintDocs() {
     const list = el('air-doc-list');
     if (!list) return;
-    list.replaceChildren(...(docsScope === 'dir' ? docsDirGroups().map(renderDocGroup) : docsEntries.map(renderDocEntry)));
-    if (!docsEntries.length) list.append(make('p', t('airAdminNoDocs'), 'admin-empty'));
+    const terms = docsQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const rows = docsEntries.filter(entry => {
+      const text = [entry.title, entry.url, entry.note, entry.taskTitle, entry.taskId, entry.dir, entry.dirName, entry.sessionId].filter(Boolean).join(' ').toLocaleLowerCase();
+      return terms.every(term => text.includes(term));
+    });
+    list.replaceChildren(...(docsScope === 'time' ? rows.map(renderDocEntry) : docsGroups(rows).map(renderDocGroup)));
+    if (!rows.length) list.append(make('p', t(terms.length ? 'docsNoMatch' : 'airAdminNoDocs'), 'admin-empty'));
+    const count = el('air-doc-matches');
+    if (count) { count.textContent = t('docsMatches', { shown: rows.length, total: docsEntries.length }); count.hidden = !terms.length; }
   }
 
   function setDocsScope(scope) {
-    const next = scope === 'dir' ? 'dir' : 'time';
+    const next = ['dir', 'task'].includes(scope) ? scope : 'time';
     if (next === docsScope) return;
     docsScope = next;
     try { localStorage.setItem(DOCS_SCOPE_KEY, next); } catch (_) {}
@@ -867,7 +877,7 @@
     wrap.setAttribute('aria-label', t('docsScopeLabel'));
     // 文案与 key 同时写：data-i18n 让 applyI18n() 在切语言时能重取，t() 让这一屏
     // 一画出来就是对的（面板不经过整页重绘）。
-    for (const [scope, key] of [['time', 'docsScopeTime'], ['dir', 'docsScopeDir']]) {
+    for (const [scope, key] of [['time', 'docsScopeTime'], ['dir', 'docsScopeDir'], ['task', 'docsScopeTask']]) {
       const button = make('button', t(key));
       button.type = 'button';
       button.setAttribute('role', 'tab');
@@ -910,7 +920,13 @@
     top.lastChild.id = 'air-doc-summary';
     const list = make('div', null, 'air-doc-list');
     list.id = 'air-doc-list';
-    wrap.append(top, docsScopeSwitch(), list);
+    const filters = make('div', null, 'air-docs-filters');
+    const search = make('input'); search.type = 'search'; search.id = 'air-doc-search'; search.value = docsQuery;
+    search.placeholder = t('docsSearch'); search.setAttribute('aria-label', t('docsSearch')); search.setAttribute('data-i18n-placeholder', 'docsSearch');
+    search.oninput = () => { docsQuery = search.value; paintDocs(); };
+    const matches = make('small'); matches.id = 'air-doc-matches'; matches.setAttribute('role', 'status');
+    filters.append(docsScopeSwitch(), search, matches);
+    wrap.append(top, filters, list);
     el('admin-content').replaceChildren(wrap);
     void loadDocs();
   }

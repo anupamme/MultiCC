@@ -25,3 +25,8 @@
 .task-artifacts-copy-buffer{position:absolute;left:-9999px}
 @media(min-width:760px){body.task-artifacts-open{padding-right:310px;box-sizing:border-box}.task-artifacts-chat.task-artifacts-open #header{max-width:100%}}
 @media(max-width:759px){#task-artifacts-panel{width:min(310px,calc(100% - 18px));box-shadow:-12px 0 70px #182c5040;padding:14px;padding-bottom:max(14px,env(safe-area-inset-bottom))}#task-artifacts-panel button{min-height:40px}.task-artifacts-toggle{min-height:40px}}
+
+.task-artifacts-retention{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;font-size:12px}
+.task-artifacts-retained{color:#3c7565}
+#task-artifacts-panel button[aria-pressed="true"]{background:#edf4ff;border-color:#438bea;color:#245ca6}
+#task-artifacts-panel button:disabled{opacity:.6;cursor:wait}

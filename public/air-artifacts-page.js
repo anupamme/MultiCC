@@ -130,6 +130,7 @@
     copy.append(link, node('small', meta));
     const tags = node('div', null, 'directory-artifact-tags');
     if (entry.permanent) tags.append(node('span', `🔒 ${t('artifactKeepForever')}`, 'air-doc-tag permanent'));
+    if (!entry.permanent && entry.retained) tags.append(node('span', t('artifactKeptRelated'), 'air-doc-tag permanent'));
     if (entry.pinned) tags.append(node('span', t('airAdminPinned'), 'air-doc-tag pin'));
     if (entry.expired) tags.append(node('span', t('taskArtifactsExpired'), 'air-doc-tag expired'));
     const actions = node('div', null, 'directory-artifact-actions');
@@ -144,7 +145,7 @@
   }
 
   function signature() {
-    return items.map(entry => [entry.id, entry.title, entry.permanent, entry.pinned, entry.expired].join('\u0000')).join('\u0001');
+    return items.map(entry => [entry.id, entry.title, entry.permanent, entry.retained, entry.pinned, entry.expired].join('\u0000')).join('\u0001');
   }
 
   function paint() {

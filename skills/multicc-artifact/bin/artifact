@@ -33,6 +33,7 @@ function usage() {
 
 内容来源:
   --from FILE   从文件读取内容；省略则从 stdin 读取（用管道传入）。
+  --related IDS 关联的中间产物 ID（逗号分隔）；永久保留时一起保护。
 
 要点:
   • page  发布网页(.html)，浏览器里直接渲染；默认文件名 index.html。
@@ -104,10 +105,11 @@ function newId() { return crypto.randomBytes(8).toString('hex'); }
 // Best-effort registration in the docs/web-services management table so the
 // /manage「服务与文档」panel can find everything we publish. Fire-and-forget:
 // a registry hiccup must never break publishing.
-function registerInDocsRegistry(kind, rel, title) {
+function registerInDocsRegistry(kind, rel, title, relatedArtifactIds) {
   try {
     const body = JSON.stringify({
       kind,
+      ...(relatedArtifactIds ? { relatedArtifactIds } : {}),
       title: String(title || '').slice(0, 200) || rel,
       url: rel,
       sessionId: process.env.MULTICC_SESSION_ID || '',
@@ -133,9 +135,9 @@ function registerInDocsRegistry(kind, rel, title) {
   } catch (_) {}
 }
 
-function emit(kind, id, name, dir, dest, quiet, title) {
+function emit(kind, id, name, dir, dest, quiet, title, relatedArtifactIds) {
   const rel = `/artifacts/${id}/${name}`;
-  registerInDocsRegistry(kind, rel, title || name);
+  registerInDocsRegistry(kind, rel, title || name, relatedArtifactIds);
   if (quiet) { process.stdout.write(rel + '\n'); return; }
   const isImg = IMG_RE.test(name);
   const md = kind === 'page'
@@ -187,6 +189,9 @@ function main() {
   const f = parseFlags(argv.slice(1));
   if (f.help) { usage(); return; }
 
+  const related = f.related === undefined ? undefined : String(f.related).split(',').map(id => id.trim()).filter(Boolean);
+  if (related?.some(id => !/^[A-Za-z0-9_-]{1,128}$/.test(id))) die('--related 必须是逗号分隔的产物 ID');
+
   const id = safeName(f.id, '') || newId();
   const dir = path.join(ARTIFACTS_DIR, id);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -206,7 +211,7 @@ function main() {
 
   const dest = path.join(dir, name);
   fs.writeFileSync(dest, buf, { mode: 0o600 });
-  emit(cmd, id, name, dir, dest, f.quiet, f.title);
+  emit(cmd, id, name, dir, dest, f.quiet, f.title, related);
 }
 
 main();

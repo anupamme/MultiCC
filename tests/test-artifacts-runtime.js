@@ -68,3 +68,76 @@ test('server resolves pins from the docs registry for every artifact cleanup tic
   assert.match(source, /cleanupArtifacts\(\);/);
   assert.match(source, /setInterval\(\(\) => cleanupArtifacts\(\), 6 \* 3600 \* 1000\)/);
 });
+
+test('permanent artifacts keep transitive, relative and declared intermediates without retaining unrelated tasks', t => {
+  const { permanentArtifactIds } = require('../src/artifact-retention');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-related-artifacts-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const now = Date.now(), old = now - 8 * DAY_MS;
+  for (const id of ['final', 'style', 'image', 'source', 'independent', 'unrelated']) artifactDir(root, id, old);
+  fs.writeFileSync(path.join(root, 'final', 'index.html'), '<link href="/artifacts/style/main.css"><a href="https://other.test/artifacts/unrelated/index.html">external</a>');
+  fs.writeFileSync(path.join(root, 'style', 'main.css'), 'body { background:url(../image/图片.png) } /* /artifacts/final/index.html */');
+  const rows = [
+    { url: '/artifacts/final/index.html', permanent: true, relatedArtifactIds: ['source', '../unrelated'] },
+    { url: '/artifacts/independent/index.html', permanent: true },
+    { url: '/artifacts/unrelated/index.html', taskId: 'same-task', pinned: true },
+  ];
+  const kept = permanentArtifactIds(rows, [root]);
+  assert.deepEqual([...kept].sort(), ['final', 'image', 'independent', 'source', 'style']);
+  // Adding CSS updated its directory mtime; age it again before real cleanup.
+  for (const id of fs.readdirSync(root)) fs.utimesSync(path.join(root, id), new Date(old), new Date(old));
+  assert.equal(createCleanup({ artifactsDir: root, now: () => now, log() {} })(7 * DAY_MS, kept), 1);
+  for (const id of kept) assert.ok(fs.existsSync(path.join(root, id)), id);
+  rows[0].permanent = false;
+  assert.deepEqual([...permanentArtifactIds(rows, [root])], ['independent'], 'removing a parent promise leaves independent promises intact');
+});
+
+test('dependency graph observes later edits, legacy roots and cycles, and never reads through symlinks', t => {
+  const { permanentArtifactIds } = require('../src/artifact-retention');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-artifact-graph-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const primary = path.join(root, 'primary'), legacy = path.join(root, 'legacy');
+  artifactDir(primary, 'final', 1); artifactDir(legacy, 'old', 1);
+  const source = path.join(primary, 'final', 'index.html');
+  const rows = [{ url: '/artifacts/final/index.html', permanent: true }];
+  assert.deepEqual([...permanentArtifactIds(rows, [primary, legacy])], ['final']);
+  fs.writeFileSync(source, '<iframe src="/artifacts/old/index.html"></iframe>');
+  fs.writeFileSync(path.join(legacy, 'old', 'index.html'), '<a href="/artifacts/final/index.html">cycle</a>');
+  const outside = path.join(root, 'private.html');
+  fs.writeFileSync(outside, '/artifacts/private/index.html');
+  fs.symlinkSync(outside, path.join(primary, 'final', 'secret.html'));
+  assert.deepEqual([...permanentArtifactIds(rows, [primary, legacy])].sort(), ['final', 'old']);
+});
+
+test('a graph that cannot be completely scanned fails closed instead of returning a partial keep-list', t => {
+  const { permanentArtifactIds } = require('../src/artifact-retention');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-artifact-budget-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  artifactDir(root, 'final', 1);
+  const fd = fs.openSync(path.join(root, 'final', 'large.js'), 'w');
+  fs.ftruncateSync(fd, 65 * 1024 * 1024); fs.closeSync(fd);
+  assert.throws(() => permanentArtifactIds([{ url: '/artifacts/final/index.html', permanent: true }], [root]), /byte limit/);
+});
+
+test('artifact publisher records explicit binary-source associations without turning on permanence', async t => {
+  const http = require('node:http');
+  const execFile = require('node:util').promisify(require('node:child_process').execFile);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-artifact-publish-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', data => { body += data; });
+    req.on('end', () => { requests.push(JSON.parse(body)); res.writeHead(201); res.end('{}'); });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const input = path.join(root, 'final.mp4'); fs.writeFileSync(input, 'fixture');
+  const command = path.join(__dirname, '../skills/multicc-artifact/bin/artifact');
+  await execFile(process.execPath, [command, 'file', '--from', input, '--related', 'source,audio', '--quiet'], {
+    cwd: root, env: { ...process.env, MULTICC_ARTIFACTS_DIR: path.join(root, 'artifacts'), MULTICC_BASE_URL: `http://127.0.0.1:${server.address().port}` },
+  });
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].relatedArtifactIds, ['source', 'audio']);
+  assert.equal(requests[0].permanent, undefined);
+  assert.match(requests[0].url, /^\/artifacts\/[^/]+\/final.mp4$/);
+});
