@@ -638,7 +638,7 @@ func findElement(_ root: AXUIElement, seconds: Double = 3, _ match: (AXUIElement
 
 func unlockScreen(_ req: [String: Any]) -> [String: Any] {
   guard screenLocked() else { return ["ok": false, "error": "the screen is not locked"] }
-  if control.isHalted {
+  if control.isHalted && !control.clearIdleHalt() {
     return refused("user-stopped", "the user pressed Esc to stop computer use", retrySafe: false)
   }
   guard automaticUnlockAllowed() else {
@@ -1141,6 +1141,9 @@ final class Control {
 
   // Esc only counts while we are driving the machine (or just were), so a user
   // pressing Esc in their own work an hour later is not a stop signal.
+  // Esc / the cancel button is a ONE-SHOT cancel: it aborts the operation in
+  // flight and nothing more. It must not latch — a cancel pressed once should
+  // never block every later dispatch until someone runs resume.
   func userEsc() {
     lock.lock(); defer { lock.unlock() }
     if active > 0 || Date().timeIntervalSince(lastMutationAt) < 20 {
@@ -1159,10 +1162,19 @@ final class Control {
     halted = true; haltedAt = Date()
     stopNoticeUntil = Date().addingTimeInterval(Control.stopNoticeSeconds)
   }
-  // The stop is announced and then the bar leaves, even though the session may
-  // still be holding its lease: nothing happens until someone resumes, so
-  // leaving the notice up for the rest of the two-minute lease just reads as
-  // stuck. Callers pass a clock so the window is testable.
+  // A halt with no operation in flight is the residue of a cancel that already
+  // did its job. Clear it and report whether anything was cleared, so callers
+  // can proceed instead of refusing forever.
+  func clearIdleHalt() -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    guard halted, active == 0 else { return false }
+    halted = false; stopNoticeUntil = Date.distantPast
+    log("halt cleared: the cancelled operation already ended (one-shot cancel)")
+    return true
+  }
+  // The stop is announced and then the bar leaves. The halt itself is a
+  // one-shot marker: it clears when the interrupted operation ends (or at the
+  // next dispatch, if none was running), so nobody needs to resume by hand.
   func stopNoticeActive(at now: Date = Date()) -> Bool {
     lock.lock(); defer { lock.unlock() }
     return halted && stopNoticeUntil > now
@@ -1188,7 +1200,16 @@ final class Control {
   func begin(_ session: String) {
     lock.lock(); active += 1; leaseHolder = session; leaseUntil = Date().addingTimeInterval(Control.leaseSeconds); lock.unlock()
   }
-  func end() { lock.lock(); active -= 1; lastMutationAt = Date(); lock.unlock() }
+  func end() {
+    lock.lock(); active -= 1; lastMutationAt = Date()
+    // One-shot cancel: once the interrupted operation has ended, the halt flag
+    // clears itself so the next dispatch proceeds without a manual resume.
+    if active <= 0 && halted {
+      halted = false; stopNoticeUntil = Date.distantPast
+      log("halt cleared on operation end (one-shot cancel)")
+    }
+    lock.unlock()
+  }
   func release(_ session: String) -> Bool {
     lock.lock(); defer { lock.unlock() }
     guard leaseHolder == session else { return false }
@@ -1227,7 +1248,7 @@ func withMutation(_ req: [String: Any], session: String, target: pid_t?, kind: M
                   _ body: () -> [String: Any]) -> [String: Any] {
   if !AXIsProcessTrusted() { return refused("accessibility-not-granted", "grant Accessibility to MultiCC Agent") }
   if screenLocked() { return refused("screen-locked", "the screen is locked; input would go to the login window. Wait for the user") }
-  if control.isHalted {
+  if control.isHalted && !control.clearIdleHalt() {
     return refused("user-stopped", "the user pressed Esc to stop computer use: stop and ask the user; only run resume when they say so", retrySafe: false)
   }
   if let h = control.holderConflict(session) {
@@ -1250,7 +1271,7 @@ func withMutation(_ req: [String: Any], session: String, target: pid_t?, kind: M
   }
   defer { mutationLane.unlock() }
   if let h = control.holderConflict(session) { return refused("busy", "another session (\(h)) is using the computer") }
-  if control.isHalted { return refused("user-stopped", "the user pressed Esc to stop computer use", retrySafe: false) }
+  if control.isHalted && !control.clearIdleHalt() { return refused("user-stopped", "the user pressed Esc to stop computer use", retrySafe: false) }
   control.begin(session)
   let automation = session != "remote-screen"
   if automation {
