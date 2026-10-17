@@ -5,8 +5,11 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'platform_h264_decoder.dart';
+import 'remote_screen_h264.dart';
 import 'remote_screen_rfb.dart';
 import 'remote_screen_region.dart';
+import 'remote_screen_source.dart';
 import 'settings_service.dart';
 import 'ws_ticket_service.dart';
 
@@ -26,17 +29,25 @@ class RemoteScreenService {
     WsTicketClient? wsTicketClient,
     WebSocketChannel Function(Uri)? channelFactory,
     http.Client? httpClient,
+    H264Decoder? Function()? h264DecoderFactory,
   }) : _wsAuth = WsTicketConnectionGate(wsTicketClient ?? WsTicketClient()),
        _connectChannel = channelFactory ?? WebSocketChannel.connect,
-       _http = httpClient ?? http.Client();
+       _http = httpClient ?? http.Client(),
+       _h264Factory = h264DecoderFactory ?? PlatformH264Decoder.create;
 
   final SettingsService settings;
   final WsTicketConnectionGate _wsAuth;
   final WebSocketChannel Function(Uri) _connectChannel;
   final http.Client _http;
+  final H264Decoder? Function() _h264Factory;
 
   WebSocketChannel? _channel;
   RemoteScreenRfb? _rfb;
+  RemoteScreenH264? _h264;
+  H264Decoder? _pendingDecoder;
+  bool _rfbTried = false;
+  bool? _serverH264;
+  Future<void>? _h264Fetch;
   Timer? _handshakeTimeout;
   Timer? _pollTimer;
   bool _polling = false;
@@ -47,7 +58,13 @@ class RemoteScreenService {
 
   RemoteScreenMode mode = RemoteScreenMode.connecting;
   String? error;
+
+  /// RFB 会话（兼容旧调用方/测试；页面请用 [source]）。
   RemoteScreenRfb? get rfb => _rfb;
+
+  /// 当前活流源：H.264（高清流畅）优先，其次 RFB；都没连上时为 null。
+  ScreenSource? get source => _h264 ?? _rfb;
+  bool get h264Active => _h264 != null;
 
   /// Latest JPEG frame while in fallback mode (null otherwise).
   Uint8List? fallbackJpeg;
@@ -65,18 +82,131 @@ class RemoteScreenService {
     return h;
   }
 
-  /// Connects the live RFB stream; on any failure settles into fallback.
+  /// 连接活流：H.264 高清流畅模式优先（本机有平台解码器且 Agent 提供了
+  /// h264.sock 时），失败自动退回 RFB，再失败落到 JPEG 轮询。
   void connectLive() {
     if (_disposed) return;
     _regionEpoch++;
     region = viewRegion = null;
     _setMode(RemoteScreenMode.connecting, null);
     _stopFallback();
+    _stopLive();
+    _rfbTried = false;
+    _armHandshake();
+    unawaited(_connectPreferred());
+  }
+
+  void _armHandshake() {
     _handshakeTimeout?.cancel();
     _handshakeTimeout = Timer(const Duration(seconds: 8), () {
-      if (mode == RemoteScreenMode.connecting && !_disposed) _enterFallback();
+      if (mode == RemoteScreenMode.connecting && !_disposed) _failLive();
     });
+  }
 
+  Future<void> _connectPreferred() async {
+    final h264 = await _canUseH264();
+    if (_disposed || mode != RemoteScreenMode.connecting) return;
+    if (!h264) {
+      _startRfb();
+      return;
+    }
+    await _startH264();
+  }
+
+  /// 只有「服务端说了有 h264.sock」且「本机平台解码器可用」才走 H.264。
+  /// 任一未知（老 server / 测试桩 / 桌面端）都直接 RFB，保持旧行为。
+  Future<bool> _canUseH264() async {
+    if (region != null) return false;
+    if (_serverH264 == null) {
+      _h264Fetch ??= _fetchH264();
+      await _h264Fetch;
+      _h264Fetch = null;
+    }
+    if (_serverH264 != true) return false;
+    final decoder = _h264Factory();
+    if (decoder == null) return false;
+    _pendingDecoder = decoder;
+    return true;
+  }
+
+  Future<void> _fetchH264() async {
+    try {
+      final res = await _http
+          .get(
+            Uri.parse(settings.buildHttpUrl('/api/remote-screen/capabilities')),
+            headers: _headers,
+          )
+          .timeout(const Duration(seconds: 3));
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final streams = decoded is Map ? decoded['streams'] : null;
+        _serverH264 = streams is Map && streams['h264'] == true;
+      }
+    } catch (_) {
+      // 问不到就按没有处理：RFB 是既有路径，不会因此少了功能。
+    }
+  }
+
+  Future<void> _startH264() async {
+    H264Decoder? decoder;
+    try {
+      final attempt = _wsAuth.begin(
+        socketUri: buildMulticcWebSocketUri(
+          host: settings.host,
+          path: MulticcWsPath.remoteScreen,
+          query: const {'mode': 'h264'},
+        ),
+        ticketEndpoint: Uri.parse(settings.buildHttpUrl('/api/auth/ws-ticket')),
+        accessToken: settings.token,
+      );
+      final url = await attempt.authorizedUri;
+      if (_disposed || !attempt.isCurrent || mode != RemoteScreenMode.connecting) {
+        return;
+      }
+      decoder = _pendingDecoder ?? _h264Factory();
+      _pendingDecoder = null;
+      if (decoder == null || !await decoder.open()) {
+        await decoder?.close();
+        decoder = null;
+        throw StateError('h264-decoder-unavailable');
+      }
+      if (_disposed || !attempt.isCurrent || mode != RemoteScreenMode.connecting) {
+        await decoder.close();
+        return;
+      }
+      final channel = _connectChannel(url);
+      _channel = channel;
+      final session = RemoteScreenH264(
+        incoming: channel.stream
+            .where((dynamic d) => d is Uint8List)
+            .cast<Uint8List>(),
+        send: (Uint8List bytes) {
+          if (attempt.isCurrent) channel.sink.add(bytes);
+        },
+        decoder: decoder,
+        onClosed: () {
+          if (!_disposed && attempt.isCurrent) _failLive();
+        },
+        onFrame: _onLiveFrame,
+      );
+      _h264 = session;
+      unawaited(
+        session.run().catchError((Object _) {
+          if (!_disposed && attempt.isCurrent) _failLive();
+        }),
+      );
+    } catch (_) {
+      unawaited(decoder?.close());
+      if (!_disposed && mode == RemoteScreenMode.connecting) _startRfb();
+    }
+  }
+
+  void _startRfb() {
+    if (_disposed || mode != RemoteScreenMode.connecting) return;
+    unawaited(_pendingDecoder?.close() ?? Future<void>.value());
+    _pendingDecoder = null;
+    _rfbTried = true;
+    _armHandshake();
     late WsTicketAttempt attempt;
     try {
       attempt = _wsAuth.begin(
@@ -93,7 +223,7 @@ class RemoteScreenService {
     }
     unawaited(
       _connectAuthorized(attempt).catchError((Object _) {
-        if (!_disposed && attempt.isCurrent) _enterFallback();
+        if (!_disposed && attempt.isCurrent) _failLive();
       }),
     );
   }
@@ -106,7 +236,7 @@ class RemoteScreenService {
       await channel.sink.close();
       return;
     }
-    _stopRfb();
+    _stopLive();
     _channel = channel;
     _rfb = RemoteScreenRfb(
       incoming: channel.stream.map<Uint8List>(
@@ -117,13 +247,13 @@ class RemoteScreenService {
         channel.sink.add(bytes);
       },
       onClosed: () {
-        if (!_disposed && attempt.isCurrent) _enterFallback();
+        if (!_disposed && attempt.isCurrent) _failLive();
       },
       onFrame: _onRfbFrame,
     );
     unawaited(
       _rfb!.run().catchError((Object _) {
-        if (!_disposed && attempt.isCurrent) _enterFallback();
+        if (!_disposed && attempt.isCurrent) _failLive();
       }),
     );
   }
@@ -134,6 +264,28 @@ class RemoteScreenService {
       _setMode(RemoteScreenMode.live, null);
     }
     _frames.add(null);
+  }
+
+  void _onLiveFrame() {
+    final h = _h264;
+    if (h != null && h.width > 0 && mode != RemoteScreenMode.live) {
+      _setMode(RemoteScreenMode.live, null);
+    }
+    _frames.add(null);
+  }
+
+  /// 活流断了/超时：H.264 先退 RFB，RFB 再退 JPEG 轮询。
+  void _failLive() {
+    if (_disposed) return;
+    _stopLive();
+    if (mode == RemoteScreenMode.fallback) return;
+    if (!_rfbTried) {
+      // 已经在 live 的 H.264 断了：先退回「连接中」，重新走 RFB。
+      _setMode(RemoteScreenMode.connecting, null);
+      _startRfb();
+      return;
+    }
+    _enterFallback();
   }
 
   /// 权限门：Agent 的屏幕录制 / 辅助功能授权状态（与 Web Air 全局设置
@@ -178,8 +330,13 @@ class RemoteScreenService {
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return null;
       final decoded = jsonDecode(res.body);
-      if (decoded is Map<String, dynamic> && decoded['supported'] is bool) {
-        return decoded['supported'] as bool;
+      if (decoded is Map<String, dynamic>) {
+        // 顺手记住有没有 h264.sock，connectLive 就不用再问一次。
+        final streams = decoded['streams'];
+        if (streams is Map && streams['h264'] is bool) {
+          _serverH264 = streams['h264'] as bool;
+        }
+        if (decoded['supported'] is bool) return decoded['supported'] as bool;
       }
       return null;
     } catch (_) {
@@ -312,7 +469,7 @@ class RemoteScreenService {
     if (_disposed) return;
     _handshakeTimeout?.cancel();
     _handshakeTimeout = null;
-    _stopRfb();
+    _stopLive();
     if (mode != RemoteScreenMode.fallback) {
       _setMode(RemoteScreenMode.fallback, null);
     }
@@ -399,7 +556,11 @@ class RemoteScreenService {
     return null;
   }
 
-  void _stopRfb() {
+  void _stopLive() {
+    _h264?.dispose();
+    _h264 = null;
+    unawaited(_pendingDecoder?.close() ?? Future<void>.value());
+    _pendingDecoder = null;
     _channel?.sink.close().catchError((Object _) {});
     _channel = null;
     _rfb = null;
@@ -414,7 +575,7 @@ class RemoteScreenService {
     _disposed = true;
     _wsAuth.invalidate();
     _handshakeTimeout?.cancel();
-    _stopRfb();
+    _stopLive();
     _stopFallback();
     unawaited(_frames.close());
     unawaited(_modeCtrl.close());

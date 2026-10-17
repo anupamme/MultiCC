@@ -266,9 +266,9 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
 
   // ── 帧渲染 ──
   void _renderFrame() {
-    final rfb = _svc.rfb;
-    final fb = rfb?.framebuffer;
-    if (fb == null || rfb == null || rfb.width <= 0) {
+    final source = _svc.source;
+    final fb = source?.framebuffer;
+    if (fb == null || source == null || source.width <= 0) {
       if (mounted) setState(() {});
       return;
     }
@@ -283,7 +283,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     _lastFrameAt = now;
     if (_decoding) return; // 上一帧还在解码，跳过；下个 update 会再触发
     _decoding = true;
-    final w = rfb.width, h = rfb.height;
+    final w = source.width, h = source.height;
     // BGRA → RGBA：32bit 上 R/B 互换，A/G 原位。
     final src = Uint32List.view(
       fb.buffer,
@@ -367,11 +367,11 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
 
   // ── 指针（仅流畅模式）──
   void _sendPointer(int mask, double dx, double dy, double dw, double dh) {
-    final rfb = _svc.rfb;
-    if (rfb == null || rfb.width <= 0 || dw <= 0 || dh <= 0) return;
-    _lastX = ((dx / dw) * rfb.width).round().clamp(0, rfb.width - 1);
-    _lastY = ((dy / dh) * rfb.height).round().clamp(0, rfb.height - 1);
-    rfb.pointerEvent(mask, _lastX, _lastY);
+    final source = _svc.source;
+    if (source == null || source.width <= 0 || dw <= 0 || dh <= 0) return;
+    _lastX = ((dx / dw) * source.width).round().clamp(0, source.width - 1);
+    _lastY = ((dy / dh) * source.height).round().clamp(0, source.height - 1);
+    source.pointerEvent(mask, _lastX, _lastY);
   }
 
   void _onPointerDown(PointerDownEvent e, double dw, double dh) {
@@ -451,9 +451,9 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
 
   void _wheelPulse(int mask) {
     if (!_control) return;
-    final rfb = _svc.rfb;
-    if (rfb != null) {
-      rfb.pointerEvent(mask, _lastX, _lastY);
+    final source = _svc.source;
+    if (source != null) {
+      source.pointerEvent(mask, _lastX, _lastY);
       return;
     }
     final area = _svc.viewRegion;
@@ -563,7 +563,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     final text = _textCtrl.text;
     if (text.isEmpty) return;
     if (_svc.mode == RemoteScreenMode.live) {
-      _svc.rfb?.typeText(text);
+      _svc.source?.typeText(text);
       _textCtrl.clear();
       return;
     }
@@ -583,8 +583,8 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       if (mounted && res['ok'] == false) _showErr(res);
       return;
     }
-    final rfb = _svc.rfb;
-    if (rfb == null) return;
+    final source = _svc.source;
+    if (source == null) return;
     final mods = <int>[];
     var keysym = -1;
     for (final part in spec.split('+')) {
@@ -602,10 +602,10 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     }
     if (keysym < 0) return;
     if (mods.isEmpty) {
-      rfb.keyEvent(true, keysym);
-      rfb.keyEvent(false, keysym);
+      source.keyEvent(true, keysym);
+      source.keyEvent(false, keysym);
     } else {
-      rfb.chord(mods, keysym);
+      source.chord(mods, keysym);
     }
   }
 
@@ -619,7 +619,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       case RemoteScreenMode.connecting:
         return t('rsConnecting');
       case RemoteScreenMode.live:
-        return t('rsLiveMode');
+        return _svc.h264Active ? t('rsLiveModeH264') : t('rsLiveMode');
       case RemoteScreenMode.fallback:
         return t('rsFallback');
     }
@@ -732,12 +732,12 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   }
 
   Widget _statusRow() {
-    final rfb = _svc.rfb;
+    final source = _svc.source;
     final w = _svc.mode == RemoteScreenMode.live
-        ? rfb?.width ?? 0
+        ? source?.width ?? 0
         : _svc.fallbackWidth;
     final h = _svc.mode == RemoteScreenMode.live
-        ? rfb?.height ?? 0
+        ? source?.height ?? 0
         : _svc.fallbackHeight;
     final bits = <String>[
       if (w > 0 && h > 0) '$w×$h',
@@ -879,29 +879,29 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   Widget _stage() {
     if (_svc.mode == RemoteScreenMode.live) {
       final img = _image;
-      final rfb = _svc.rfb;
-      if (img == null || rfb == null || rfb.width <= 0) {
+      final source = _svc.source;
+      if (img == null || source == null || source.width <= 0) {
         return const Center(child: CircularProgressIndicator());
       }
       return LayoutBuilder(
         builder: (context, constraints) {
           final size = constraints.biggest;
-          final scale = size.width / rfb.width < size.height / rfb.height
-              ? size.width / rfb.width
-              : size.height / rfb.height;
+          final scale = size.width / source.width < size.height / source.height
+              ? size.width / source.width
+              : size.height / source.height;
           return _zoomStage(
             size,
-            rfb.width * scale,
-            rfb.height * scale,
+            source.width * scale,
+            source.height * scale,
             Listener(
               onPointerDown: (e) =>
-                  _onPointerDown(e, rfb.width * scale, rfb.height * scale),
+                  _onPointerDown(e, source.width * scale, source.height * scale),
               onPointerMove: (e) =>
-                  _onPointerMove(e, rfb.width * scale, rfb.height * scale),
+                  _onPointerMove(e, source.width * scale, source.height * scale),
               onPointerUp: (e) =>
-                  _onPointerUp(e, rfb.width * scale, rfb.height * scale),
+                  _onPointerUp(e, source.width * scale, source.height * scale),
               onPointerCancel: (e) =>
-                  _onPointerUp(e, rfb.width * scale, rfb.height * scale),
+                  _onPointerUp(e, source.width * scale, source.height * scale),
               child: CustomPaint(
                 painter: _ScreenPainter(img),
                 size: Size.infinite,

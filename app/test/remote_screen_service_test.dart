@@ -9,6 +9,7 @@ import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:multicc_app/services/remote_screen_h264.dart';
 import 'package:multicc_app/services/remote_screen_service.dart';
 import 'package:multicc_app/services/remote_screen_region.dart';
 import 'package:multicc_app/services/settings_service.dart';
@@ -68,6 +69,72 @@ final Uint8List _rfbHello = Uint8List.fromList([
   0x00, 0x00, 0x00, 0x00,
   0x11, 0x22, 0x33, 0xFF, 0xAA, 0xBB, 0xCC, 0xDD,
 ]);
+
+class _RecordingH264Decoder implements H264Decoder {
+  final StreamController<H264Frame> _frames =
+      StreamController<H264Frame>.broadcast();
+  final StreamController<String> _errors = StreamController<String>.broadcast();
+  final List<Uint8List> decoded = <Uint8List>[];
+
+  @override
+  Stream<H264Frame> get frames => _frames.stream;
+
+  @override
+  Stream<String> get errors => _errors.stream;
+
+  @override
+  Future<bool> open() async => true;
+
+  @override
+  void decode(
+    Uint8List annexB, {
+    required int timestampUs,
+    required bool key,
+    required int width,
+    required int height,
+  }) {
+    decoded.add(annexB);
+  }
+
+  @override
+  Future<void> close() async {}
+
+  void emit(int w, int h) {
+    _frames.add(
+      H264Frame(
+        bytes: Uint8List(w * h * 4),
+        width: w,
+        height: h,
+        key: true,
+      ),
+    );
+  }
+}
+
+Uint8List _h264Frame(int type, List<int> payload) {
+  final out = Uint8List(5 + payload.length);
+  out[0] = type;
+  out[4] = payload.length & 0xFF;
+  out.setRange(5, out.length, payload);
+  return out;
+}
+
+Uint8List _h264Config(int w, int h) => _h264Frame(
+  h264Config,
+  utf8.encode(jsonEncode({'width': w, 'height': h})),
+);
+
+Uint8List _h264Key() {
+  final pts = ByteData(8)..setUint64(0, 7, Endian.big);
+  return _h264Frame(h264Key, [
+    ...pts.buffer.asUint8List(),
+    0,
+    0,
+    0,
+    1,
+    0x65,
+  ]);
+}
 
 Future<RemoteScreenService> _make({
   required StreamController<dynamic> incoming,
@@ -422,5 +489,89 @@ void main() {
     await incoming.close(); // 传输断开
     await _pumpUntil(() => service.mode == RemoteScreenMode.fallback);
     expect(service.fallbackJpeg, isNotNull);
+  });
+
+  test('h264 可用时先连高清模式，断流后退回 RFB 而不是直接轮询', () async {
+    SharedPreferences.setMockInitialValues({
+      'multicc_host': 'http://localhost:3000',
+      'multicc_token': '',
+    });
+    final settings = await SettingsService.getInstance();
+    final h264Incoming = StreamController<dynamic>();
+    final rfbIncoming = StreamController<dynamic>();
+    final h264Sent = <Uint8List>[];
+    final rfbSent = <Uint8List>[];
+    final urls = <Uri>[];
+    addTearDown(() {
+      h264Incoming.close();
+      rfbIncoming.close();
+    });
+    final decoder = _RecordingH264Decoder();
+    final service = RemoteScreenService(
+      settings: settings,
+      wsTicketClient: WsTicketClient(
+        post: (endpoint, {required headers, required body}) async {
+          final requested = (jsonDecode(body) as Map<String, dynamic>)['path'];
+          return http.Response(
+            jsonEncode({'ok': true, 'ticket': 'fixture', 'path': requested}),
+            200,
+          );
+        },
+      ),
+      channelFactory: (uri) {
+        urls.add(uri);
+        return uri.queryParameters['mode'] == 'h264'
+            ? _FakeChannel(h264Incoming, h264Sent)
+            : _FakeChannel(rfbIncoming, rfbSent);
+      },
+      httpClient: MockClient(
+        (request) async {
+          if (request.url.path == '/api/remote-screen/capabilities') {
+            return http.Response(
+              jsonEncode({
+                'ok': true,
+                'supported': true,
+                'streams': {'h264': true, 'rfb': true},
+              }),
+              200,
+            );
+          }
+          return http.Response.bytes(
+            Uint8List.fromList([1, 2, 3]),
+            200,
+            headers: const {'X-Screen-Width': '4', 'X-Screen-Height': '2'},
+          );
+        },
+      ),
+      h264DecoderFactory: () => decoder,
+    );
+    addTearDown(service.dispose);
+
+    service.connectLive();
+    await _pumpUntil(() => urls.isNotEmpty);
+    expect(urls.first.queryParameters['mode'], 'h264');
+
+    await _pumpUntil(() => h264Sent.isNotEmpty); // 建连后先要关键帧
+    expect(h264Sent.first, [h264ReqKey]);
+    h264Incoming.add(_h264Config(4, 2));
+    h264Incoming.add(_h264Key());
+    await Future<void>.delayed(Duration.zero);
+    expect(decoder.decoded.length, 1);
+    decoder.emit(4, 2);
+
+    await _pumpUntil(() => service.mode == RemoteScreenMode.live);
+    expect(service.h264Active, isTrue);
+    expect(service.source, isNotNull);
+
+    await h264Incoming.close(); // 直连断流 → 服务自动退 RFB
+    await _pumpUntil(() => urls.length >= 2);
+    expect(urls[1].queryParameters.containsKey('mode'), isFalse);
+
+    rfbIncoming.add(_rfbHello);
+    await _pumpUntil(
+      () => service.mode == RemoteScreenMode.live && service.rfb != null,
+    );
+    expect(service.h264Active, isFalse);
+    expect(service.source, same(service.rfb));
   });
 }

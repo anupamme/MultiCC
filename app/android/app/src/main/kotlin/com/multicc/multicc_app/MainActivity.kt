@@ -8,12 +8,15 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var fcmBridge: FcmBridge? = null
+    private var h264Bridge: H264Bridge? = null
     private val channelName = "com.multicc.multicc_app/keepalive"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         fcmBridge = FcmBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         fcmBridge?.tap(intent)
+        // 「🖥 屏幕」高清流畅模式的解码器；Dart 侧 create 返回 false 时会退回 RFB。
+        h264Bridge = H264Bridge(flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {

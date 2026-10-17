@@ -190,6 +190,14 @@ WebRTC DataChannel（P2P）；打洞失败时就走这条 WS——中继只用�
   RFB PointerEvent（`5`+5 字节，坐标是逻辑点）。输入同样走 `handle()` 全部护栏。
 - 丢帧而不断流：Agent 每个连接排队超过 4 帧、服务端 WS 积压超过水位，都只丢普通帧并等
   下一个关键帧。出不了首帧（无 socket / 无录屏授权）时服务端以 `1011` 关 WS，前端回退 noVNC。
+- Flutter App（iOS/Android）同样连 `?mode=h264`，但解码在本机原生做：iOS 走 VideoToolbox
+  （SPS/PPS → `CMVideoFormatDescriptionCreateFromH264ParameterSets`，Annex B 转 AVCC），
+  Android 走 MediaCodec（`csd-0`/`csd-1` + Annex B 直送）。两端都解成 BGRA、统一降到
+  ≤1280 宽再交给页面，和 RFB 的 framebuffer 共用同一套绘制与输入代码（见
+  `app/lib/services/remote_screen_h264.dart`、`platform_h264_decoder.dart` 与
+  `app/ios/Runner/H264Decoder.swift`、`app/android/.../H264Bridge.kt`）。积压超过 2 帧
+  同样丢普通帧并回 `'K'`；H.264 建不起来或中途断流时先退 RFB（同路径不带 `mode`），再退
+  JPEG 轮询——所以 App 对旧服务端/未开录屏授权的机器仍然可用。
 
 ### 6.2 P2P 直连（服务端可选，与 Agent 无关）
 
