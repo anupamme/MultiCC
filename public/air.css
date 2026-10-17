@@ -717,6 +717,8 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
 /* Pin 开着的读法只有一种：这颗按钮被按下去的样子（aria-pressed 是给读屏的，
    这里给它同一条事实的像素）。 */
 #pin-task[aria-pressed="true"] { color: #176bc0; border-color: #cfe3f8; background: var(--blue-soft); }
+#todo-task { min-width: 38px; padding: 6px; color: #47647f; font-size: 16px; line-height: 1.2; }
+#todo-task[aria-pressed="true"] { color: #a85a25; border-color: #f1d9c4; background: #fff6ee; }
 #details-toggle, #refresh { font-size: 12px; }
 #refresh { min-width: 38px; padding: 7px; }
 #mobile-nav { display: none; }
@@ -1657,6 +1659,11 @@ dialog [role="alert"] { margin: 10px 0; color: #b34128; line-height: 1.6; white-
 /* 侧栏任务行上的「已 Pin」标记：手机上的 pin 就是靠它把「为什么这几个排在最上面」
    说出来（桌面那边页头那排 tab 已经把话说完了，但这几行也带着标记并不冲突）。 */
 .task-pin { font-size: 9px; line-height: 1; }
+.task-todo-mark { margin-left: 4px; font-size: 9px; line-height: 1; }
+/* 行尾的「待办」开关：借 `.task-delete` 的尺寸，中性灰；标记后换成暖色 🚩。 */
+.task-todo { flex: 0 0 auto; align-self: center; min-width: 30px; min-height: 30px; margin: 4px 0; padding: 4px 6px; color: #8a9aab; border-color: transparent; background: transparent; font-size: 13px; opacity: .7; }
+.task-todo:hover, .task-todo:focus-visible { color: #a85a25; border-color: #f1d9c4; background: #fff6ee; opacity: 1; }
+.task-todo[aria-pressed="true"] { color: #a85a25; opacity: 1; }
 
 /* ── ⌘K 命令面板：目录和任务一起搜 ─────────────────────────────────────── */
 #palette-scrim { position: fixed; z-index: 50; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: rgba(32, 49, 70, .36); }

@@ -26,14 +26,14 @@ const PIN_LIMIT = 100;
 const SCHEMA_VERSION = 1;
 
 /** 只做形状归一：丢掉空值、去重、截断到上限。存在性由运行时按当下的任务表判。 */
-function normalizePins(value) {
+function normalizePins(value, limit = PIN_LIMIT) {
   const list = Array.isArray(value) ? value : [];
   const out = [];
   for (const raw of list) {
     const id = typeof raw === 'string' ? raw.trim() : '';
     if (!id || out.includes(id)) continue;
     out.push(id);
-    if (out.length >= PIN_LIMIT) break;
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -49,15 +49,18 @@ function readStoredPinIds(file) {
   return normalizePins(body.taskIds);
 }
 
-function createAirPinRuntime(rawDeps) {
+// Pin 与「手动待办」（./todos.js）是同一种东西：一份用户挑出来的任务 id 清单，
+// 跟着服务端走、读时按存在性剪枝。差别只在文件、存储 kind、路由前缀和错误码。
+function createTaskIdListRuntime(rawDeps, spec) {
   const deps = rawDeps || {};
+  const { kind, route, limit, codes, label } = spec;
   // 默认跟着 src/paths.js 的数据目录走（和 sessions.json / ui-layout.json 同一处），
   // 嵌入式宿主也可以自己指一个文件。
-  const file = deps.file || createPaths().airPinsFile;
-  if (typeof deps.listTaskIds !== 'function') throw new TypeError('[air-pins] listTaskIds() is required');
+  const file = deps.file || spec.defaultFile();
+  if (typeof deps.listTaskIds !== 'function') throw new TypeError(`[${kind}] listTaskIds() is required`);
   const logger = deps.logger || console;
   const store = stateStore.createStore({
-    file, kind: 'air-pins', schemaVersion: SCHEMA_VERSION, legacyIsArray: false,
+    file, kind, schemaVersion: SCHEMA_VERSION, legacyIsArray: false,
   });
 
   // 进程内的权威副本，懒加载：新装的实例没有这个文件，不该为每次请求付一次 stat。
@@ -67,10 +70,10 @@ function createAirPinRuntime(rawDeps) {
     if (pinned) return pinned;
     try {
       const r = store.loadOrRecover();
-      pinned = normalizePins(r.present ? r.data?.taskIds : null);
+      pinned = normalizePins(r.present ? r.data?.taskIds : null, limit);
     } catch (e) {
       // 读不出来最多丢掉几个钉子，别的都不影响 —— 这里从空开始是对的爆炸半径。
-      logger.warn(`[multicc/air-pins] unreadable pins file, starting empty: ${e.message}`);
+      logger.warn(`[multicc/${kind}] unreadable ${kind} file, starting empty: ${e.message}`);
       pinned = [];
     }
     return pinned;
@@ -79,8 +82,8 @@ function createAirPinRuntime(rawDeps) {
   function persist() {
     try { store.save({ taskIds: pinned }); }
     catch (e) {
-      logger.warn(`[multicc/air-pins] save failed: ${e.message}`);
-      throw Object.assign(new Error('Pin state could not be saved'), { code: 'pin_save_failed', status: 500 });
+      logger.warn(`[multicc/${kind}] save failed: ${e.message}`);
+      throw Object.assign(new Error(`${label.trim()} state could not be saved`), { code: codes.saveFailed, status: 500 });
     }
   }
 
@@ -92,7 +95,7 @@ function createAirPinRuntime(rawDeps) {
   /** 客户端看到的清单：写下来的顺序，去掉已经不存在的任务。 */
   function read() {
     const known = knownIds();
-    const list = normalizePins(load());
+    const list = normalizePins(load(), limit);
     return known ? list.filter(id => known.has(id)) : list;
   }
 
@@ -100,7 +103,7 @@ function createAirPinRuntime(rawDeps) {
   function replace(taskIds) {
     const known = knownIds();
     const previous = read();
-    pinned = normalizePins(taskIds).filter(id => !known || known.has(id));
+    pinned = normalizePins(taskIds, limit).filter(id => !known || known.has(id));
     try { persist(); }
     catch (error) { pinned = previous; throw error; }
     return read();
@@ -114,32 +117,40 @@ function createAirPinRuntime(rawDeps) {
     if (known && !known.has(id)) throw Object.assign(new Error('任务不存在'), { status: 404, code: 'task_not_found' });
     const current = read();
     if (current.includes(id)) return replace(current.filter(value => value !== id));
-    if (current.length >= PIN_LIMIT) {
-      throw Object.assign(new Error(`最多只能 Pin ${PIN_LIMIT} 个任务`), { status: 409, code: 'pin_limit_reached' });
+    if (current.length >= limit) {
+      throw Object.assign(new Error(`最多只能${label} ${limit} 个任务`), { status: 409, code: codes.limitReached });
     }
     return replace([...current, id]);
   }
 
   // `target` 是 express Router（生产）或 app（测试）—— 两者都暴露 get/post。
   function mountRoutes(target) {
-    target.get('/api/air/pins', (req, res) => { res.json({ ok: true, taskIds: read() }); });
-    target.post('/api/air/pins', (req, res) => {
+    target.get(route, (req, res) => { res.json({ ok: true, taskIds: read() }); });
+    target.post(route, (req, res) => {
       const body = req.body || {};
       if (!Array.isArray(body.taskIds)) {
         return res.status(400).json({ ok: false, code: 'task_ids_required', message: 'taskIds 必须是数组' });
       }
       try { res.json({ ok: true, taskIds: replace(body.taskIds) }); }
-      catch (error) { res.status(error.status || 500).json({ ok: false, code: error.code || 'pin_failed', message: 'Request failed' }); }
+      catch (error) { res.status(error.status || 500).json({ ok: false, code: error.code || codes.failed, message: 'Request failed' }); }
     });
-    target.post('/api/air/pins/toggle', (req, res) => {
+    target.post(`${route}/toggle`, (req, res) => {
       try { res.json({ ok: true, taskIds: toggle((req.body || {}).taskId) }); }
       catch (error) {
-        res.status(error.status || 500).json({ ok: false, code: error.code || 'pin_failed', message: error.status ? error.message : 'Request failed' });
+        res.status(error.status || 500).json({ ok: false, code: error.code || codes.failed, message: error.status ? error.message : 'Request failed' });
       }
     });
   }
 
-  return { file, limit: PIN_LIMIT, read, replace, toggle, mountRoutes };
+  return { file, limit, read, replace, toggle, mountRoutes };
 }
 
-module.exports = { PIN_LIMIT, normalizePins, readStoredPinIds, createAirPinRuntime };
+function createAirPinRuntime(rawDeps) {
+  return createTaskIdListRuntime(rawDeps, {
+    kind: 'air-pins', route: '/api/air/pins', limit: PIN_LIMIT, label: ' Pin',
+    defaultFile: () => createPaths().airPinsFile,
+    codes: { saveFailed: 'pin_save_failed', limitReached: 'pin_limit_reached', failed: 'pin_failed' },
+  });
+}
+
+module.exports = { PIN_LIMIT, normalizePins, readStoredPinIds, createTaskIdListRuntime, createAirPinRuntime };

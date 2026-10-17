@@ -327,6 +327,7 @@ class AirTaskTile extends StatelessWidget {
     super.key,
     required this.task,
     required this.onTap,
+    this.onLongPress,
     this.directoryName = '',
     this.showTime = false,
     this.timeAt,
@@ -336,6 +337,9 @@ class AirTaskTile extends StatelessWidget {
 
   final AirTask task;
   final VoidCallback onTap;
+
+  /// 长按：目录任务行拿它切换「手动待办」。其余列表不传。
+  final VoidCallback? onLongPress;
 
   /// 跨目录的列表（控制台、侧栏）要把「它在哪个目录」写在行上；当前目录的
   /// 列表里这句话是废话，留空即可（同 Web 的 `options.dir === false`）。
@@ -368,6 +372,7 @@ class AirTaskTile extends StatelessWidget {
       child: InkWell(
         key: ValueKey('air-task-${task.id}'),
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(AppColors.radiusCard),
         child: Container(
           decoration: BoxDecoration(
@@ -409,6 +414,16 @@ class AirTaskTile extends StatelessWidget {
               Row(
                 children: [
                   AirTaskStatusBadge(task: task, fontSize: 10.5),
+                  // 手动标记的待办（运行态那三类已经由徽标自己说了）。
+                  if (task.manualTodo) ...[
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.flag_rounded,
+                      key: ValueKey('air-task-todo-mark-${task.id}'),
+                      size: 13,
+                      color: AppColors.warning,
+                    ),
+                  ],
                   if (task.worktreeChanges?.pending == true) ...[
                     const SizedBox(width: 6),
                     AirWorktreeChangeBadge(task: task),

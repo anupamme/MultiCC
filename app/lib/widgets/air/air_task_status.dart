@@ -31,6 +31,7 @@ bool airTaskDoneToday(AirTask task, [DateTime? now]) {
 
 /// Shared by directory counters and their result list (same rules as Web).
 enum AirDirectoryTaskFilter {
+  todo('待办'),
   open('进行中与待处理'),
   running('运行中'),
   waiting('等待回复'),
@@ -46,6 +47,7 @@ enum AirDirectoryTaskFilter {
   final String label;
 
   bool matches(AirTask task) => switch (this) {
+    todo => airTaskTodo(task),
     open => task.status != 'done' && task.status != 'archived',
     running => airTaskRunning(task),
     waiting => airTaskStatus(task) == CanonicalStatus.waiting,
@@ -61,6 +63,19 @@ enum AirDirectoryTaskFilter {
     all => true,
     archived => task.status == 'archived',
   };
+}
+
+/// 「待办」：需要我接手的四类任务放在一起 —— 等待用户输入（waiting）、出错
+/// （error）、执行成功但需要交互（succeeded + goalState=interact），以及手动标记
+/// 为待办的（[AirTask.manualTodo]）。归档的不算；手动标记的任务即便已经完成也
+/// 留着，直到用户自己取消。Web 对应 `public/air-task-todo.js` 的 `isTodo`。
+bool airTaskTodo(AirTask task) {
+  if (task.status == 'archived') return false;
+  if (task.manualTodo) return true;
+  final status = airTaskStatus(task);
+  return status == CanonicalStatus.waiting ||
+      status == CanonicalStatus.error ||
+      (status == CanonicalStatus.succeeded && task.goalState == 'interact');
 }
 
 StatusSpec airTaskSpec(AirTask task) =>

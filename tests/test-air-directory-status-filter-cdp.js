@@ -64,7 +64,7 @@ test('the workspace overview exposes the same done-today quick filter as the con
     const options = await page.evaluate(`[...document.getElementById('directory-task-status').options]
       .map(o => [o.value, o.textContent])`);
     assert.deepEqual(options, [
-      ['open', '进行中与待处理'], ['running', '运行中'], ['waiting', '等待回复'],
+      ['todo', '待办'], ['open', '进行中与待处理'], ['running', '运行中'], ['waiting', '等待回复'],
       ['error', '异常'], ['today', '今日完成'], ['succeeded', '执行成功'],
       ['achieved', '完成目标'], ['interact', '需要交互'], ['all', '全部记录'], ['archived', '已归档'],
     ]);

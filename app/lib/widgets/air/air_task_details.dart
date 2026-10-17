@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../i18n.dart';
 import '../../services/air_service.dart';
 import '../../theme.dart';
 import '../../utils/status_presentation.dart';
@@ -477,6 +478,8 @@ class AirTaskDetailsPanel extends StatefulWidget {
     this.onTaskChanged,
     this.onTaskMoved,
     this.onTaskRemoved,
+    this.todo = false,
+    this.onToggleTodo,
   });
 
   final String taskId;
@@ -506,6 +509,13 @@ class AirTaskDetailsPanel extends StatefulWidget {
   /// 删除之后：这条任务没了，宿主只应关掉面板并刷新。
   final VoidCallback? onTaskRemoved;
 
+  /// 打开面板那一刻它是否被手动标记为待办（清单在宿主的快照里，不在详情接口里）。
+  final bool todo;
+
+  /// 「标记为待办 / 取消待办」：宿主负责写服务端并刷新快照，返回是否成功。
+  /// 不传就不出这颗按钮。
+  final Future<bool> Function()? onToggleTodo;
+
   @override
   State<AirTaskDetailsPanel> createState() => _AirTaskDetailsPanelState();
 }
@@ -515,11 +525,24 @@ class _AirTaskDetailsPanelState extends State<AirTaskDetailsPanel> {
   String _error = '';
   bool _loading = true;
   bool _working = false;
+  late bool _todo = widget.todo;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<void> _toggleTodo() async {
+    final toggle = widget.onToggleTodo;
+    if (toggle == null || _working) return;
+    setState(() => _working = true);
+    final ok = await toggle();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      if (ok) _todo = !_todo;
+    });
   }
 
   Future<void> _load() async {
@@ -782,6 +805,8 @@ class _AirTaskDetailsPanelState extends State<AirTaskDetailsPanel> {
             (directory) => directory.id != widget.dirId,
           ),
           busy: _working,
+          todo: _todo,
+          onTodo: widget.onToggleTodo == null ? null : _toggleTodo,
           onArchive: _toggleArchive,
           onMove: _moveTask,
           onDelete: _deleteTask,
@@ -1001,8 +1026,12 @@ class _LifecycleActions extends StatelessWidget {
     required this.onArchive,
     required this.onMove,
     required this.onDelete,
+    this.todo = false,
+    this.onTodo,
   });
 
+  final bool todo;
+  final VoidCallback? onTodo;
   final bool archived;
   final bool readOnly;
   final bool canMove;
@@ -1019,6 +1048,17 @@ class _LifecycleActions extends StatelessWidget {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
+        if (onTodo != null)
+          OutlinedButton.icon(
+            key: const ValueKey('air-details-todo'),
+            onPressed: busy ? null : onTodo,
+            icon: Icon(
+              todo ? Icons.flag_rounded : Icons.outlined_flag_rounded,
+              size: 17,
+              color: todo ? AppColors.warning : null,
+            ),
+            label: Text(t(todo ? 'airTodoUnmark' : 'airTodoMark')),
+          ),
         OutlinedButton.icon(
           key: const ValueKey('air-details-archive'),
           onPressed: busy ? null : onArchive,

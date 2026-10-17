@@ -1207,6 +1207,15 @@
       ]
     },
     {
+      "path": "tests/test-air-task-todo-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
+      ]
+    },
+    {
       "path": "tests/test-air-taskgraph-cdp.js",
       "tier": "flow",
       "lane": "cdp",
@@ -1222,6 +1231,15 @@
       "owner": "npm:test:core",
       "entrypoints": [
         "docker/task-shell/run-tests.js",
+        "npm:test:task-first"
+      ]
+    },
+    {
+      "path": "tests/test-air-todos.js",
+      "tier": "other",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
         "npm:test:task-first"
       ]
     },

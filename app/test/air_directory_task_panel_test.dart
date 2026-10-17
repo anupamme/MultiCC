@@ -131,6 +131,9 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('air-directory-task-status')));
     await tester.pumpAndSettle();
+    // 下拉多了「待办」一档，最后那项可能落在菜单可视区外，先滚到它。
+    await tester.ensureVisible(find.text('已归档').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('已归档').last);
     await tester.pumpAndSettle();
     expect(statuses, [AirDirectoryTaskFilter.archived]);
