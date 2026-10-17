@@ -25,6 +25,11 @@
   },
   "tests": [
     {
+      "path": "app/integration_test/h264_decoder_test.dart",
+      "tier": "other",
+      "lane": "device"
+    },
+    {
       "path": "app/integration_test/keyboard_occlusion_repro_test.dart",
       "tier": "other",
       "lane": "device"
@@ -606,6 +611,11 @@
     },
     {
       "path": "app/test/quota_gating_parity_test.dart",
+      "tier": "other",
+      "lane": "flutter"
+    },
+    {
+      "path": "app/test/remote_screen_h264_test.dart",
       "tier": "other",
       "lane": "flutter"
     },
