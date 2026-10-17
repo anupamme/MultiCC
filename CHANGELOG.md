@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.6.1 — A to-do lens on tasks, the mobile directory tab, and hook fixes (2026-10-17)
+
+### Highlights
+
+- **The task list grows a "to do" lens** — a task can be marked as to-do by hand and filtered to that state, on the web task list and in the App's Air console alike; the same three state chips drive both surfaces, so a task marked on the phone reads the same on the desktop (`public/air-admin.js`, `app/lib/widgets/air_task_details.dart`, `app/lib/widgets/air_tasks_view.dart`).
+- **Phones get the directory tab back** — the mobile bottom bar restores 工作目录 as its fourth entry and the directory home highlights it, instead of leaving "recent tasks" as the only way back to a project (`app/lib/widgets/air/air_mobile_shell.dart`, `public/air-mobile.js`).
+- **A brand-new task no longer hides from the mobile recent list** — the mobile workspace request now carries the same recency ordering the desktop list uses, so a task created a second ago appears at the top instead of being pushed out by older ones (`src/workspace/air-routes.js`).
+- **Hooks fired into a task session are no longer dropped silently** — an event action targeting a task now injects into that task's shell session (the shell runtime accepts the same injection the chat host does), and the chat header's hook button can open the rule it fired for editing (`src/events/actions.js`, `src/task-shell/runtime.js`, `public/chat-hooks.js`).
+- **Artifacts stay attached to the turn that produced them** — retention now keeps a turn's artifact links together instead of letting a later cleanup orphan them, and the docs/task pages group them accordingly (`src/artifact-retention.js`, `public/task-artifacts.js`).
+- **The Claude Agent SDK is pinned to 0.3.301** — the dependency is pinned rather than floated so a release build cannot pick up an upstream SDK revision that changed streaming behaviour (`package.json`).
+
 ## v2.6.0 — API-key accounts, per-plan Codex quota windows, and one-shot Esc (2026-10-16)
 
 ### Highlights
