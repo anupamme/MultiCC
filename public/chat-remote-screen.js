@@ -315,15 +315,37 @@
   // Agent 里跑最小 RFB 3.8 服务（Raw 编码、逻辑分辨率、输入走原有护栏），
   // 浏览器端直接用现成客户端：缩放 / 触屏手势 / 完整键位表都不用自己写。
   // 连不上（旧 Agent / macOS<14 / vendor 缺失）或中途断开，一律回退 JPEG 轮询。
+  //
+  // 高清流畅模式（H.264）优先：Agent 的 VideoToolbox 硬编码经同一条 /ws/remote-screen
+  // （?mode=h264）过来，浏览器 WebCodecs 解码，同样画面字节数只有 Tight/JPEG 的
+  // 几分之一。chat-remote-screen-h264.js 只模仿下面用到的那截 noVNC 接口，所以后面
+  // 的连接 / 回退 / 放大 / 输入代码两种模式共用。旧 Agent（没有 h264.sock）、
+  // 浏览器没有 WebCodecs、或解码失败：本页之后都直接走 noVNC。
   let rfbMod = null;
+  let h264Failed = false;
   async function startRfb() {
-    const current = s;
+    const H264 = global.MultiCCH264View;
+    const canH264 = !h264Failed && H264 && H264.supported()
+      && !(caps && caps.streams && caps.streams.h264 === false);
+    if (canH264) {
+      if (await startStream(H264, 'h264')) return true;
+      h264Failed = true;
+    }
     if (!s || s.closed || s.region) return false;
     try { rfbMod = rfbMod || await import('/vendor/novnc/core/rfb.js'); } catch { return false; }
     const RfbClass = rfbMod && (rfbMod.RFB || rfbMod.default);
     if (!RfbClass) return false;
+    return startStream(RfbClass, 'rfb');
+  }
+  function h264Label(view) {
+    return tr('rsLiveModeH264', '高清流畅模式') + ' · '
+      + (view.transport === 'p2p' ? tr('rsViaP2P', '直连') : tr('rsViaRelay', '中继'));
+  }
+  async function startStream(RfbClass, kind) {
+    const current = s;
+    if (!s || s.closed || s.region) return false;
     const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-    let url = proto + location.host + '/ws/remote-screen';
+    let url = proto + location.host + '/ws/remote-screen' + (kind === 'h264' ? '?mode=h264' : '');
     try { if (typeof global.multiccWsUrl === 'function') url = await global.multiccWsUrl(url); } catch { return false; }
     if (s !== current || current.closed || current.region) return false;
     const wrap = el('div', 'rs-rfb');
@@ -363,11 +385,13 @@
         clearTimeout(timer);
         s.img.style.display = 'none';
         s.viewRegion = null; s.regionLoading = false;
-        status(tr('rsLiveMode', '流畅模式'));
+        status(kind === 'h264' ? h264Label(rfb) : tr('rsLiveMode', '流畅模式'));
         if (!s.screenW) void ensureScreenSize(); // 轻点精确单击的坐标域要逻辑尺寸
         if (s.control) setControl(true);
         resolve(true);
       });
+      // 高清模式在直连 / 中继之间切换时刷新状态栏。
+      rfb.addEventListener('transport', () => { if (s === current && s.rfb === rfb) status(h264Label(rfb)); });
       rfb.addEventListener('disconnect', () => {
         clearTimeout(timer);
         const intentional = current.rfbIntent;

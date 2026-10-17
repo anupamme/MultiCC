@@ -2736,7 +2736,7 @@ func serve() -> Never {
   let interval = Double(ProcessInfo.processInfo.environment["MULTICC_AGENT_CHROME_INTERVAL"] ?? "") ?? 20
   Thread.detachNewThread { while true { chrome.tick(); Thread.sleep(forTimeInterval: interval) } }
   #if canImport(ScreenCaptureKit) && compiler(>=5.9)
-  if #available(macOS 14.0, *) { Thread.detachNewThread { serveRfb() } }
+  if #available(macOS 14.0, *) { Thread.detachNewThread { serveRfb() }; Thread.detachNewThread { serveH264() } }
   #endif
 
   Thread.detachNewThread {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compile MultiCCAgent.swift into one (optionally universal) binary.
+# Compile MultiCCAgent.swift (+ MultiCCAgentH264.swift) into one (optionally universal) binary.
 #
 #   build.sh OUT [ARCH...]      ARCH = arm64 | x86_64 (default: this Mac's)
 #
@@ -15,6 +15,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/MultiCCAgent.swift"
+SRC_H264="$HERE/MultiCCAgentH264.swift"
 BRIDGE="$HERE/LidBrightnessBridge.m"
 HEADER="$HERE/LidBrightnessBridge.h"
 OUT="${1:?usage: build.sh OUT [ARCH...]}"
@@ -33,13 +34,16 @@ done
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/multicc-agent-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+# With more than one source file swiftc only accepts top-level code in a file
+# named main.swift; compile a copy under that name.
+cp "$SRC" "$WORK/main.swift"
 SLICES=""
 for arch in "$@"; do
   case "$arch" in arm64|x86_64) ;; *) echo "build.sh: unsupported arch $arch" >&2; exit 2 ;; esac
   xcrun clang -O2 -fobjc-arc -target "$arch-apple-macos11.0" -c "$BRIDGE" -o "$WORK/$arch-bridge.o"
   # shellcheck disable=SC2086
   xcrun swiftc -O -target "$arch-apple-macos11.0" -import-objc-header "$HEADER" $WEAK \
-    -o "$WORK/$arch" "$SRC" "$WORK/$arch-bridge.o"
+    -o "$WORK/$arch" "$WORK/main.swift" "$SRC_H264" "$WORK/$arch-bridge.o"
   SLICES="$SLICES $WORK/$arch"
 done
 # shellcheck disable=SC2086
