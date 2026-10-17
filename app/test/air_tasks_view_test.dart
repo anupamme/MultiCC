@@ -307,6 +307,55 @@ MockClient _pinsClient(
   });
 }
 
+/// 手动待办：清单同 pin 住在服务端（`air-todos.json`），快照里的 `taskTodos`
+/// 是「标了哪些」，POST `/api/air/todos/toggle` 是唯一的写。
+MockClient _todosClient(
+  List<String> calls,
+  List<Map<String, dynamic>> bodies, {
+  required List<String> todos,
+  required List<String> afterToggle,
+}) {
+  const headers = {'content-type': 'application/json; charset=utf-8'};
+  var current = todos;
+  return MockClient((request) async {
+    calls.add('${request.method} ${request.url.path}');
+    if (request.url.path == '/api/air/todos/toggle') {
+      bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+      current = afterToggle;
+      return http.Response(
+        jsonEncode({'ok': true, 'taskIds': current}),
+        200,
+        headers: headers,
+      );
+    }
+    return http.Response(
+      jsonEncode({
+        'ok': true,
+        'clis': const ['codex'],
+        'directories': const [
+          {'id': 'd1', 'name': '工作目录 A', 'path': '/project/a'},
+        ],
+        'taskTodos': current,
+        'tasks': [
+          for (var i = 1; i <= 3; i++)
+            {
+              'id': 't$i',
+              'dirId': 'd1',
+              'title': '任务 $i',
+              'status': 'active',
+              'recordType': '',
+              'runState': i == 3 ? 'waiting' : 'idle',
+              'updatedAt': 1000 - i,
+              'resource': const {'residency': 'planned', 'lease': 'idle'},
+            },
+        ],
+      }),
+      200,
+      headers: headers,
+    );
+  });
+}
+
 Future<SettingsService> _settings({
   bool onboarded = true,
   Map<String, Object> prefs = const {},
@@ -1104,6 +1153,51 @@ void main() {
         matching: find.byIcon(Icons.push_pin_rounded),
       ),
       findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    client.close();
+  });
+
+  testWidgets('长按任务行标记待办：写服务端、行上出 🚩，详情面板里也能取消', (tester) async {
+    final settings = await _settings();
+    final calls = <String>[];
+    final bodies = <Map<String, dynamic>>[];
+    final client = _todosClient(
+      calls,
+      bodies,
+      todos: const [],
+      afterToggle: const ['t1'],
+    );
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: settings, httpClient: client),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openDirectory(tester, 'd1');
+    final row = find.byKey(const ValueKey('air-directory-task-t1'));
+    await tester.scrollUntilVisible(
+      row,
+      200,
+      scrollable: _directoryTaskScrollable,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('air-task-todo-mark-t1')), findsNothing);
+    await tester.longPress(row);
+    await tester.pumpAndSettle();
+    expect(calls, contains('POST /api/air/todos/toggle'));
+    expect(bodies.single, {'taskId': 't1'});
+    expect(find.text('已标记为待办「任务 1」'), findsOneWidget);
+    expect(find.byKey(const ValueKey('air-task-todo-mark-t1')), findsOneWidget);
+    // 行尾仍只有 Pin / 详情 / 删除三颗：待办不跟标题抢宽度。
+    expect(
+      find.descendant(of: row, matching: find.byType(AirTaskRowAction)),
+      findsNWidgets(3),
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

@@ -376,4 +376,41 @@ void main() {
       );
     });
   });
+
+  group('待办 = 等输入 + 出错 + 需要交互 + 手动标记', () {
+    test('四类各自进待办，其余不进；归档的一律不算', () {
+      final todo = AirDirectoryTaskFilter.todo;
+      expect(todo.matches(_task(runState: 'waiting')), isTrue);
+      expect(todo.matches(_task(runState: 'error')), isTrue);
+      expect(todo.matches(_task(runState: 'succeeded', goalState: 'interact')), isTrue);
+      expect(todo.matches(_task(runState: 'succeeded', goalState: 'achieved')), isFalse);
+      expect(todo.matches(_task(runState: 'running')), isFalse);
+      expect(todo.matches(_task(runState: 'idle')), isFalse);
+      // 手动标记：哪怕这一轮已经跑完 / 空闲着也留着，直到用户自己取消。
+      final marked = AirTask.fromJson(const {
+        'id': 'm1', 'dirId': 'd1', 'title': 'x', 'status': 'active', 'runState': 'idle',
+      }, manualTodo: true);
+      expect(todo.matches(marked), isTrue);
+      expect(todo.matches(_task(status: 'archived', runState: 'waiting')), isFalse);
+      final archivedMarked = AirTask.fromJson(const {
+        'id': 'm2', 'dirId': 'd1', 'title': 'x', 'status': 'archived',
+      }, manualTodo: true);
+      expect(todo.matches(archivedMarked), isFalse);
+    });
+
+    test('快照的 taskTodos 回填到每一行上', () {
+      final snapshot = AirSnapshot.fromJson(const {
+        'directories': [],
+        'taskTodos': ['t2'],
+        'tasks': [
+          {'id': 't1', 'dirId': 'd1', 'title': 'a', 'status': 'active'},
+          {'id': 't2', 'dirId': 'd1', 'title': 'b', 'status': 'active'},
+        ],
+      });
+      expect(snapshot.taskTodos, ['t2']);
+      expect(snapshot.isTodo('t2'), isTrue);
+      expect(snapshot.tasks.map((t) => t.manualTodo), [false, true]);
+      expect(AirSnapshot.fromJson(const {'tasks': []}).taskTodos, isEmpty);
+    });
+  });
 }

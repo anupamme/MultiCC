@@ -36,8 +36,9 @@
   // 状态格的口径只有一份：交给控制台的 filterTasks（今日完成 = doneToday 等），这里
   // 只拿它筛出的 id，顺序仍是上面的「最近活动在前」。recent = 未归档。
   // 手机宽度一行放不下五格，「今日完成」排第二，不用横滑就能点到。
-  const MOBILE_FILTERS = [['recent', 'airRecentTasks'], ['today', 'airAdminTileToday'], ['running', 'airAdminTileRunning'],
-    ['waiting', 'airAdminTileWaiting'], ['error', 'airAdminTileError']];
+  // 「待办」紧跟「最近」：等输入 / 出错 / 需要交互 / 手动标记的都在这一格（air-task-todo.js）。
+  const MOBILE_FILTERS = [['recent', 'airRecentTasks'], ['todo', 'airTodoFilter'], ['today', 'airAdminTileToday'],
+    ['running', 'airAdminTileRunning'], ['waiting', 'airAdminTileWaiting'], ['error', 'airAdminTileError']];
   function filterRows(rows, view) {
     if (view === 'recent') return rows.filter(task => task.status !== 'archived');
     if (view === 'all') return rows;
@@ -50,7 +51,8 @@
     const copy = make('span', null, 'mobile-task-copy');
     const stage = task.recordType === 'planned' ? context.label(task.workflowStage || task.status) : '';
     // 控制台和「全部项目」跨目录，每行都带上目录名，免得同名任务分不清。
-    copy.append(make('strong', task.title), make('small', [context.directoryName(task.dirId), task.phase || stage].filter(Boolean).join(' · ')));
+    const flag = root.MultiCCAirTaskTodo?.isManual(task.id) ? '🚩 ' : '';
+    copy.append(make('strong', flag + task.title), make('small', [context.directoryName(task.dirId), task.phase || stage].filter(Boolean).join(' · ')));
     const state = root.MultiCCAirAdmin.taskStatus(task);
     row.append(copy, make('span', context.label(state), `mobile-task-status state-${state}`));
     return row;

@@ -49,9 +49,12 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   /// 控制台卡片当前那一格；null = 最近任务（同 Web `air-mobile.js` 的 consoleView）。
   AirDirectoryTaskFilter? _consoleFilter;
 
-  /// 状态格：「今日完成」排第二，手机宽度不用横滑就能点到（同 Web MOBILE_FILTERS）。
-  /// 判定都走 [AirDirectoryTaskFilter.matches]，与目录首页、桌面控制台同口径。
+  /// 状态格：「待办」打头（等待输入、出错、需要交互和手动标记的都在这一格，见
+  /// airTaskTodo），「今日完成」紧随其后，手机宽度不用横滑就能点到（同 Web
+  /// MOBILE_FILTERS）。判定都走 [AirDirectoryTaskFilter.matches]，与目录首页、
+  /// 桌面控制台同口径。
   static const _statusFilters = [
+    (AirDirectoryTaskFilter.todo, 'airTodoFilter'),
     (AirDirectoryTaskFilter.today, 'airAdminTileToday'),
     (AirDirectoryTaskFilter.running, 'airAdminTileRunning'),
     (AirDirectoryTaskFilter.waiting, 'airAdminTileWaiting'),

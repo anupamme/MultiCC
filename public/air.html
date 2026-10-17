@@ -227,6 +227,8 @@
         <!-- Pin 是「这件事我要一直看着」的唯一开关：桌面上页头那排 tab 是它的落点，
              手机上（没有 page 头那排 tab）是侧栏最近任务置顶的开关。 -->
         <button id="pin-task" type="button" hidden aria-pressed="false" title="Pin 到页顶" data-i18n-title="airPinToTop" aria-label="Pin 到页顶" data-i18n-aria-label="airPinToTop"><span class="air-tool-icon" aria-hidden="true">📌</span><span class="air-tool-name" data-i18n="airPinToTop">Pin 到页顶</span></button>
+        <!-- 🚩 手动待办：标记后这条任务进「待办」筛选（air-task-todo.js），和 📌 一样只在打开任务时出现。 -->
+        <button id="todo-task" type="button" hidden aria-pressed="false" title="标记为待办" data-i18n-title="airTodoMark" aria-label="标记为待办" data-i18n-aria-label="airTodoMark"><span class="air-tool-icon" aria-hidden="true">🚩</span><span class="air-tool-name" data-i18n="airTodoMark">标记为待办</span></button>
         <button id="details-toggle" type="button" aria-expanded="false" aria-controls="task-details" hidden><span class="air-tool-icon-panel" aria-hidden="true">ⓘ</span><span data-i18n="airDetails">详情</span></button>
         <button id="chat-more" type="button" aria-haspopup="menu" aria-expanded="false" hidden><span class="air-tool-icon-panel" aria-hidden="true">⋯</span><span data-i18n="airMore">更多</span></button>
         <!-- 这个按钮一直挂着（不随视图藏），所以它没有 hidden。 -->
@@ -340,6 +342,7 @@
               <div id="directory-task-controls" class="admin-task-controls directory-task-controls">
                 <input id="directory-task-search" type="search" placeholder="搜索任务标题" data-i18n-placeholder="airSearchTaskTitle" aria-label="搜索当前目录任务" data-i18n-aria-label="airSearchDirectoryTask">
                 <select id="directory-task-status" aria-label="按状态筛选当前目录任务" data-i18n-aria-label="airFilterDirectoryTaskStatus">
+                  <option value="todo" data-i18n="airTodoFilter">待办</option>
                   <option value="open" data-i18n="airStatusOpenAndPending">进行中与待处理</option>
                   <option value="running" data-i18n="airStatRunning">运行中</option>
                   <option value="waiting" data-i18n="airStatWaiting">等待回复</option>
@@ -825,6 +828,7 @@
   <script src="air-more.js"></script>
   <script src="air-navigation.js"></script>
   <script src="air-onboarding.js"></script>
+  <script src="air-task-todo.js"></script>
   <script src="air-mobile.js"></script>
   <script src="air.js"></script>
   <!-- 要晚于 air.js：它先给输入框填好内容，折叠才有东西可以念在杠上。 -->

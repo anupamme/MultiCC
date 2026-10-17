@@ -420,6 +420,7 @@ class AirTask {
     this.goalState,
     this.resource = const {},
     this.worktreeChanges,
+    this.manualTodo = false,
   });
 
   final String id;
@@ -458,7 +459,15 @@ class AirTask {
   /// 不是「已确认干净」。behind 不在这里，它是同步状态而不是未交付改动。
   final AirWorktreeChanges? worktreeChanges;
 
-  static AirTask fromJson(Map<String, dynamic> json) => AirTask(
+  /// 用户点过「标记为待办」。清单住在服务端（`air-todos.json`，随快照的
+  /// `taskTodos` 下发），由 [AirSnapshot.fromJson] 回填到每一行上，好让
+  /// [AirDirectoryTaskFilter.matches] 只看任务本身就能判「待办」。
+  final bool manualTodo;
+
+  static AirTask fromJson(
+    Map<String, dynamic> json, {
+    bool manualTodo = false,
+  }) => AirTask(
     id: '${json['id']}',
     dirId: '${json['dirId']}',
     title: '${json['title'] ?? ''}',
@@ -480,6 +489,7 @@ class AirTask {
     worktreeChanges: AirWorktreeChanges.fromJson(
       (json['worktreeChanges'] as Map?)?.cast<String, dynamic>(),
     ),
+    manualTodo: manualTodo,
   );
 
   /// 「完成」在 Air 里有两个词：工作流阶段走 done，归档走 archived。
@@ -496,6 +506,7 @@ class AirSnapshot {
     required this.clis,
     required this.sessions,
     this.taskPins = const [],
+    this.taskTodos = const [],
     this.externalFleets = const [],
     this.worktreePolicy = const AirWorktreePolicy(),
   });
@@ -512,6 +523,9 @@ class AirSnapshot {
   /// 同一份 —— 这也是它不放在 SharedPreferences 里的原因。
   final List<String> taskPins;
 
+  /// 手动标记为待办的任务 id（`air-todos.json`），Web 与各台 App 同一份。
+  final List<String> taskTodos;
+
   /// 导入进来的远端工作区。它们同时也以 [AirDirectory] 的样子出现在
   /// [directories] 里 —— 这里额外留一份原始记录，好知道「别名、分享链接、
   /// 能不能操作」这些目录记录放不下的字段。
@@ -524,16 +538,22 @@ class AirSnapshot {
   static AirSnapshot fromJson(
     Map<String, dynamic> json, {
     List<ExternalFleet> externalFleets = const [],
-  }) => AirSnapshot(
+  }) {
+    final todos = ((json['taskTodos'] as List?) ?? const [])
+        .map((e) => '$e')
+        .toList();
+    final todoIds = todos.toSet();
+    return AirSnapshot(
     directories: [
       ...((json['directories'] as List?) ?? []).map(
         (e) => AirDirectory.fromJson((e as Map).cast<String, dynamic>()),
       ),
       ...externalFleets.map(AirDirectory.fromExternalFleet),
     ],
-    tasks: ((json['tasks'] as List?) ?? [])
-        .map((e) => AirTask.fromJson((e as Map).cast<String, dynamic>()))
-        .toList(),
+    tasks: ((json['tasks'] as List?) ?? []).map((e) {
+      final row = (e as Map).cast<String, dynamic>();
+      return AirTask.fromJson(row, manualTodo: todoIds.contains('${row['id']}'));
+    }).toList(),
     clis: ((json['clis'] as List?) ?? const []).map((e) => '$e').toList(),
     sessions: ((json['sessions'] as List?) ?? [])
         .map((e) => AirSession.fromJson((e as Map).cast<String, dynamic>()))
@@ -541,14 +561,19 @@ class AirSnapshot {
     taskPins: ((json['taskPins'] as List?) ?? const [])
         .map((e) => '$e')
         .toList(),
+    taskTodos: todos,
     externalFleets: externalFleets,
     worktreePolicy: AirWorktreePolicy.fromJson(
       (json['worktreePolicy'] as Map?)?.cast<String, dynamic>(),
     ),
   );
+  }
 
   /// 这个任务被 pin 住了吗。
   bool isPinned(String? taskId) => taskId != null && taskPins.contains(taskId);
+
+  /// 这个任务被手动标记为待办了吗。
+  bool isTodo(String? taskId) => taskId != null && taskTodos.contains(taskId);
 
   AirDirectory? directoryOf(String? id) {
     for (final directory in directories) {
@@ -1003,6 +1028,13 @@ class AirService {
   /// 服务端知道该以谁为准（Web 的 `public/air.js` 走的是同一条路）。
   Future<List<String>> toggleTaskPin(String taskId) async {
     final result = await _post('/api/air/pins/toggle', {'taskId': taskId});
+    return ((result['taskIds'] as List?) ?? const []).map((e) => '$e').toList();
+  }
+
+  /// 标记 / 取消「手动待办」，返回之后的整份清单。同 [toggleTaskPin] 走单点
+  /// toggle，服务端（`src/workspace/todos.js`）是唯一的权威。
+  Future<List<String>> toggleTaskTodo(String taskId) async {
+    final result = await _post('/api/air/todos/toggle', {'taskId': taskId});
     return ((result['taskIds'] as List?) ?? const []).map((e) => '$e').toList();
   }
 

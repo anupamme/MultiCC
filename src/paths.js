@@ -165,6 +165,8 @@ function createPaths({ dataDir } = {}) {
     // Air 任务 Pin：钉在页头顶上（手机上置顶在侧栏）的那几个任务。同样是
     // 「换设备要跟着走」的选择，所以和 ui-layout 一样住在服务端。
     airPinsFile: path.join(root, 'air-pins.json'),
+    // Air 任务「手动待办」：用户点「标记为待办」挑出来的任务，同 pins 跟着服务端走。
+    airTodosFile: path.join(root, 'air-todos.json'),
     orchestrationDbFile: path.join(root, 'orchestration.sqlite'),
     // Kept as the one-time migration source and explicit rollback export
     // target. Once orchestration.sqlite exists it is the sole live authority.

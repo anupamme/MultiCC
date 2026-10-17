@@ -1307,7 +1307,10 @@ class _TileDrawer extends StatelessWidget {
                 // 控制台只摆 Web 那三档（进行中与待处理 / 全部记录 / 已归档）。
                 // 目录首页那七档里的「运行中 / 等待回复 / 异常 / 执行成功」在这里是
                 // 上面那几格数字，用点选代替下拉 —— 同一件事不给两条路。
+                // 「待办」另算一档：它跨了上面好几格（等待 / 异常 / 需要交互 / 手动
+                // 标记），没有哪一格的数字能代替它。
                 items: {
+                  AirDirectoryTaskFilter.todo: t('airTodoFilter'),
                   AirDirectoryTaskFilter.open: t('airAdminFilterOpen'),
                   AirDirectoryTaskFilter.all: t('airAdminFilterAll'),
                   AirDirectoryTaskFilter.archived: t('airAdminStatusArchived'),

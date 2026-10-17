@@ -712,6 +712,8 @@ class _AirTasksViewState extends State<AirTasksView>
                 },
                 directories: _data?.directories ?? const <AirDirectory>[],
                 dirId: task.dirId,
+                todo: _data?.isTodo(task.id) ?? false,
+                onToggleTodo: () => _toggleTodo(task),
                 // 归档/恢复只改这一条任务的状态：重拉快照，面板自己已经刷新过了。
                 onTaskChanged: () => unawaited(_refresh()),
                 // 移动之后这条任务属于别的目录了，所以先关掉这一层，再刷新并跟着
@@ -2314,6 +2316,9 @@ class _AirTasksViewState extends State<AirTasksView>
       showTime: MediaQuery.sizeOf(context).width > 380,
       timeAt: _taskSortAt(task),
       onTap: () => unawaited(_open(task)),
+      // 手动待办不再占行尾一颗按钮（390px 屏上标题会被挤到一半以下）：长按这一行
+      // 就地切换，ⓘ 详情里也有同一个开关；标记后徽标旁边会出一面 🚩。
+      onLongPress: () => unawaited(_toggleTodo(task)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2379,6 +2384,36 @@ class _AirTasksViewState extends State<AirTasksView>
           content: Text(error.toString().replaceFirst('Exception: ', '')),
         ),
       );
+    }
+  }
+
+  /// 标记 / 取消手动待办。清单在服务端（`air-todos.json`），Web 读的是同一份。
+  Future<bool> _toggleTodo(AirTask task) async {
+    final wasTodo = _data?.isTodo(task.id) ?? false;
+    try {
+      await _service.toggleTaskTodo(task.id);
+      if (!mounted) return true;
+      await _refresh();
+      if (!mounted) return true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            t(wasTodo ? 'airTodoUnmarked' : 'airTodoMarked', {
+              'title': task.title,
+            }),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+      return false;
     }
   }
 

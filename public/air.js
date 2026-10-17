@@ -629,6 +629,7 @@
       // 目录页这份列表同样给 pin 住的加标记（同侧栏 `renderSidebarTasks`）：列表
       // 里靠前显示的那几条为什么在那儿，得有说明。
       if (isPinned(task.id)) meta.append(node('span', '📌', 'task-pin'));
+      const todoMark = window.MultiCCAirTaskTodo?.mark(task); if (todoMark) meta.append(todoMark);
       const worktreeBadge = window.MultiCCAirAdmin?.worktreeChangeBadge?.(task);
       if (worktreeBadge) meta.append(worktreeBadge);
       // 阶段只有计划记录才有（`workflowStage` 是计划看板那一列，记录类型由行首那个
@@ -659,7 +660,7 @@
       remove.dataset.action = 'delete';
       remove.setAttribute('aria-label', t('airDeleteTaskAria', { title: task.title || t('airUntitledTask') }));
       remove.onclick = event => { event.stopPropagation(); void deleteTaskById(task); };
-      row.append(button, remove);
+      row.append(button, ...[window.MultiCCAirTaskTodo?.rowButton(task)].filter(Boolean), remove);
       return row;
     }));
     if (!rows.length) $('directory-task-list').append(node('p', t('airDirNoTasks'), 'directory-task-empty'));
@@ -1509,7 +1510,7 @@
     $('directory-memo').hidden = !dir || mode !== 'tasks' || !!taskId;
     for (const id of ['quick-merge', 'quick-auto-commit', 'quick-share', 'pin-task',
       'details-toggle', 'chat-more']) $(id).hidden = !taskId;
-    paintPinButton();
+    paintPinButton(); window.MultiCCAirTaskTodo?.paintHeader(taskId);
     $('task-state').disabled = !taskId;
     if (!taskId) { $('task-state').classList.remove('attention'); $('task-state').removeAttribute('title'); }
     // 「正在跑」这件事，页头也是需要说清的地方之一：当前这条任务在跑的时候，
@@ -2582,6 +2583,7 @@
         // Pin 的清单随快照一起来（不用为它多打一次接口）。顺序就是页头从左到右的顺序。
         taskPins = Array.isArray(data.taskPins) ? data.taskPins.slice() : [];
         pinSignature = '';
+        window.MultiCCAirTaskTodo?.sync(data); // 手动待办同样随快照来（air-task-todo.js）
         // 「随时更新成最近使用」的落点：每次快照都把 lastRuntime 灌进新任务胶囊，
         // 除非用户面前正摆着一份手挑的配置（quickRuntimeDirty）。刷新可能来自任何
         // 地方的任何动作，不能因为它把人刚选好的线路冲回几小时前那套。
@@ -2822,6 +2824,7 @@
   $('quick-auto-commit').onclick = () => clickFrameAction('auto-commit-btn');
   $('quick-share').onclick = () => clickFrameAction('share-btn');
   $('pin-task').onclick = () => { void togglePin(taskId); };
+  window.MultiCCAirTaskTodo?.mount({ api, notice, taskId: () => taskId, tasks: () => data?.tasks || [], rerender: () => render() });
   $('details-toggle').onclick = () => { void toggleDetails(); };
   // The conversation frame's chat page owns the More menu (items, handlers,
   // popover layer). The task-header trigger just reaches into that same-origin

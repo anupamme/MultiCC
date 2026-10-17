@@ -581,6 +581,54 @@ void main() {
       client.close();
     });
 
+    testWidgets('「标记为待办」交给宿主写，成功后按钮翻成「取消待办」；不传回调就不出按钮', (tester) async {
+      final settings = await settingsFor();
+      final client = MockClient((request) async => ok(details()));
+      var toggles = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AirTaskDetailsPanel(
+              taskId: 't1',
+              service: AirService(settings: settings, httpClient: client),
+              directories: directories,
+              dirId: 'dir-a',
+              onToggleTodo: () async {
+                toggles += 1;
+                return true;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('标记为待办'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('air-details-todo')));
+      await tester.pumpAndSettle();
+      expect(toggles, 1);
+      expect(find.text('取消待办'), findsOneWidget);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: KeyedSubtree(
+              key: const ValueKey('no-todo'),
+              child: AirTaskDetailsPanel(
+                taskId: 't1',
+                service: AirService(settings: settings, httpClient: client),
+                directories: directories,
+                dirId: 'dir-a',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('air-details-todo')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      client.close();
+    });
+
     testWidgets('移动只列别的目录，选中后发 relocate', (tester) async {
       final settings = await settingsFor();
       final writes = <String>[];

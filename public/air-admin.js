@@ -268,7 +268,9 @@
                   : status === 'running' ? isRunning(task)
                     : status === 'waiting' ? taskStatus(task) === 'waiting'
                       : status === 'error' ? taskStatus(task) === 'error'
-                        : !['done', 'archived'].includes(task.status))
+                        // 待办：等输入 / 出错 / 需要交互 / 手动标记，判定只在 air-task-todo.js 一处。
+                        : status === 'todo' ? !!root.MultiCCAirTaskTodo?.isTodo(task)
+                          : !['done', 'archived'].includes(task.status))
       .filter(task => dir === 'all' || task.dirId === dir);
     if (keepOrder) return rows;
     // 本地过滤按标题（和目录名）匹配：它仍是即时反馈，也是全文检索不可用时的退路。
@@ -310,9 +312,9 @@
     };
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
-    row.onclick = event => { if (!event.target.closest('.task-delete')) openTask(); };
+    row.onclick = event => { if (!event.target.closest('.task-delete, .task-todo')) openTask(); };
     row.onkeydown = event => {
-      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.task-delete')) {
+      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.task-delete, .task-todo')) {
         event.preventDefault();
         openTask();
       }
@@ -326,6 +328,8 @@
     // 对齐（App 的任务行同一天也照这个改了）。
     const meta = make('small', null, 'task-meta');
     meta.append(statusBadge(task, options.badge || {}));
+    const todoMark = root.MultiCCAirTaskTodo?.mark(task);
+    if (todoMark) meta.append(todoMark);
     const worktreeBadge = worktreeChangeBadge(task);
     if (worktreeBadge) meta.append(worktreeBadge);
     const where = options.dir === false ? '' : context.directoryName(task.dirId);
@@ -338,6 +342,9 @@
     if (snippet) copy.append(snippet);
     body.append(copy, make('time', task.updatedAt ? new Date(task.updatedAt).toLocaleString(getLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''));
     row.append(body);
+    // 「全部」那格的清单可以删，也就可以就地标记 / 取消待办。
+    const todo = options.deletable ? root.MultiCCAirTaskTodo?.rowButton(task) : null;
+    if (todo) row.append(todo);
     if (options.deletable && context.deleteTask) {
       const remove = action(t('airAdminDelete'), async event => {
         event.stopPropagation();
@@ -509,7 +516,7 @@
     const statusPick = make('select');
     statusPick.id = 'console-task-status';
     statusPick.setAttribute('aria-label', t('airAdminFilterByStatus'));
-    for (const [value, text] of [['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
+    for (const [value, text] of [['todo', t('airTodoFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
       const option = make('option', text);
       option.value = value;
       statusPick.append(option);
