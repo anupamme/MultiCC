@@ -172,6 +172,9 @@ class _AirTasksViewState extends State<AirTasksView>
   _AirMode _mode = _AirMode.console;
   // 手机「最近任务」页打开时选中哪一格：控制台卡片的「全部 ›」带过来，底部导航进入时清空。
   AirDirectoryTaskFilter? _mobileRecentFilter;
+  // 手机「最近任务」按哪个目录看（null = 全部项目）。控制台不分目录；这只是那一页的
+  // 筛选，不改 [_directoryId]。
+  String? _mobileRecentDir;
 
   /// 当前目录首页显示哪一类东西。默认 Chat（任务/对话），和 Web 一致；换一个
   /// 目录也回到 Chat —— 「默认还是 chat 模式」不该被上一次切到 Terminal 记住。
@@ -847,7 +850,7 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 和输入区那条路是同一条流水线（[_createFromComposer]）：那段话既是任务名也是
   /// 第一条消息，建完直接进去。唯一的区别在写法 —— 手上开着别的任务时，它不必先
   /// 把你送回目录首页。
-  Future<void> _newTask() async {
+  Future<void> _newTask({String? preferDirectoryId}) async {
     final directories =
         _data?.directories.where((directory) => !directory.external).toList() ??
         const <AirDirectory>[];
@@ -855,8 +858,9 @@ class _AirTasksViewState extends State<AirTasksView>
       setState(() => _error = '请先选一个工作目录。');
       return;
     }
-    final directory = directories.any((entry) => entry.id == _directoryId)
-        ? directories.firstWhere((entry) => entry.id == _directoryId)
+    final wanted = preferDirectoryId ?? _directoryId;
+    final directory = directories.any((entry) => entry.id == wanted)
+        ? directories.firstWhere((entry) => entry.id == wanted)
         : directories.first;
     await showAirNewTaskSheet(
       context,

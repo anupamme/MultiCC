@@ -100,8 +100,12 @@
     return flyout;
   }
 
+  // pick：手机「最近任务」借这个侧拉当目录筛选 —— 选中的目录（null = 全部项目）交回
+  // 调用方，不跳去目录首页。普通 toggle() 会把它清掉。
+  let pick = null;
   function paintFlyout(card) {
     const context = ctx;
+    const current = pick ? pick.current : context.directoryId;
     const directories = context?.data?.directories || [];
 
     const panel = ensureFlyout();
@@ -110,14 +114,14 @@
       const row = node('button', null, 'directory-flyout-row');
       row.type = 'button';
       row.dataset.dirId = directory.id;
-      if (directory.id === context.directoryId) {
+      if (directory.id === current) {
         row.classList.add('is-current');
         row.setAttribute('aria-current', 'true');
       }
       row.append(node('strong', directory.name || directory.id), node('small', directory.path || ''));
       row.onclick = () => {
         hideFlyout();
-        context.navigate?.(directory.id);
+        if (pick) pick.onPick(directory.id); else context.navigate?.(directory.id);
       };
       list.append(row);
     }
@@ -133,7 +137,8 @@
       empty.hidden = [...list.children].some(row => !row.hidden);
     };
     const all = node('button', translate('airAllProjects'), 'directory-flyout-action'); all.type = 'button';
-    all.onclick = () => { hideFlyout(); context.setMode('overview'); };
+    if (pick && !current) all.setAttribute('aria-current', 'true');
+    all.onclick = () => { hideFlyout(); if (pick) pick.onPick(null); else context.setMode('overview'); };
     const manage = node('button', translate('airManageProjects'), 'directory-flyout-action'); manage.type = 'button';
     manage.onclick = () => { hideFlyout(); context.setMode('library'); };
     const add = node('button', '+ ' + translate('airAddDirectory'), 'directory-flyout-action'); add.type = 'button';
@@ -179,8 +184,9 @@
   }
 
   root.MultiCCAirDirectoryNav = { render, sortable, hideFlyout,
-    toggle: () => {
+    toggle: (options = null) => {
       if (flyout && !flyout.hidden) { hideFlyout(); return; }
+      pick = options?.onPick ? options : null;
       if (boundCard && paintFlyout(boundCard)) flyout.querySelector('input')?.focus();
     }, _applyLocalOrder: applyLocalOrder };
 })(typeof window !== 'undefined' ? window : null);

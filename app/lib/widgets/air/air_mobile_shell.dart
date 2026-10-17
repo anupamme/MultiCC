@@ -50,7 +50,10 @@ extension _AirMobileShell on _AirTasksViewState {
     if (mounted) await _mobileSetup.currentState?.refresh();
   }
 
-  Future<void> _mobileProjects() async {
+  /// [recentFilter]：在「最近任务」页里打开时，这张面板是那一页的目录筛选 ——
+  /// 多一行「全部项目」，选完留在原页，不跳去目录首页（同 Web air-mobile.js）。
+  Future<void> _mobileProjects({bool recentFilter = false}) async {
+    final current = recentFilter ? _mobileRecentDir : _directoryId;
     await widget.beforeOpenNavigation?.call();
     if (!mounted) return;
     final chosen = await showModalBottomSheet<String>(
@@ -72,6 +75,14 @@ extension _AirMobileShell on _AirTasksViewState {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
+            if (recentFilter)
+              ListTile(
+                key: const ValueKey('air-mobile-project-all'),
+                leading: const Icon(Icons.folder_copy_outlined),
+                title: Text(t('airAllProjects')),
+                trailing: current == null ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.pop(sheetContext, '__all__'),
+              ),
             for (final directory in _data?.directories ?? <AirDirectory>[])
               ListTile(
                 key: ValueKey('air-mobile-project-${directory.id}'),
@@ -82,7 +93,7 @@ extension _AirMobileShell on _AirTasksViewState {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                trailing: directory.id == _directoryId
+                trailing: directory.id == current
                     ? const Icon(Icons.check)
                     : null,
                 onTap: () => Navigator.pop(sheetContext, directory.id),
@@ -111,6 +122,12 @@ extension _AirMobileShell on _AirTasksViewState {
       await _addDirectory();
       return;
     }
+    if (recentFilter) {
+      _updateMobile(
+        () => _mobileRecentDir = chosen == '__all__' ? null : chosen,
+      );
+      return;
+    }
     final previous = _mode;
     _selectDirectory(chosen);
     _updateMobile(
@@ -121,7 +138,8 @@ extension _AirMobileShell on _AirTasksViewState {
   Widget _mobileWorkspace(AirSnapshot? data) => AirMobileWorkspace(
     key: ValueKey(_mode),
     data: data,
-    directoryId: _directoryId,
+    // 控制台跨所有项目；最近任务按本页选的目录（null = 全部项目）。
+    directoryId: _mode == _AirMode.recent ? _mobileRecentDir : null,
     recent: _mode == _AirMode.recent,
     initialFilter: _mode == _AirMode.recent ? _mobileRecentFilter : null,
     recentTasks: _sidebarTasks(),
@@ -182,26 +200,38 @@ extension _AirMobileShell on _AirTasksViewState {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: 12,
+        // 控制台不分目录：顶栏只留服务器地址，不给目录按钮。最近任务里这个按钮是
+        // 本页的目录筛选；其余页面照旧是切换当前项目。
         title: InkWell(
           key: const ValueKey('air-mobile-project-picker'),
-          onTap: () => unawaited(_mobileProjects()),
+          onTap: _mode == _AirMode.console
+              ? null
+              : () => unawaited(
+                  _mobileProjects(recentFilter: _mode == _AirMode.recent),
+                ),
           child: Row(
             children: [
-              const Icon(Icons.folder_outlined, color: AppColors.accent),
-              const SizedBox(width: 8),
+              if (_mode != _AirMode.console) ...[
+                const Icon(Icons.folder_outlined, color: AppColors.accent),
+                const SizedBox(width: 8),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      directory?.name ?? '选择项目',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                    if (_mode != _AirMode.console)
+                      Text(
+                        _mode == _AirMode.recent
+                            ? data?.directoryOf(_mobileRecentDir)?.name ??
+                                  t('airAllProjects')
+                            : directory?.name ?? '选择项目',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
                     Text(
                       widget.settings.host,
                       maxLines: 1,
@@ -214,7 +244,8 @@ extension _AirMobileShell on _AirTasksViewState {
                   ],
                 ),
               ),
-              const Icon(Icons.expand_more, size: 18),
+              if (_mode != _AirMode.console)
+                const Icon(Icons.expand_more, size: 18),
             ],
           ),
         ),
@@ -335,7 +366,13 @@ extension _AirMobileShell on _AirTasksViewState {
                               ? unawaited(
                                   _mobileSchedules.currentState?.openEditor(),
                                 )
-                              : unawaited(_newTask()),
+                              : unawaited(
+                                  _newTask(
+                                    preferDirectoryId: _mode == _AirMode.recent
+                                        ? _mobileRecentDir
+                                        : null,
+                                  ),
+                                ),
                     icon: const Icon(Icons.add),
                     label: Text(schedules ? '新建定时任务' : '新任务'),
                   ),

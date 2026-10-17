@@ -8,6 +8,9 @@
   // filter 管「最近任务」页，consoleView 管控制台那张卡；从卡片点「全部 ›」会带着
   // 当前那一格过去，并清掉上次留下的搜索词（要看的是这一格的完整清单）。
   let query = '', filter = 'recent', consoleView = 'recent';
+  // 控制台不分目录，看的是所有项目；按目录看在「最近任务」页里选（null = 全部项目）。
+  // 这只是这一页的筛选，不改全局「当前目录」。
+  let recentDir = null;
   const make = (tag, text, cls) => {
     const el = document.createElement(tag);
     if (text != null) el.textContent = text;
@@ -21,8 +24,8 @@
   // 打开过」的顺序：在电脑上新建、手机上没点开过的任务会被挤到底，而服务端 tasks
   // 本身是从旧到新排的，补位进来的全是最老的任务。
   // 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），只看谁最近动过。
-  function recentRows(context, withPins = true) {
-    const { data, directoryId } = context;
+  function recentRows(context, withPins = true, directoryId = null) {
+    const { data } = context;
     const tasks = (data.tasks || []).filter(task => !directoryId || task.dirId === directoryId);
     const byId = new Map(tasks.map(task => [task.id, task]));
     const pinned = withPins ? (data.taskPins || []).map(id => byId.get(id)).filter(Boolean) : [];
@@ -46,7 +49,8 @@
     row.dataset.taskId = task.id;
     const copy = make('span', null, 'mobile-task-copy');
     const stage = task.recordType === 'planned' ? context.label(task.workflowStage || task.status) : '';
-    copy.append(make('strong', task.title), make('small', task.phase || stage || context.directoryName(task.dirId)));
+    // 控制台和「全部项目」跨目录，每行都带上目录名，免得同名任务分不清。
+    copy.append(make('strong', task.title), make('small', [context.directoryName(task.dirId), task.phase || stage].filter(Boolean).join(' · ')));
     const state = root.MultiCCAirAdmin.taskStatus(task);
     row.append(copy, make('span', context.label(state), `mobile-task-status state-${state}`));
     return row;
@@ -54,7 +58,8 @@
   function renderRecent(context) {
     ctx = { ...ctx, ...context };
     const content = $('admin-content');
-    const signature = JSON.stringify([context.directoryId, context.data.tasks, ctx.recentTasks, root.currentLang, filter]);
+    if (recentDir && !context.data.directories.some(dir => dir.id === recentDir)) recentDir = null;
+    const signature = JSON.stringify([recentDir, context.data.tasks, ctx.recentTasks, root.currentLang, filter]);
     if (content.dataset.mobileRecent === signature && content.querySelector('#mobile-task-search')) return;
     const focus = document.activeElement?.id === 'mobile-task-search';
     const start = document.activeElement?.selectionStart;
@@ -64,7 +69,7 @@
     const tabs = make('div', null, 'mobile-task-filters');
     const list = make('div', null, 'mobile-task-list');
     const paint = () => {
-      let rows = filterRows(recentRows(ctx), filter);
+      let rows = filterRows(recentRows(ctx, true, recentDir), filter);
       if (filter === 'recent') rows = rows.slice(0, 30);
       const needle = query.trim().toLowerCase();
       rows = rows.filter(task => !needle || [task.title, task.phase, task.goal, task.summary].some(value => String(value || '').toLowerCase().includes(needle)));
@@ -83,12 +88,28 @@
   function mount() {
     if ($('air-mobile-top')) return;
     const top = make('div', null, 'air-mobile-top'); top.id = 'air-mobile-top';
-    const project = button('', event => { event.stopPropagation(); root.MultiCCAirDirectoryNav.toggle(); }, 'air-mobile-project'); project.id = 'air-mobile-project';
+    // 最近任务页里它是目录筛选（侧拉选完留在这页）；定时任务、目录首页照旧是切目录。
+    const project = button('', event => {
+      event.stopPropagation();
+      root.MultiCCAirDirectoryNav.toggle(ctx.mode !== 'recent' ? null : {
+        current: recentDir,
+        onPick: id => { recentDir = id; render(ctx); renderRecent(ctx); },
+      });
+    }, 'air-mobile-project'); project.id = 'air-mobile-project';
+    // 控制台不分目录，顶栏那格留空（页面大标题已经写着「控制台」）。
+    const spacer = make('span', null, 'air-mobile-spacer'); spacer.id = 'air-mobile-spacer'; spacer.setAttribute('aria-hidden', 'true');
     const settings = button('⚙', () => ctx.setMode('settings'), 'air-mobile-settings'); settings.id = 'air-mobile-settings';
     settings.setAttribute('aria-label', root.t('airSettingsCenter'));
-    top.append(project, settings); document.querySelector('main').prepend(top);
+    top.append(project, spacer, settings); document.querySelector('main').prepend(top);
     const dock = make('div', null, 'air-mobile-dock'); dock.id = 'air-mobile-dock';
-    const create = button('', () => $(ctx.mode === 'schedules' ? 'schedule-create' : 'create').click(), 'primary'); create.id = 'air-mobile-create';
+    const create = button('', () => {
+      $(ctx.mode === 'schedules' ? 'schedule-create' : 'create').click();
+      // 最近任务按某个目录在看时，新任务默认建到那个目录（弹窗里仍可改）。
+      const pickDir = $('quick-task-dialog-directory');
+      if (ctx.mode === 'recent' && recentDir && $('quick-task-dialog').open && pickDir) {
+        pickDir.value = recentDir; pickDir.dispatchEvent(new Event('change'));
+      }
+    }, 'primary'); create.id = 'air-mobile-create';
     const nav = make('nav'); nav.setAttribute('aria-label', root.t('airSidebarNav'));
     for (const [view, glyph, key] of [['overview', '▦', 'airConsole'], ['recent', '☷', 'airRecentTasks'], ['schedules', '◷', 'airScheduledTasks']]) {
       const tab = button('', () => ctx.setMode(view)); tab.dataset.mobileView = view;
@@ -146,7 +167,13 @@
     $('air-mobile-top').hidden = !primary;
     $('air-mobile-dock').hidden = !primary;
     const dir = ctx.data.directories.find(item => item.id === ctx.directoryId);
-    $('air-mobile-project').textContent = (dir?.name || root.t('airHeaderNoDirectory')) + ' ⌄';
+    const recentPick = ctx.data.directories.find(item => item.id === recentDir);
+    const overview = ctx.mode === 'overview';
+    $('air-mobile-project').hidden = overview;
+    $('air-mobile-spacer').hidden = !overview;
+    $('air-mobile-project').textContent = (ctx.mode === 'recent'
+      ? recentPick?.name || root.t('airAllProjects')
+      : dir?.name || root.t('airHeaderNoDirectory')) + ' ⌄';
     $('air-mobile-project').setAttribute('aria-label', root.t('airDirSwitchHeading'));
     $('air-mobile-settings').setAttribute('aria-label', root.t('airSettingsCenter'));
     $('air-mobile-create').textContent = ctx.mode === 'schedules' ? root.t('airNewScheduledTask') : root.t('airNewTask');
