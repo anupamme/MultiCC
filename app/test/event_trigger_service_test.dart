@@ -135,6 +135,7 @@ void main() {
           'secretName': 'SIGN',
           'includeConclusion': true,
         },
+        'then': [],
         'enabled': true,
         'cooldownMs': 30000,
       });
@@ -184,6 +185,49 @@ void main() {
       baseFilter: {'goalState': 'achieved'},
     ).toJson()['filter'];
     expect(set, {'goalState': 'achieved', 'cancelled': false});
+  });
+
+  test('chain: then round-trips, blank editable steps are rejected', () {
+    final rule = HookRule.fromJson({
+      'id': 'c1',
+      'on': ['task.finished'],
+      'action': {'kind': 'inject-prompt', 'prompt': 'a'},
+      'then': [
+        {'kind': 'inject-prompt', 'prompt': 'b'},
+        {'kind': 'notify', 'message': 'done'},
+      ],
+    });
+    expect(rule.then.length, 2);
+    expect(hookChainStepEditable(rule.then[0]), isTrue);
+    expect(hookChainStepEditable(rule.then[1]), isFalse);
+    expect(
+      hookChainStepEditable({
+        'kind': 'inject-prompt',
+        'prompt': 'x',
+        'targetSessionId': 's2',
+      }),
+      isFalse,
+      reason: '指定目标的步骤表单编辑不了，原样保留',
+    );
+    expect(HookRule.fromJson({'id': 'n'}).then, isEmpty);
+    final draft = HookDraft(
+      on: const ['task.finished'],
+      kind: 'notify',
+      then: rule.then,
+    );
+    expect(draft.toJson()['then'], rule.then);
+    expect(draft.validate(), isNull);
+    expect(
+      const HookDraft(
+        on: ['task.finished'],
+        kind: 'notify',
+        then: [
+          {'kind': 'inject-prompt', 'prompt': ' '},
+        ],
+      ).validate(),
+      '后续步骤的指令不能为空',
+    );
+    expect(HookRun.fromJson({'ok': true, 'step': 2, 'steps': 3}).steps, 3);
   });
 
   test('validate catches missing events and webhook url', () {

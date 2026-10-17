@@ -286,7 +286,7 @@ class HookCard extends StatelessWidget {
         : '会话：${item.sessionLabel ?? item.sessionId}';
     final runText = run == null
         ? '尚未触发'
-        : '最近执行 ${_fmtRun(run.ts)} · ${run.ok ? '成功' : '失败 ${run.error}'}';
+        : '最近执行 ${_fmtRun(run.ts)}${run.steps != null ? ' · ${run.step}/${run.steps}' : ''} · ${run.ok ? '成功' : '失败 ${run.error}'}';
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -343,6 +343,21 @@ class HookCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: AppColors.faint, fontSize: 12),
             ),
+          ],
+          // 链式钩子：标出总步数，后续步骤按序号列在第一步下面（同网页）。
+          if (rule.then.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              '共 ${rule.then.length + 1} 步',
+              style: const TextStyle(color: AppColors.muted, fontSize: 12),
+            ),
+            for (var i = 0; i < rule.then.length; i++)
+              Text(
+                '${i + 2}. ${(rule.then[i]['prompt'] ?? '').toString().isNotEmpty ? rule.then[i]['prompt'] : hookActionLabel((rule.then[i]['kind'] ?? '').toString())}',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.faint, fontSize: 12),
+              ),
           ],
           const SizedBox(height: 8),
           Row(
@@ -449,6 +464,11 @@ class _HookEditorState extends State<HookEditor> {
   String _newDir = '';
   String _newCli = '';
   late final TextEditingController _newTitle;
+
+  /// 后续步骤：可编辑的注入指令带一个输入框；其余（经 API 建的通知 / Webhook /
+  /// 指定目标）原样保留、只能删除。
+  final List<({Map<String, dynamic> step, TextEditingController? prompt})>
+  _chain = [];
   bool _saving = false;
   String? _err;
 
@@ -481,11 +501,30 @@ class _HookEditorState extends State<HookEditor> {
     _newDir = spec?.dirId ?? '';
     _newCli = spec?.cli ?? '';
     _newTitle = TextEditingController(text: spec?.title ?? '');
+    for (final step in r?.then ?? const <Map<String, dynamic>>[]) {
+      _addStep(step);
+    }
   }
+
+  void _addStep(Map<String, dynamic> step) => _chain.add((
+    step: step,
+    prompt: hookChainStepEditable(step)
+        ? TextEditingController(text: (step['prompt'] ?? '').toString())
+        : null,
+  ));
 
   @override
   void dispose() {
-    for (final c in [_name, _message, _url, _prompt, _cooldown, _newTitle]) {
+    for (final c in [
+      _name,
+      _message,
+      _url,
+      _prompt,
+      _cooldown,
+      _newTitle,
+      for (final entry in _chain)
+        if (entry.prompt != null) entry.prompt!,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -512,6 +551,12 @@ class _HookEditorState extends State<HookEditor> {
     newSession: _target == kHookNewSession
         ? HookNewSession(dirId: _newDir, cli: _newCli, title: _newTitle.text)
         : null,
+    then: [
+      for (final entry in _chain)
+        entry.prompt == null
+            ? entry.step
+            : {'kind': 'inject-prompt', 'prompt': entry.prompt!.text.trim()},
+    ],
     cooldownSeconds: int.tryParse(_cooldown.text.trim()) ?? 0,
     enabled: _enabled,
     baseFilter: _editing?.rule.filter ?? const {},
@@ -808,6 +853,69 @@ class _HookEditorState extends State<HookEditor> {
                 style: TextStyle(color: AppColors.faint, fontSize: 11.5),
               ),
             ],
+            const SizedBox(height: 14),
+            _label('然后依次执行（可选）'),
+            for (var i = 0; i < _chain.length; i++)
+              Padding(
+                key: ValueKey('hook-chain-step-$i'),
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10, right: 6),
+                      child: Text(
+                        '${i + 2}.',
+                        style: const TextStyle(color: AppColors.muted),
+                      ),
+                    ),
+                    Expanded(
+                      child: _chain[i].prompt != null
+                          ? TextField(
+                              controller: _chain[i].prompt,
+                              minLines: 1,
+                              maxLines: 4,
+                              maxLength: 4000,
+                              decoration: _deco('第 ${i + 2} 步的指令'),
+                            )
+                          : Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Text(
+                                '${hookActionLabel((_chain[i].step['kind'] ?? '').toString())}（保留原设置）',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            ),
+                    ),
+                    IconButton(
+                      tooltip: '删除这一步',
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppColors.danger,
+                      ),
+                      onPressed: () => setState(() {
+                        _chain.removeAt(i).prompt?.dispose();
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            if (_chain.length < kHookMaxChainSteps)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('hook-chain-add'),
+                  onPressed: () => setState(
+                    () => _addStep({'kind': 'inject-prompt', 'prompt': ''}),
+                  ),
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('添加下一步'),
+                ),
+              ),
+            const Text(
+              '每一步都等上一步注入的那一轮跑完（任务完成）才开始，接在上一步所在的会话里，并自动带上上一步的结论；某一步失败或停下等你回复时，后面的步骤不再执行。',
+              style: TextStyle(color: AppColors.faint, fontSize: 11.5),
+            ),
             const SizedBox(height: 14),
             _label('冷却（秒，留空用默认）'),
             TextField(

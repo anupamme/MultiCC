@@ -185,6 +185,50 @@ void main() {
     expect(body['enabled'], false);
   });
 
+  testWidgets('chain: card lists steps; editor edits, adds and keeps them', (
+    tester,
+  ) async {
+    items[0]['rule']['then'] = [
+      {'kind': 'inject-prompt', 'prompt': '按方案实现'},
+      {'kind': 'notify', 'message': '完成'},
+    ];
+    items[0]['lastRun'] = {
+      'ts': 1700000000000,
+      'ok': true,
+      'step': 2,
+      'steps': 3,
+    };
+    final key = await pump(tester);
+    expect(find.text('共 3 步'), findsOneWidget);
+    expect(find.text('2. 按方案实现'), findsOneWidget);
+    expect(find.text('3. 通知我'), findsOneWidget);
+    expect(find.textContaining('· 2/3 · 成功'), findsOneWidget);
+
+    key.currentState!.openEditor(item: HookItem.fromJson(items[0]));
+    await tester.pumpAndSettle();
+    expect(find.text('按方案实现'), findsOneWidget, reason: '可编辑步骤带出原指令');
+    expect(find.text('通知我（保留原设置）'), findsOneWidget);
+
+    await tapVisible(tester, find.byKey(const ValueKey('hook-chain-add')));
+    await tapVisible(tester, find.text('保存'));
+    expect(find.text('后续步骤的指令不能为空'), findsOneWidget);
+    expect(calls.any((c) => c.method == 'PUT'), isFalse);
+
+    final blank = find.descendant(
+      of: find.byKey(const ValueKey('hook-chain-step-2')),
+      matching: find.byType(TextField),
+    );
+    await tester.ensureVisible(blank);
+    await tester.enterText(blank, '跑测试并汇报');
+    await tapVisible(tester, find.text('保存'));
+    final put = calls.firstWhere((c) => c.method == 'PUT');
+    expect((jsonDecode(put.body) as Map)['then'], [
+      {'kind': 'inject-prompt', 'prompt': '按方案实现'},
+      {'kind': 'notify', 'message': '完成'},
+      {'kind': 'inject-prompt', 'prompt': '跑测试并汇报'},
+    ]);
+  });
+
   Future<void> openSheet(
     WidgetTester tester, {
     HookItem? item,

@@ -606,3 +606,103 @@ test('engine: disabling a rule mid-chain cancels the remaining steps', async () 
   assert.equal(h.calls.inject.length, 1);
   assert.equal(h.engine.recentResults().at(-1).error, 'chain cancelled (rule changed)');
 });
+
+test('engine: a user turn finishing while the step is queued does not advance the chain', async () => {
+  const h = chainHarness();
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' }, then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  // the user's own message ran first and finished
+  h.hub.emit('turn.completed', 's1', { lineageKind: 'user' });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1, '用户自己那一轮的完成不算第一步完成');
+  assert.equal(h.engine.pendingChains()[0].index, 1);
+  // then the injected step itself finishes
+  h.hub.emit('turn.completed', 's1', { lineageKind: 'trigger' });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 2);
+  assert.ok(h.calls.inject[1][1].trimEnd().endsWith('你的指令：b'));
+});
+
+test('engine: a busy session makes the next step wait instead of failing', async () => {
+  let busy = false;
+  const injected = [];
+  const h = chainHarness({ injectPrompt: (id, text) => { if (busy) return { ok: false, code: 'target_busy' }; injected.push(text); return true; } });
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' }, then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  busy = true;
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(injected.length, 1);
+  assert.deepEqual(h.engine.pendingChains().map((c) => [c.index, c.awaiting]), [[1, 'inject']]);
+  assert.equal(h.engine.recentResults().at(-1).error, 'chain waiting: target busy');
+  // a failure of the user's busy turn does not cancel the waiting step
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.engine.pendingChains().length, 1);
+  busy = false;
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(injected.length, 2);
+  assert.ok(injected[1].trimEnd().endsWith('你的指令：b'));
+  assert.equal(h.engine.pendingChains().length, 0);
+});
+
+test('engine: parked chains survive a restart through the rules store', async () => {
+  const h = chainHarness();
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' }, then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.deepEqual(h.stored.chains.map((c) => [c.sessionId, c.index]), [['s1', 1]]);
+  const saved = JSON.parse(JSON.stringify(h.stored));
+  h.engine.stop();
+
+  const { bus, hub } = harness();
+  const inject = [];
+  const engine = createEventRuleEngine({
+    hub, persistedSessions: h.persistedSessions, now: () => 1000000,
+    store: { read: () => saved, write: () => {} },
+    injectPrompt: (...a) => { inject.push(a); return true; },
+  });
+  engine.start();
+  assert.equal(engine.pendingChains().length, 1, '重启后从规则文件恢复等待中的链');
+  bus.emit('task:state-changed', 's1', base, toD());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(inject.length, 1);
+  assert.ok(inject[0][1].trimEnd().endsWith('你的指令：b'));
+  assert.equal(engine.pendingChains().length, 0);
+});
+
+test('engine: an unreadable rules file is never overwritten by chain bookkeeping', async () => {
+  const { hub } = harness();
+  const writes = [];
+  const engine = createEventRuleEngine({
+    hub, persistedSessions: new Map([['s1', { id: 's1', triggers: [] }]]), now: () => 1,
+    store: { read: () => { throw new Error('corrupt'); }, write: (v) => writes.push(v) },
+    injectPrompt: () => true,
+  });
+  engine.start();
+  hub.emit('turn.completed', 's1', { lineageKind: 'user' });
+  engine.forgetSession('s1');
+  assert.equal(writes.length, 0);
+});
+
+test('events host: a streaming or missing target reports why instead of a bare false', async () => {
+  const { createEventsHost } = require('../src/events/host');
+  const { bus } = harness();
+  const rulesFile = require('path').join(require('os').tmpdir(), `ev-busy-${process.pid}-${Date.now()}.json`);
+  const host = createEventsHost({ bus, app: null, persistedSessions: new Map([['s1', { id: 's1', dirId: 'd' }]]),
+    chatSessions: new Map([['s1', { isStreaming: true }]]), saveBestEffort: () => {}, rulesFile, logger: { warn() {} },
+    secretsVault: { reveal: () => null }, notify: () => {}, createChatTask: async () => ({}), admit: async () => ({ ok: true }) });
+  host.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p' } });
+  host.engine.addGlobal({ on: ['task.failed'], action: { kind: 'inject-prompt', prompt: 'p', targetSessionId: 'gone' } });
+  host.start();
+  host.hub.emit('task.failed', 's1', { goal: 'g' });
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+  await host.stop();
+  assert.deepEqual(host.engine.recentResults().map((r) => r.error).sort(), ['target_busy', 'target_missing']);
+  require('fs').rmSync(rulesFile, { force: true });
+});

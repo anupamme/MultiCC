@@ -9,8 +9,13 @@
 // step that injected a prompt parks the chain on its target session until that
 // session's next terminal event — task.finished runs the next step with the new
 // event (so the step's conclusion flows into the next prompt), failed /
-// waiting_user stop the chain, waiting_background keeps waiting. Pending
-// chains live in memory only: a server restart drops them.
+// waiting_user stop the chain, waiting_background keeps waiting.
+// - A terminal event that only follows the user's own turns (turn.completed
+//   lineage `user`/`dispatch`, no `trigger` turn yet) is not the step's and is
+//   ignored; with no lineage seen at all the event is trusted as before.
+// - A next step whose session is busy waits for that session's next
+//   task.finished instead of failing.
+// Parked chains are persisted next to the global rules so a restart resumes them.
 
 const { matchesAny } = require('./catalog');
 const { ACTIONS } = require('./actions');
@@ -52,15 +57,36 @@ function createEventRuleEngine(deps) {
   const results = [];            // bounded recent run log
   let unsubscribe = null;
 
+  let loadFailed = false;
+
   function load() {
+    loadFailed = false;
+    chains.clear();
     try {
       const data = deps.store ? deps.store.read() : null;
       globalRules = Array.isArray(data && data.rules) ? data.rules : [];
-    } catch (_) { globalRules = []; }
+      for (const chain of Array.isArray(data && data.chains) ? data.chains : []) {
+        if (!chain || typeof chain.sessionId !== 'string' || typeof chain.ruleId !== 'string'
+          || !Number.isInteger(chain.index) || chain.index < 1) continue;
+        const { sessionId, ...rest } = chain;
+        chains.set(sessionId, { awaiting: 'turn', sawTrigger: false, sawOther: false, since: now(), ...rest });
+      }
+    } catch (_) { globalRules = []; loadFailed = true; }
   }
 
   function persist() {
-    if (deps.store) deps.store.write({ version: 1, rules: globalRules });
+    if (!deps.store) return;
+    const pending = [...chains].map(([sessionId, chain]) => ({ sessionId, ...chain }));
+    deps.store.write({ version: 1, rules: globalRules, chains: pending });
+  }
+
+  // Chain bookkeeping must never clobber a rules file that failed to load.
+  function persistChains() {
+    if (loadFailed) return;
+    try { persist(); }
+    catch (error) {
+      try { logger.warn && logger.warn('event_chain_persist_failed', { error: String(error && error.message || error).slice(0, 120) }); } catch (_) {}
+    }
   }
 
   function record(entry) {
@@ -92,25 +118,33 @@ function createEventRuleEngine(deps) {
     return (persisted && Array.isArray(persisted.triggers) && persisted.triggers.find((rule) => rule.id === ruleId)) || null;
   }
 
-  function park(sessionId, rule, owner, index) {
+  // awaiting: 'turn' = the injected step is running; 'inject' = the next step
+  // could not be injected yet (session busy) and retries on the next finish.
+  function park(sessionId, rule, owner, index, awaiting = 'turn') {
     const previous = chains.get(sessionId);
-    if (previous) record({ ruleId: previous.ruleId, step: previous.index + 1, ok: false, error: 'chain superseded' });
+    if (previous && (previous.ruleId !== rule.id || previous.index !== index)) {
+      record({ ruleId: previous.ruleId, step: previous.index + 1, ok: false, error: 'chain superseded' });
+    }
     chains.delete(sessionId);
-    chains.set(sessionId, { ruleId: rule.id, owner, index, since: now() });
+    chains.set(sessionId, { ruleId: rule.id, owner, index, since: now(), awaiting, sawTrigger: false, sawOther: false });
     while (chains.size > MAX_PENDING_CHAINS) {
       const [oldest, chain] = chains.entries().next().value;
       chains.delete(oldest);
       record({ ruleId: chain.ruleId, step: chain.index + 1, ok: false, error: 'chain dropped (too many pending)' });
     }
+    persistChains();
   }
 
   function sweepChains() {
     const at = now();
+    let changed = false;
     for (const [sessionId, chain] of chains) {
       if (at - chain.since < CHAIN_STEP_TIMEOUT_MS) continue;
       chains.delete(sessionId);
+      changed = true;
       record({ ruleId: chain.ruleId, step: chain.index + 1, ok: false, error: 'chain timed out' });
     }
+    if (changed) persistChains();
   }
 
   // step 0 = rule.action, step n = rule.then[n - 1].
@@ -128,6 +162,13 @@ function createEventRuleEngine(deps) {
       record({ ruleId: rule.id, kind: action.kind, eventType: event.type, ok: false, error: 'action threw', ...progress });
       try { logger.warn && logger.warn('event_rule_action_failed', { ruleId: rule.id, error: String(error && error.message || error).slice(0, 120) }); } catch (_) {}
       return { ok: false };
+    }
+    if (step > 0 && action.kind === 'inject-prompt' && outcome.error === 'target_busy') {
+      // The session is still busy (e.g. a message the user queued): try again
+      // when it next finishes instead of breaking the chain.
+      record({ ruleId: rule.id, kind: action.kind, eventType: event.type, ok: false, error: 'chain waiting: target busy', ...progress });
+      park(outcome.target || event.sessionId, rule, owner, step, 'inject');
+      return outcome;
     }
     record({ ruleId: rule.id, kind: action.kind, eventType: event.type, ok: outcome.ok, error: outcome.error || null, ...progress });
     if (action.kind === 'inject-prompt' && outcome.ok) selfInjected.set(outcome.target, rule.id);
@@ -147,9 +188,21 @@ function createEventRuleEngine(deps) {
   // event belonged to a chain (so other inject rules must stay quiet).
   function advanceChain(event) {
     const chain = event.sessionId ? chains.get(event.sessionId) : null;
-    if (!chain || !TERMINAL.has(event.type)) return false;
+    if (!chain) return false;
+    if (event.type === 'turn.completed') {
+      if (chain.awaiting !== 'turn') return false;
+      if (event.data.lineageKind === 'trigger') chain.sawTrigger = true;
+      else chain.sawOther = true;
+      persistChains();
+      return false;
+    }
+    if (!TERMINAL.has(event.type)) return false;
+    // Only the user's own turns have finished so far: the step is still queued.
+    if (chain.awaiting === 'turn' && chain.sawOther && !chain.sawTrigger) return false;
+    if (chain.awaiting === 'inject' && event.type !== CHAIN_ADVANCE) return false;
     if (event.type !== CHAIN_ADVANCE && !CHAIN_STOP.has(event.type)) return true;
     chains.delete(event.sessionId);
+    persistChains();
     const stopped = { ruleId: chain.ruleId, eventType: event.type, step: chain.index + 1, ok: false };
     if (CHAIN_STOP.has(event.type)) { record({ ...stopped, error: `chain stopped: ${event.type}` }); return true; }
     const rule = liveRule(chain.ruleId, chain.owner);
@@ -259,7 +312,7 @@ function createEventRuleEngine(deps) {
     pendingChains: () => [...chains].map(([sessionId, chain]) => ({ sessionId, ...chain })),
     // exposed for tests / manual-test route
     handle: onEvent,
-    forgetSession: (sessionId) => { selfInjected.delete(sessionId); chains.delete(sessionId); },
+    forgetSession: (sessionId) => { selfInjected.delete(sessionId); if (chains.delete(sessionId)) persistChains(); },
   });
 }
 
