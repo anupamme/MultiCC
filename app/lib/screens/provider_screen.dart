@@ -158,7 +158,11 @@ class _ProviderScreenState extends State<ProviderScreen> {
   Future<void> _openReassign(Map<String, dynamic> p) async {
     final result = await showDialog<String>(
       context: context,
-      builder: (_) => ProviderReassignDialog(manage: _manage, provider: p),
+      builder: (_) => ProviderReassignDialog(
+        manage: _manage,
+        provider: p,
+        providers: _providers,
+      ),
     );
     if (result != null && result.isNotEmpty) _snack(result);
     await _refresh();

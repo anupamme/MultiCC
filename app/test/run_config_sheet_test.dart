@@ -438,6 +438,116 @@ void main() {
     expect(out.value?.model, 'glm-4.5-flash');
   });
 
+  // ── 额度（limit）在自动挑选里的呈现 ──────────────────────────────────────
+
+  testWidgets('自动池的行给有额度的线路加小字副行；没额度的行保持原样', (tester) async {
+    final out = _Captured();
+    await _open(
+      tester,
+      const RunConfigSheet(
+        cli: SessionCli.claude,
+        providers: [
+          {
+            'id': 'cheap',
+            'name': '便宜线',
+            'protocol': 'anthropic',
+            'modelOptions': ['glm-4.5-flash'],
+            'limit': {
+              'bar': {'text': '5h 87%'},
+            },
+          },
+          {
+            'id': 'strong',
+            'name': '主力线',
+            'protocol': 'anthropic',
+            'modelOptions': ['glm-5.2'],
+          },
+        ],
+        provider: 'cheap',
+        model: 'glm-4.5-flash',
+        effort: 'medium',
+        providerSelection: pool,
+      ),
+      out,
+    );
+
+    final cheapRow = find.byKey(const Key('run-pool-row-claude:cheap'));
+    final strongRow = find.byKey(const Key('run-pool-row-claude:strong'));
+    expect(
+      find.descendant(of: cheapRow, matching: find.text('5h 87%')),
+      findsOneWidget,
+    );
+    // limit 为 null 的行不建副行：既没有额度文案，也不会因此变高。
+    expect(
+      find.descendant(of: strongRow, matching: find.textContaining('%')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('添加线路列表：有额度的线路带小字副标题，没额度的行没有副标题', (tester) async {
+    final s = await settings(host: 'http://server.example');
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/providers') {
+        return _json(200, {
+          'providers': [
+            {
+              'id': 'exp-with-limit',
+              'name': '有额度线路',
+              'protocol': 'anthropic',
+              'limit': {
+                'bar': {'text': '1wk 42%'},
+              },
+            },
+            {
+              'id': 'exp-no-limit',
+              'name': '无额度线路',
+              'protocol': 'anthropic',
+            },
+          ],
+        });
+      }
+      return _json(200, {'ok': true, 'models': const []});
+    });
+    final out = _Captured();
+    await _open(
+      tester,
+      RunConfigSheet(
+        cli: SessionCli.claude,
+        providers: poolProviders,
+        provider: 'cheap',
+        model: '',
+        effort: 'medium',
+        providerSelection: pool,
+        settings: s,
+        httpClient: client,
+        cliAvailability: const {SessionCli.claudeExp: true},
+      ),
+      out,
+    );
+
+    await tester.ensureVisible(find.byKey(const Key('run-add-line')));
+    await tester.tap(find.byKey(const Key('run-add-line')));
+    await tester.pumpAndSettle();
+
+    final withLimit = find.byKey(
+      const Key('run-add-line-claude-exp-exp-with-limit'),
+    );
+    final noLimit = find.byKey(
+      const Key('run-add-line-claude-exp-exp-no-limit'),
+    );
+    expect(withLimit, findsOneWidget);
+    expect(noLimit, findsOneWidget);
+    expect(
+      find.descendant(of: withLimit, matching: find.text('1wk 42%')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: noLimit, matching: find.textContaining('%')),
+      findsNothing,
+    );
+    expect(tester.widget<ListTile>(noLimit).subtitle, isNull);
+  });
+
   // ── 混池 + 子任务 ───────────────────────────────────────────────────────
 
   const mixedProviders = <Map<String, dynamic>>[

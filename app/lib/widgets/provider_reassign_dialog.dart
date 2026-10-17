@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../i18n.dart';
+import '../models/provider_limit_label.dart';
 import '../services/manage_service.dart';
 import '../theme.dart';
+import 'provider_option.dart';
 
 /// 「批量迁移会话…」弹层 —— 与网页管理台（`public/air-provider.js` 的
 /// `openReassign`）同一份契约：
@@ -16,10 +18,17 @@ import '../theme.dart';
 class ProviderReassignDialog extends StatefulWidget {
   final ManageService manage;
   final Map<String, dynamic> provider;
+
+  /// 当前 Provider 页的完整目录。dry-run 的目标只带 id/name/条数（服务端
+  /// `src/provider-reassign.js` 的 summarizeTargets），额度数据在这份目录里；
+  /// 给目标下拉补上额度摘要，用户选目标时就知道那条线路还剩多少。
+  final List<Map<String, dynamic>> providers;
+
   const ProviderReassignDialog({
     super.key,
     required this.manage,
     required this.provider,
+    this.providers = const [],
   });
 
   @override
@@ -227,6 +236,16 @@ class _ProviderReassignDialogState extends State<ProviderReassignDialog> {
     );
   }
 
+  /// 目标线路对应的完整 provider（含 `limit`）。优先查页面目录；服务端哪天把
+  /// limit 直接塞进 targets 也能用。找不到就是没有额度数据。
+  Map<String, dynamic>? _targetLimitSource(Map<String, dynamic> item) {
+    final id = (item['id'] ?? '').toString();
+    for (final p in widget.providers) {
+      if ((p['id'] ?? '').toString() == id) return p;
+    }
+    return item.containsKey('limit') ? item : null;
+  }
+
   /// 目标下拉：只列服务端算过「至少有一个会话搬得过去」的线路，选项里带上条数，
   /// 用户不用点开就知道这条目标会漏掉谁。
   Widget _targetPicker(List<Map<String, dynamic>> targets) {
@@ -275,12 +294,12 @@ class _ProviderReassignDialogState extends State<ProviderReassignDialog> {
               for (final item in targets)
                 DropdownMenuItem<String>(
                   value: item['id'].toString(),
-                  child: Text(
-                    t('airProviderReassignTargetOption', {
+                  child: ProviderOption(
+                    main: t('airProviderReassignTargetOption', {
                       'name': (item['name'] ?? item['id']).toString(),
                       'count': '${_int(item['compatibleSessions'])}',
                     }),
-                    overflow: TextOverflow.ellipsis,
+                    detail: providerLimitDetail(_targetLimitSource(item)),
                   ),
                 ),
             ],
