@@ -5,7 +5,9 @@
   const $ = id => document.getElementById(id);
   const mobile = matchMedia('(max-width: 760px)');
   let ctx;
-  let query = '', filter = 'recent';
+  // filter 管「最近任务」页，consoleView 管控制台那张卡；从卡片点「全部 ›」会带着
+  // 当前那一格过去，并清掉上次留下的搜索词（要看的是这一格的完整清单）。
+  let query = '', filter = 'recent', consoleView = 'recent';
   const make = (tag, text, cls) => {
     const el = document.createElement(tag);
     if (text != null) el.textContent = text;
@@ -28,6 +30,17 @@
     const activeAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
     return [...pinned, ...tasks.filter(task => !ids.has(task.id)).sort((a, b) => activeAt(b) - activeAt(a))];
   }
+  // 状态格的口径只有一份：交给控制台的 filterTasks（今日完成 = doneToday 等），这里
+  // 只拿它筛出的 id，顺序仍是上面的「最近活动在前」。recent = 未归档。
+  // 手机宽度一行放不下五格，「今日完成」排第二，不用横滑就能点到。
+  const MOBILE_FILTERS = [['recent', 'airRecentTasks'], ['today', 'airAdminTileToday'], ['running', 'airAdminTileRunning'],
+    ['waiting', 'airAdminTileWaiting'], ['error', 'airAdminTileError']];
+  function filterRows(rows, view) {
+    if (view === 'recent') return rows.filter(task => task.status !== 'archived');
+    if (view === 'all') return rows;
+    const keep = new Set(root.MultiCCAirAdmin.filterTasks(rows, { status: view }).map(task => task.id));
+    return rows.filter(task => keep.has(task.id));
+  }
   function taskRow(task, context) {
     const row = button('', () => context.navigate(task.dirId, task.id), 'mobile-task-row');
     row.dataset.taskId = task.id;
@@ -41,7 +54,7 @@
   function renderRecent(context) {
     ctx = { ...ctx, ...context };
     const content = $('admin-content');
-    const signature = JSON.stringify([context.directoryId, context.data.tasks, ctx.recentTasks, root.currentLang]);
+    const signature = JSON.stringify([context.directoryId, context.data.tasks, ctx.recentTasks, root.currentLang, filter]);
     if (content.dataset.mobileRecent === signature && content.querySelector('#mobile-task-search')) return;
     const focus = document.activeElement?.id === 'mobile-task-search';
     const start = document.activeElement?.selectionStart;
@@ -51,16 +64,15 @@
     const tabs = make('div', null, 'mobile-task-filters');
     const list = make('div', null, 'mobile-task-list');
     const paint = () => {
-      let rows = recentRows(ctx);
-      if (filter === 'waiting' || filter === 'running' || filter === 'error') rows = rows.filter(task => root.MultiCCAirAdmin.taskStatus(task) === filter);
-      else if (filter === 'recent') rows = rows.filter(task => task.status !== 'archived').slice(0, 30);
+      let rows = filterRows(recentRows(ctx), filter);
+      if (filter === 'recent') rows = rows.slice(0, 30);
       const needle = query.trim().toLowerCase();
       rows = rows.filter(task => !needle || [task.title, task.phase, task.goal, task.summary].some(value => String(value || '').toLowerCase().includes(needle)));
       list.replaceChildren(...rows.map(task => taskRow(task, ctx)));
       if (!rows.length) list.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
       for (const tab of tabs.children) tab.setAttribute('aria-pressed', String(tab.dataset.filter === filter));
     };
-    for (const [value, key] of [['recent', 'airRecentTasks'], ['waiting', 'airAdminTileWaiting'], ['running', 'airAdminTileRunning'], ['error', 'airAdminTileError'], ['all', 'airAdminFilterAll']]) {
+    for (const [value, key] of [...MOBILE_FILTERS, ['all', 'airAdminFilterAll']]) {
       const tab = button(root.t(key), () => { filter = value; paint(); }); tab.dataset.filter = value; tabs.append(tab);
     }
     search.oninput = () => { query = search.value; paint(); };
@@ -89,12 +101,26 @@
     if (!mobile.matches || ctx.mode !== 'overview' || !content) return;
     const panel = make('section', null, 'mobile-console-recent');
     const head = make('div', null, 'mobile-section-head');
-    head.append(make('h3', root.t('airRecentTasks')), button(root.t('airAdminFilterAll') + ' ›', () => ctx.setMode('recent')));
-    panel.append(head, ...recentRows(ctx, false).filter(task => task.status !== 'archived').slice(0, 3).map(task => taskRow(task, ctx)));
-    if (panel.children.length === 1) panel.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
+    const all = recentRows(ctx, false);
+    const rows = filterRows(all, consoleView);
+    head.append(make('h3', root.t(MOBILE_FILTERS.find(([value]) => value === consoleView)[1])),
+      button(`${root.t('airAdminFilterAll')} ${rows.length} ›`, () => { filter = consoleView; query = ''; ctx.setMode('recent'); }));
+    // 桌面那排统计格在手机上藏掉了（太占地方），这里换成一行带数量的小格。
+    const tabs = make('div', null, 'mobile-task-filters mobile-console-filters');
+    for (const [value, key] of MOBILE_FILTERS) {
+      const count = value === 'recent' ? '' : ` ${filterRows(all, value).length}`;
+      const tab = button(root.t(key) + count, () => { consoleView = value; paintConsole(); });
+      tab.dataset.filter = value; tab.setAttribute('aria-pressed', String(value === consoleView)); tabs.append(tab);
+    }
+    // 「最近」只摆 3 条，按状态看时多给两条，免得今天完成的刚好被截掉一半。
+    panel.append(head, tabs, ...rows.slice(0, consoleView === 'recent' ? 3 : 5).map(task => taskRow(task, ctx)));
+    if (!rows.length) panel.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
     content.querySelector('.mobile-console-recent')?.remove();
     const priority = content.querySelector('.console-priority-grid');
     if (priority) priority.after(panel); else content.prepend(panel);
+    // 选中的那格挪进可见区（只横向，不带动页面纵向滚动）。
+    const picked = tabs.querySelector('[aria-pressed="true"]');
+    if (picked && picked.offsetLeft + picked.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = picked.offsetLeft - 14;
     // 资料入口折叠起来，配置只保留右上角设置。
     if (!content.querySelector('.mobile-resources')) {
       const resources = make('details', null, 'mobile-resources'); resources.append(make('summary', root.t('airMaterials')));

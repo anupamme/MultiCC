@@ -147,6 +147,9 @@ test('手机底部导航保留最近任务、真实来路与项目切换', async
     assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[2].right<=innerWidth;})()`), true);
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#mobile-nav')).display`), 'none');
     t.diagnostic(await page.screenshot('mobile-implemented-home'));
+    // 控制台卡片顶上那排状态格（「今日完成」的条数与清单在切到后端服务后再验：官网没有今天完成的）。
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.mobile-console-filters button')].map(x=>x.dataset.filter)`),
+      ['recent', 'today', 'running', 'waiting', 'error']);
     await page.evaluate(`document.querySelector('[data-mobile-view="recent"]').click()`);
     assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')`));
     assert.equal(await page.evaluate(`document.querySelector('#task-title').textContent`), '最近任务');
@@ -168,6 +171,22 @@ test('手机底部导航保留最近任务、真实来路与项目切换', async
     assert.equal(await page.evaluate(`(() => { const r=document.querySelector('#directory-flyout').getBoundingClientRect();return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`), true);
     await page.evaluate(`document.querySelector('#directory-flyout [data-dir-id="api"]').click()`);
     assert.ok(await page.waitFor(`document.querySelector('#air-mobile-project').textContent.includes('后端服务')`));
+    await page.evaluate(`document.querySelector('[data-mobile-view="overview"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters')`));
+    const dirName = (await page.evaluate(`document.querySelector('#air-mobile-project').textContent`)).replace(' ⌄', '');
+    const dirId = state.directories.find(dir => dir.name === dirName)?.id;
+    const expectToday = state.tasks.filter(task => (!dirId || task.dirId === dirId) && task.status === 'done').map(task => task.id);
+    assert.ok(expectToday.length >= 2, `fixture needs done-today tasks in ${dirName}`);
+    await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="today"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters [data-filter="today"]')?.getAttribute('aria-pressed') === 'true'`));
+    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-console-recent .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(), expectToday.sort());
+    assert.ok((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="today"]').textContent`)).endsWith(` ${expectToday.length}`));
+    assert.equal(await page.evaluate(`(() => { const b=document.querySelector('.mobile-console-filters [data-filter="today"]').getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth; })()`), true, 'today chip is visible without scrolling');
+    t.diagnostic(await page.screenshot('mobile-console-today-filter'));
+    // 「全部 ›」带着「今日完成」这一格进最近任务页，列表同口径。
+    await page.evaluate(`document.querySelector('.mobile-console-recent .mobile-section-head button').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.mobile-task-filters [data-filter="today"]')?.getAttribute('aria-pressed') === 'true'`));
+    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-task-list .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(), expectToday.sort());
     await page.evaluate(`document.querySelector('#air-mobile-create').click()`);
     assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog').open`), true);
     assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog-directory').value`), 'api');

@@ -16,6 +16,8 @@
 .mobile-task-status.state-waiting { color:#a26b15; }
 .mobile-section-head { padding:8px 14px; display:flex; align-items:center; justify-content:space-between; }
 .mobile-section-head button { min-height:44px; border:0; color:var(--accent); }
+.mobile-console-filters { padding:0 14px 10px; scrollbar-width:none; }
+.mobile-console-filters::-webkit-scrollbar { display:none; }
 .mobile-console-recent,.mobile-resources { display:none; }
 @media(max-width:760px) {
  .air-mobile-top:not([hidden]) { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-shrink:0; padding:8px 16px; background:white; border-bottom:1px solid var(--line); }

@@ -18,16 +18,22 @@ class AirMobileWorkspace extends StatefulWidget {
     required this.onRefresh,
     required this.onResource,
     this.recent = false,
+    this.initialFilter,
     this.setupNotice,
   });
   final AirSnapshot? data;
   final String? directoryId;
   final List<AirTask> recentTasks;
   final ValueChanged<AirTask> onOpenTask;
-  final VoidCallback onRecent;
+
+  /// 进「最近任务」页；带上控制台卡片当前那一格（null = 最近任务）。
+  final ValueChanged<AirDirectoryTaskFilter?> onRecent;
   final Future<void> Function() onRefresh;
   final ValueChanged<String> onResource;
   final bool recent;
+
+  /// 最近任务页一打开就选中的那一格（从控制台卡片的「全部 ›」带过来）。
+  final AirDirectoryTaskFilter? initialFilter;
   final Widget? setupNotice;
 
   @override
@@ -36,8 +42,21 @@ class AirMobileWorkspace extends StatefulWidget {
 
 class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   String _query = '';
-  AirDirectoryTaskFilter _filter = AirDirectoryTaskFilter.all;
-  bool _all = false;
+  late AirDirectoryTaskFilter _filter =
+      widget.initialFilter ?? AirDirectoryTaskFilter.all;
+  late bool _all = widget.initialFilter != null;
+
+  /// 控制台卡片当前那一格；null = 最近任务（同 Web `air-mobile.js` 的 consoleView）。
+  AirDirectoryTaskFilter? _consoleFilter;
+
+  /// 状态格：「今日完成」排第二，手机宽度不用横滑就能点到（同 Web MOBILE_FILTERS）。
+  /// 判定都走 [AirDirectoryTaskFilter.matches]，与目录首页、桌面控制台同口径。
+  static const _statusFilters = [
+    (AirDirectoryTaskFilter.today, 'airAdminTileToday'),
+    (AirDirectoryTaskFilter.running, 'airAdminTileRunning'),
+    (AirDirectoryTaskFilter.waiting, 'airAdminTileWaiting'),
+    (AirDirectoryTaskFilter.error, 'airAdminTileError'),
+  ];
 
   /// 手机「最近任务」：pin 住的排最前，其余按最后活动时间倒序（同 Web
   /// `air-mobile.js` 的 recentRows）。不沿用侧栏「本机打开过」的顺序——在别的端
@@ -83,6 +102,10 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
     final urgent = airUrgentTasks(
       widget.data?.tasksOf(widget.directoryId) ?? [],
     );
+    final recentAll = _rowsOf(withPins: false);
+    final consoleRows = _consoleFilter == null
+        ? recentAll
+        : recentAll.where(_consoleFilter!.matches).toList();
     final visible = rows
         .where(
           (t) =>
@@ -127,21 +150,8 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                 children: [
                   for (final entry in <(String, AirDirectoryTaskFilter, bool)>[
                     (t('airRecentTasks'), AirDirectoryTaskFilter.all, false),
-                    (
-                      t('airAdminTileWaiting'),
-                      AirDirectoryTaskFilter.waiting,
-                      true,
-                    ),
-                    (
-                      t('airAdminTileRunning'),
-                      AirDirectoryTaskFilter.running,
-                      true,
-                    ),
-                    (
-                      t('airAdminTileError'),
-                      AirDirectoryTaskFilter.error,
-                      true,
-                    ),
+                    for (final (filter, key) in _statusFilters)
+                      (t(key), filter, true),
                     (t('airAdminFilterAll'), AirDirectoryTaskFilter.all, true),
                   ])
                     Padding(
@@ -188,7 +198,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                     ...urgent.take(3).map(_task),
                     if (urgent.length > 3)
                       TextButton(
-                        onPressed: widget.onRecent,
+                        onPressed: () => widget.onRecent(null),
                         child: Text(
                           '${t('airAdminFilterAll')} · ${urgent.length}',
                         ),
@@ -201,21 +211,64 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
               children: [
                 Expanded(
                   child: Text(
-                    t('airRecentTasks'),
+                    _consoleFilter == null
+                        ? t('airRecentTasks')
+                        : t(
+                            _statusFilters
+                                .firstWhere((f) => f.$1 == _consoleFilter)
+                                .$2,
+                          ),
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
                 TextButton(
-                  onPressed: widget.onRecent,
-                  child: Text('${t('airAdminFilterAll')} ›'),
+                  key: const ValueKey('air-mobile-console-all'),
+                  onPressed: () => widget.onRecent(_consoleFilter),
+                  child: Text(
+                    '${t('airAdminFilterAll')} ${consoleRows.length} ›',
+                  ),
                 ),
               ],
             ),
-            ..._rowsOf(withPins: false).take(3).map(_task),
-            if (rows.isEmpty)
+            // 桌面那排统计格在手机上放不下，这里换成一行带数量的小格。
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (filter, key) in [
+                    (null, 'airRecentTasks'),
+                    ..._statusFilters,
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        key: ValueKey(
+                          'air-mobile-console-${filter?.name ?? 'recent'}',
+                        ),
+                        label: Text(
+                          filter == null
+                              ? t(key)
+                              : '${t(key)} ${recentAll.where(filter.matches).length}',
+                        ),
+                        selected: _consoleFilter == filter,
+                        onSelected: (_) =>
+                            setState(() => _consoleFilter = filter),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // 「最近」只摆 3 条，按状态看时多给两条，免得今天完成的刚好被截掉一半。
+            ...consoleRows.take(_consoleFilter == null ? 3 : 5).map(_task),
+            if (consoleRows.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(t('noRecentTask')),
+                child: Text(
+                  _consoleFilter == null
+                      ? t('noRecentTask')
+                      : t('airAdminNoMatchingTasks'),
+                ),
               ),
             const SizedBox(height: 12),
             ExpansionTile(
