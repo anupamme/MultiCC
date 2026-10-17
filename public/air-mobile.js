@@ -15,12 +15,18 @@
   const button = (text, action, cls) => {
     const el = make('button', text, cls); el.type = 'button'; el.onclick = action; return el;
   };
-  function recentRows(context) {
+  // 手机「最近任务」按最后活动时间倒序，pin 住的排最前。不能沿用侧栏那份「本浏览器
+  // 打开过」的顺序：在电脑上新建、手机上没点开过的任务会被挤到底，而服务端 tasks
+  // 本身是从旧到新排的，补位进来的全是最老的任务。
+  // 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），只看谁最近动过。
+  function recentRows(context, withPins = true) {
     const { data, directoryId } = context;
-    const recent = context.recentTasks || [];
-    const ids = new Set(recent.map(task => task.id));
-    return [...recent, ...(data.tasks || []).filter(task => !ids.has(task.id))]
-      .filter(task => !directoryId || task.dirId === directoryId);
+    const tasks = (data.tasks || []).filter(task => !directoryId || task.dirId === directoryId);
+    const byId = new Map(tasks.map(task => [task.id, task]));
+    const pinned = withPins ? (data.taskPins || []).map(id => byId.get(id)).filter(Boolean) : [];
+    const ids = new Set(pinned.map(task => task.id));
+    const activeAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
+    return [...pinned, ...tasks.filter(task => !ids.has(task.id)).sort((a, b) => activeAt(b) - activeAt(a))];
   }
   function taskRow(task, context) {
     const row = button('', () => context.navigate(task.dirId, task.id), 'mobile-task-row');
@@ -84,7 +90,7 @@
     const panel = make('section', null, 'mobile-console-recent');
     const head = make('div', null, 'mobile-section-head');
     head.append(make('h3', root.t('airRecentTasks')), button(root.t('airAdminFilterAll') + ' ›', () => ctx.setMode('recent')));
-    panel.append(head, ...recentRows(ctx).filter(task => task.status !== 'archived').slice(0, 3).map(task => taskRow(task, ctx)));
+    panel.append(head, ...recentRows(ctx, false).filter(task => task.status !== 'archived').slice(0, 3).map(task => taskRow(task, ctx)));
     if (panel.children.length === 1) panel.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
     content.querySelector('.mobile-console-recent')?.remove();
     const priority = content.querySelector('.console-priority-grid');

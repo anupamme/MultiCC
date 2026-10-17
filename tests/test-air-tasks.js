@@ -387,7 +387,8 @@ test('Air lists and pins hide unseparated tasks across decisions and restarts, t
     const after = airResponse();
     await handlers.get('/api/air')({ headers: { 'if-none-match': before.headers.etag } }, after);
     assert.equal(after.statusCode, 200, 'separation invalidates the list ETag');
-    assert.deepEqual(JSON.parse(after.body).tasks.map(task => task.id), [source.taskId, suggestion.taskId]);
+    // 只验成员（分离后两条都在），顺序由「最近有消息的在前」决定，另有专门用例。
+    assert.deepEqual(JSON.parse(after.body).tasks.map(task => task.id).sort(), [source.taskId, suggestion.taskId].sort());
     assert.deepEqual(JSON.parse(after.body).taskPins, [source.taskId, suggestion.taskId]);
   });
 });
@@ -731,4 +732,24 @@ test('Air folds terminal liveness on the server so a row cannot report a dead pa
   assert.equal(rows.broken.state, 'route_dead', 'a lost route token outranks a live process');
   assert.equal(rows.routed.state, 'stopped', 'an intact route still reports the process, not the token');
   assert.equal(rows.patched.state, 'running', 'judge the route by what the process was spawned with, not the later record');
+});
+
+test('Air snapshot lists tasks newest-message first, ties keep board order', async () => {
+  const { mountAirRoutes } = require('../src/workspace/air-routes');
+  const tasks = [
+    { id: 'old', refs: [{ ts: 1000 }], createdAt: 900, updatedAt: 5000 },
+    { id: 'new', refs: [{ ts: 3000 }], createdAt: 2900, updatedAt: 3000 },
+    { id: 'tie-a', createdAt: 2000, updatedAt: 2000 },
+    { id: 'tie-b', createdAt: 2000, updatedAt: 2000 },
+  ];
+  const board = { tasks: Object.fromEntries(tasks.map(task => [task.id, task])) };
+  const handlers = new Map();
+  mountAirRoutes({ get: (url, fn) => handlers.set(url, fn), post() {} }, {
+    records: new Map(), directories: new Map(), getBoard: () => board, clis: [],
+    admission: { snapshot: () => ({ workspaces: [], leases: [], budgets: {} }) },
+    shell: { listTasks: () => tasks, taskAccess: () => ({ readOnly: false }) },
+  });
+  const res = airResponse(); await handlers.get('/api/air')({}, res);
+  // old 的 updatedAt 最新，但最后一条消息最早 —— 元数据改动不能把旧任务顶上来。
+  assert.deepEqual(JSON.parse(res.body).tasks.map(task => task.id), ['new', 'tie-a', 'tie-b', 'old']);
 });
