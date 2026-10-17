@@ -17,6 +17,7 @@ import '../screens/settings_screen.dart';
 import '../utils/context_level.dart';
 import '../screens/share_messages_screen.dart';
 import 'git_log_sheet.dart';
+import 'hook_list_view.dart';
 
 class ChatHeader extends StatelessWidget {
   final SettingsService settings;
@@ -356,6 +357,13 @@ class ChatHeader extends StatelessWidget {
               onRole: onRole,
               onMemory: onMemory,
               onMemo: onMemo,
+              onHooks: () => unawaited(
+                showSessionHooksSheet(
+                  context,
+                  settings: settings,
+                  sessionId: provider.executionSessionName,
+                ),
+              ),
               onMerge: onMerge,
               onSettings: () => _openSettings(context, settings),
               onForceSync: onForceSync,
@@ -990,6 +998,7 @@ class _HeaderOverflowMenu extends StatelessWidget {
   final VoidCallback onRole;
   final VoidCallback onMemory;
   final VoidCallback onMemo;
+  final VoidCallback onHooks;
   final VoidCallback onMerge;
   final VoidCallback onSettings;
   final VoidCallback onShare;
@@ -1024,6 +1033,7 @@ class _HeaderOverflowMenu extends StatelessWidget {
     required this.onRole,
     required this.onMemory,
     required this.onMemo,
+    required this.onHooks,
     required this.onMerge,
     required this.onSettings,
     required this.onShare,
@@ -1080,6 +1090,9 @@ class _HeaderOverflowMenu extends StatelessWidget {
             break;
           case 'memo':
             onMemo();
+            break;
+          case 'hooks':
+            onHooks();
             break;
           case 'merge':
             onMerge();
@@ -1196,6 +1209,14 @@ class _HeaderOverflowMenu extends StatelessWidget {
           Icons.sticky_note_2_outlined,
           t('projectMemo'),
           const Color(0xFF233249),
+        ),
+        // 「钩子」：本会话的事件 → 动作规则（Web 页头的 `#hook-btn`）。
+        _item(
+          'hooks',
+          Icons.webhook_outlined,
+          t('hookTitle'),
+          const Color(0xFF233249),
+          key: const Key('chat-header-hooks'),
         ),
         // 开关状态直接写在文案里（✓/✕），跟 web 的 `#auto-commit-btn` 一样 ——
         // 这颗按钮旁边没有别的地方能表达「现在是开还是关」。

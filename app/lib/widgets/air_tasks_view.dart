@@ -37,6 +37,7 @@ import 'air/air_ops_store.dart';
 import 'air/air_palette.dart';
 import 'air/air_panels.dart';
 import 'air/air_schedules.dart';
+import 'hook_list_view.dart';
 import 'air/air_sidebar.dart';
 import 'air/air_task_config.dart';
 import 'air/air_task_details.dart';
@@ -119,6 +120,8 @@ class _AirTasksViewState extends State<AirTasksView>
   );
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _mobileSchedules = GlobalKey<AirSchedulePanelState>();
+  final _mobileHooks = GlobalKey<HookListViewState>();
+  bool _mobileHooksTab = false; // 定时任务页的「触发器任务」分页
   final _mobileSetup = GlobalKey<AirMobileSetupState>();
   void _updateMobile(VoidCallback change) => setState(change);
   // 新手引导（Web `public/tour.js`）落在首页的那两步：第 1 步圈目录库的

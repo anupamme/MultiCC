@@ -8,9 +8,11 @@ import '../../services/air_service.dart';
 import '../../services/manage_service.dart';
 import '../../services/session_service.dart';
 import '../../services/settings_service.dart';
+import '../../i18n.dart';
 import '../../theme.dart';
 import '../../utils/cli_display.dart';
 import '../cron_run_history.dart';
+import '../hook_list_view.dart';
 import 'air_task_status.dart';
 
 /// 定时任务中心 —— Web `public/air.js` 的 `renderSchedules`（`#schedule-center`）。
@@ -89,9 +91,46 @@ String airScheduleFixedDetail(CronTask task) {
   return '${task.taskId} · ${airScheduleRuntime(task)}';
 }
 
+/// 定时任务中心的两个分页：定时 / 触发器任务（Web air-trigger-center.js 的 tab）。
+/// 整页和手机壳共用这一条。
+class AirScheduleTabs extends StatelessWidget {
+  const AirScheduleTabs({
+    super.key,
+    required this.hooks,
+    required this.onChanged,
+  });
+
+  final bool hooks;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    child: SegmentedButton<bool>(
+      key: const ValueKey('air-schedule-tabs'),
+      showSelectedIcon: false,
+      segments: [
+        ButtonSegment(value: false, label: Text(t('hookTabCron'))),
+        ButtonSegment(
+          value: true,
+          label: Text(
+            t('hookTabHooks'),
+            key: const ValueKey('air-schedule-tab-hooks'),
+          ),
+        ),
+      ],
+      selected: {hooks},
+      onSelectionChanged: (value) => onChanged(value.first),
+    ),
+  );
+}
+
 class _AirSchedulesScreenState extends State<AirSchedulesScreen> {
   final GlobalKey<AirSchedulePanelState> _panel =
       GlobalKey<AirSchedulePanelState>();
+  final GlobalKey<HookListViewState> _hookList =
+      GlobalKey<HookListViewState>();
+  bool _hooks = false;
 
   /// 面板说它开始 / 结束取数了，这两颗按钮跟着灰。面板自己那份状态归它，宿主
   /// 只留这一位。
@@ -116,7 +155,9 @@ class _AirSchedulesScreenState extends State<AirSchedulesScreen> {
         actions: [
           IconButton(
             key: const ValueKey('air-schedules-refresh'),
-            onPressed: _loading
+            onPressed: _hooks
+                ? () => unawaited(_hookList.currentState?.refresh())
+                : _loading
                 ? null
                 : () => unawaited(_panel.currentState?.reload()),
             icon: const Icon(Icons.refresh_rounded),
@@ -127,7 +168,9 @@ class _AirSchedulesScreenState extends State<AirSchedulesScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('air-schedules-new'),
-        onPressed: _loading
+        onPressed: _hooks
+            ? () => unawaited(_hookList.currentState?.openEditor())
+            : _loading
             ? null
             : () => unawaited(_panel.currentState?.openEditor()),
         backgroundColor: AppColors.accentDark,
@@ -135,16 +178,31 @@ class _AirSchedulesScreenState extends State<AirSchedulesScreen> {
         icon: const Icon(Icons.add_rounded),
         // Web 上这句话挂在顶部工具栏（`#schedule-create`）上，手机上放到
         // 右手拇指够得着的地方 —— 字不变。
-        label: const Text('新建定时任务'),
+        label: Text(_hooks ? '新建触发器' : '新建定时任务'),
       ),
-      body: AirSchedulePanel(
-        key: _panel,
-        settings: widget.settings,
-        httpClient: widget.httpClient,
-        directories: widget.directories,
-        initialDirectoryId: widget.initialDirectoryId,
-        onOpenTask: widget.onOpenTask,
-        onLoadingChanged: _panelLoading,
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+            child: AirScheduleTabs(
+              hooks: _hooks,
+              onChanged: (value) => setState(() => _hooks = value),
+            ),
+          ),
+          Expanded(
+            child: _hooks
+                ? HookListView(key: _hookList, settings: widget.settings)
+                : AirSchedulePanel(
+                    key: _panel,
+                    settings: widget.settings,
+                    httpClient: widget.httpClient,
+                    directories: widget.directories,
+                    initialDirectoryId: widget.initialDirectoryId,
+                    onOpenTask: widget.onOpenTask,
+                    onLoadingChanged: _panelLoading,
+                  ),
+          ),
+        ],
       ),
     );
   }
