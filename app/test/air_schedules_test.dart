@@ -9,6 +9,7 @@ import 'package:multicc_app/models/message.dart';
 import 'package:multicc_app/services/air_service.dart';
 import 'package:multicc_app/services/settings_service.dart';
 import 'package:multicc_app/widgets/air/air_schedules.dart';
+import 'package:multicc_app/widgets/hook_list_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 下次运行 / 最近触发那两个时间用本地时区造的，断言的写法与机器时区无关。
@@ -279,6 +280,27 @@ void main() {
       expect(airScheduleHealth(0), '固定任务均正常');
       expect(airScheduleHealth(2), '2 条需处理');
     });
+  });
+
+  testWidgets('定时 / 触发器任务两个分页：切过去换列表，新建按钮跟着换', (tester) async {
+    _tallCanvas(tester);
+    final calls = _Calls();
+    await _pump(tester, _client(calls));
+    expect(find.byKey(const ValueKey('air-schedule-tabs')), findsOneWidget);
+    expect(find.text('新建定时任务'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('air-schedule-tab-hooks')));
+    await tester.pumpAndSettle();
+    expect(find.byType(HookListView), findsOneWidget);
+    expect(find.byKey(const ValueKey('air-schedules-summary')), findsNothing);
+    expect(find.text('新建触发器'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('air-schedule-tabs')),
+        matching: find.text('定时任务'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('air-schedules-summary')), findsOneWidget);
   });
 
   testWidgets('摘要说清几条规则、几条启用、几条要我去看', (tester) async {

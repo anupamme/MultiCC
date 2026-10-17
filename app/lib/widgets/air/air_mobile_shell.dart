@@ -176,15 +176,30 @@ extension _AirMobileShell on _AirTasksViewState {
     },
   );
 
-  Widget _mobileSchedulePanel(AirSnapshot? data) => AirSchedulePanel(
-    key: _mobileSchedules,
-    settings: widget.settings,
-    httpClient: widget.httpClient,
-    directories: data?.directories ?? [],
-    initialDirectoryId: _directoryId,
-    directoryId: _directoryId,
-    onOpenTask: _openTaskById,
-    padding: const EdgeInsets.all(16),
+  Widget _mobileSchedulePanel(AirSnapshot? data) => Column(
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+        child: AirScheduleTabs(
+          hooks: _mobileHooksTab,
+          onChanged: (value) => _updateMobile(() => _mobileHooksTab = value),
+        ),
+      ),
+      Expanded(
+        child: _mobileHooksTab
+            ? HookListView(key: _mobileHooks, settings: widget.settings)
+            : AirSchedulePanel(
+                key: _mobileSchedules,
+                settings: widget.settings,
+                httpClient: widget.httpClient,
+                directories: data?.directories ?? [],
+                initialDirectoryId: _directoryId,
+                directoryId: _directoryId,
+                onOpenTask: _openTaskById,
+                padding: const EdgeInsets.all(16),
+              ),
+      ),
+    ],
   );
 
   Widget _mobileScaffold(
@@ -360,11 +375,16 @@ extension _AirMobileShell on _AirTasksViewState {
                   height: 46,
                   child: FilledButton.icon(
                     key: const ValueKey('air-mobile-create'),
-                    onPressed: directory == null
+                    // 触发器不归某个目录，没选目录也能建。
+                    onPressed:
+                        directory == null && !(schedules && _mobileHooksTab)
                         ? null
                         : () => schedules
                               ? unawaited(
-                                  _mobileSchedules.currentState?.openEditor(),
+                                  _mobileHooksTab
+                                      ? _mobileHooks.currentState?.openEditor()
+                                      : _mobileSchedules.currentState
+                                            ?.openEditor(),
                                 )
                               : unawaited(
                                   _newTask(
@@ -374,7 +394,13 @@ extension _AirMobileShell on _AirTasksViewState {
                                   ),
                                 ),
                     icon: const Icon(Icons.add),
-                    label: Text(schedules ? '新建定时任务' : '新任务'),
+                    label: Text(
+                      !schedules
+                          ? '新任务'
+                          : _mobileHooksTab
+                          ? '新建触发器'
+                          : '新建定时任务',
+                    ),
                   ),
                 ),
               ),

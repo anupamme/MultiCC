@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../i18n.dart';
 import '../services/event_trigger_service.dart';
 import '../services/air_service.dart';
 import '../services/settings_service.dart';
@@ -11,10 +12,19 @@ const String kHookNewSession = '__new__';
 /// 「触发器任务」列表 + 新建/编辑底部弹层 — 定时任务页的第二个 tab，镜像网页
 /// air-trigger-center.js。规则 = 「当 [事件…] 发生时 → 执行 [动作]」，全局规则
 /// 与各会话的规则放在同一张表里。
+///
+/// 带 [sessionId] 时只列这个会话的规则，新建默认挂在它上面 —— 对话页头 ⋯ 里的
+/// 「钩子」（同网页 chat-hooks.js 的 🪝 按钮）。
 class HookListView extends StatefulWidget {
   final SettingsService settings;
   final EventTriggerService? service; // 测试注入
-  const HookListView({super.key, required this.settings, this.service});
+  final String? sessionId;
+  const HookListView({
+    super.key,
+    required this.settings,
+    this.service,
+    this.sessionId,
+  });
 
   @override
   State<HookListView> createState() => HookListViewState();
@@ -40,7 +50,11 @@ class HookListViewState extends State<HookListView> {
       _error = null;
     });
     try {
-      final items = await _svc.fetchAll();
+      final all = await _svc.fetchAll();
+      final only = widget.sessionId;
+      final items = only == null
+          ? all
+          : all.where((item) => item.sessionId == only).toList();
       if (!mounted) return;
       setState(() {
         _items = items;
@@ -148,6 +162,7 @@ class HookListViewState extends State<HookListView> {
         sessions: sessions,
         dirs: dirs,
         clis: results[1] as List<String>,
+        initialScopeSession: widget.sessionId ?? '',
       ),
     );
     if (saved == true) await refresh();
@@ -185,11 +200,15 @@ class HookListViewState extends State<HookListView> {
       onRefresh: refresh,
       child: _items.isEmpty
           ? ListView(
-              children: const [
-                SizedBox(height: 120),
-                Icon(Icons.webhook_outlined, size: 44, color: AppColors.faint),
-                SizedBox(height: 12),
-                Center(
+              children: [
+                SizedBox(height: widget.sessionId == null ? 120 : 40),
+                const Icon(
+                  Icons.webhook_outlined,
+                  size: 44,
+                  color: AppColors.faint,
+                ),
+                const SizedBox(height: 12),
+                const Center(
                   child: Text(
                     '还没有触发器',
                     style: TextStyle(
@@ -198,13 +217,18 @@ class HookListViewState extends State<HookListView> {
                     ),
                   ),
                 ),
-                SizedBox(height: 6),
+                const SizedBox(height: 6),
                 Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 32),
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
                   child: Text(
-                    '点右下角「新建」，任务完成、出错等事件发生时自动通知、发 Webhook 或给会话注入指令。',
+                    widget.sessionId == null
+                        ? '点右下角「新建」，任务完成、出错等事件发生时自动通知、发 Webhook 或给会话注入指令。'
+                        : '本会话还没有钩子。点「新建钩子」，任务完成、出错等事件发生时自动通知、发 Webhook 或注入指令。',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: AppColors.muted, fontSize: 12.5),
+                    style: const TextStyle(
+                      color: AppColors.muted,
+                      fontSize: 12.5,
+                    ),
                   ),
                 ),
               ],
@@ -392,6 +416,9 @@ class HookEditor extends StatefulWidget {
   final List<({String id, String label})> sessions;
   final List<({String id, String label})> dirs;
   final List<String> clis;
+
+  /// 新建时「作用范围」默认选哪个会话；'' = 全局。
+  final String initialScopeSession;
   const HookEditor({
     super.key,
     required this.service,
@@ -399,6 +426,7 @@ class HookEditor extends StatefulWidget {
     this.sessions = const [],
     this.dirs = const [],
     this.clis = const [],
+    this.initialScopeSession = '',
   });
 
   @override
@@ -430,6 +458,7 @@ class _HookEditorState extends State<HookEditor> {
   void initState() {
     super.initState();
     final r = _editing?.rule;
+    _scopeSession = widget.initialScopeSession;
     _name = TextEditingController(text: r?.name ?? '');
     _message = TextEditingController(
       text: (r?.action['message'] ?? '').toString(),
@@ -957,4 +986,61 @@ class _HookChoicePickerState extends State<_HookChoicePicker> {
       ),
     );
   }
+}
+
+/// 对话页头 ⋯ →「钩子」：本会话的「事件 → 动作」规则，可就地新建 / 编辑 / 启停 /
+/// 删除（同网页 chat-hooks.js）。全部规则仍在「定时任务 → 触发器任务」里。
+Future<void> showSessionHooksSheet(
+  BuildContext context, {
+  required SettingsService settings,
+  required String sessionId,
+  EventTriggerService? service,
+}) {
+  final list = GlobalKey<HookListViewState>();
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    useSafeArea: true,
+    backgroundColor: AppColors.bg,
+    builder: (sheetContext) => SizedBox(
+      key: const ValueKey('session-hooks-sheet'),
+      height: MediaQuery.sizeOf(sheetContext).height * .7,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 12, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    t('hookTitle'),
+                    style: const TextStyle(
+                      color: AppColors.textBright,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                FilledButton.icon(
+                  key: const ValueKey('session-hooks-new'),
+                  onPressed: () => list.currentState?.openEditor(),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(t('hookDialogNew')),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: HookListView(
+              key: list,
+              settings: settings,
+              service: service,
+              sessionId: sessionId,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -429,4 +429,67 @@ void main() {
       expect(action['targetSessionId'], 'gone-1');
     },
   );
+
+  // 对话页头 ⋯ →「钩子」：只列本会话的规则，新建默认挂在本会话上。
+  testWidgets('session hooks sheet: only this session, new rule posts to it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final svc = await service();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showSessionHooksSheet(
+                context,
+                settings: svc.settings,
+                sessionId: 's1',
+                service: svc,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('session-hooks-sheet')), findsOneWidget);
+    expect(find.text('失败告警'), findsOneWidget);
+    expect(find.text('继续部署'), findsNothing, reason: '全局规则不在会话面板里');
+
+    await tester.tap(find.byKey(const ValueKey('session-hooks-new')));
+    await tester.pumpAndSettle();
+    await tapVisible(tester, find.text('出错或被中止'));
+    await tapVisible(tester, find.text('保存'));
+    final post = calls.firstWhere((c) => c.method == 'POST');
+    expect(post.url.path, '/api/sessions/s1/triggers');
+  });
+
+  testWidgets('session hooks sheet: empty session says so', (tester) async {
+    final svc = await service();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showSessionHooksSheet(
+                context,
+                settings: svc.settings,
+                sessionId: 'other',
+                service: svc,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('本会话还没有钩子'), findsOneWidget);
+  });
 }
