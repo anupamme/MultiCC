@@ -180,6 +180,8 @@ dialog .air-config-field input { margin-top: 7px; }
 .rc-picker-name { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #2c4a67; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .rc-picker-model { color: #93a4b5; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .rc-picker-right { color: #3aa675; font-size: 10px; }
+/* 线路余量徽标：颜色由服务端 bar 决定（按剩余量着色），这里只管排版。 */
+.rc-limit { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rc-picker-error { display: flex; align-items: center; gap: 8px; color: #9a6a1f; font-size: 11px; }
 .rc-retry { padding: 3px 9px; color: #4c7daa; border: 1px solid #d5e2ef; border-radius: 7px; background: #fff; font-size: 10px; cursor: pointer; }
 .rc-more { margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf3f9; }

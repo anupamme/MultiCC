@@ -125,7 +125,11 @@ void main() {
   );
 
   /// Opens the dialog and hands back whatever it pops (the summary string).
-  Future<List<String?>> open(WidgetTester tester, ManageService svc) async {
+  Future<List<String?>> open(
+    WidgetTester tester,
+    ManageService svc, {
+    List<Map<String, dynamic>> providers = const [],
+  }) async {
     final popped = <String?>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -137,8 +141,11 @@ void main() {
                   popped.add(
                     await showDialog<String>(
                       context: context,
-                      builder: (_) =>
-                          ProviderReassignDialog(manage: svc, provider: provider),
+                      builder: (_) => ProviderReassignDialog(
+                        manage: svc,
+                        provider: provider,
+                        providers: providers,
+                      ),
                     ),
                   );
                 },
@@ -277,5 +284,45 @@ void main() {
     );
     expect(find.text(t('airProviderReassignEmpty')), findsOneWidget);
     expect(tester.widget<FilledButton>(find.byType(FilledButton)).onPressed, isNull);
+  });
+
+  testWidgets('目标下拉：目录里有额度时，选项带额度摘要', (tester) async {
+    final svc = service((request, seen) async => jsonResponse(200, listing()));
+
+    await open(
+      tester,
+      svc,
+      providers: [
+        {
+          'appType': 'claude',
+          'id': 'dst',
+          'name': 'Destination',
+          'limit': {
+            'bar': {'text': '5h 33%'},
+          },
+        },
+      ],
+    );
+
+    // 没选之前只有提示语；打开菜单才看见目标名 + 额度摘要两行。
+    final option = t(
+      'airProviderReassignTargetOption',
+      {'name': 'Destination', 'count': '2'},
+    );
+    expect(find.text(option), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('provider-reassign-target')));
+    await tester.pumpAndSettle();
+    expect(find.text(option), findsWidgets);
+    expect(find.text('5h 33%'), findsWidgets);
+  });
+
+  testWidgets('目标下拉：目录里没有额度时保持原文案', (tester) async {
+    final svc = service((request, seen) async => jsonResponse(200, listing()));
+
+    await open(tester, svc);
+    await tester.tap(find.byKey(const ValueKey('provider-reassign-target')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('%'), findsNothing);
   });
 }

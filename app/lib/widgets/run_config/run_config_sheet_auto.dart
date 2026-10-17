@@ -506,6 +506,7 @@ mixin RunConfigAutoSection on RunConfigSheetBase {
   Widget _autoRow(int index) {
     final row = _rows[index];
     final hasProblem = row.problem != null;
+    final limitDetail = _autoRowLimitDetail(row);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
@@ -528,15 +529,36 @@ mixin RunConfigAutoSection on RunConfigSheetBase {
                 _laneChip(row),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: Text(
-                    _autoRowName(row),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppColors.text,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _autoRowName(row),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.text,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      // 池子里这一行的额度/余额，小字副行；没数据时不画，
+                      // 行高和以前完全一致。
+                      if (limitDetail.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 1),
+                          child: Text(
+                            limitDetail,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.faint,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 _rowIcon(
@@ -601,6 +623,17 @@ mixin RunConfigAutoSection on RunConfigSheetBase {
       return openCodeNativeProviderDisplayName(native);
     }
     return runLineName(row.providerId, _poolFor(row.lane));
+  }
+
+  /// 池子里这一行线路的额度/余额摘要（`providerLimitDetail` 的产物）。原生
+  /// OpenCode 线路没有 provider、目录里也查不到的线路（已删/写错）都没有额度，
+  /// 返回空串 —— 调用方据此不画副行。
+  String _autoRowLimitDetail(RunPoolRow row) {
+    if (isOpenCodeNativeProvider(row.providerId)) return '';
+    for (final p in _poolFor(row.lane)) {
+      if (p['id'] == row.providerId) return providerLimitDetail(p);
+    }
+    return '';
   }
 
   Widget _rowIcon({
@@ -1089,6 +1122,9 @@ class _AddLineSheetState extends State<_AddLineSheet> {
         final id = provider['id']?.toString() ?? '';
         if (id.isEmpty) continue;
         final already = inPool.contains('$lane\n$id');
+        // 额度/余额是「这条线路还值不值得选」的一部分，加线路时也摆出来；
+        // 没有数据时整行和以前一模一样（不加副标题就不会变高）。
+        final limitDetail = providerLimitDetail(provider);
         out.add(
           ListTile(
             key: Key('run-add-line-$lane-$id'),
@@ -1101,6 +1137,17 @@ class _AddLineSheetState extends State<_AddLineSheet> {
                 fontSize: 13,
               ),
             ),
+            subtitle: limitDetail.isEmpty
+                ? null
+                : Text(
+                    limitDetail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.faint,
+                      fontSize: 10.5,
+                    ),
+                  ),
             trailing: already
                 ? const Text(
                     '✓ 已在池里',

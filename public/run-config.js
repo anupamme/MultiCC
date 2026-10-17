@@ -836,7 +836,40 @@
 
     function providerName(provider) {
       if (!provider) return '';
-      return `${provider.name || provider.id}${provider.model ? ` · ${provider.model}` : ''}`;
+      return `${provider.name || provider.id}${provider.model ? ` · ${provider.model}` : ''}${limitSuffix(provider)}`;
+    }
+
+    // 线路有余量缓存（/api/providers 带回的 provider.limit）就把余量挂在选项后面，
+    // 让用户挑线路时看得见还剩多少；没有缓存时返回空串，选项和以前一字不差。
+    // 文案全由服务端的 bar + QuotaBarView 决定，这里不写任何余量措辞。
+    function limitTranslate(key, params) {
+      const api = scope();
+      return api && typeof api.t === 'function' ? api.t(key, params) : key;
+    }
+
+    function limitSuffix(provider) {
+      return aiApi && typeof aiApi.providerLimitLabel === 'function'
+        ? aiApi.providerLimitLabel(provider, limitTranslate, Date.now())
+        : '';
+    }
+
+    // 给真 DOM（Auto 池行、添加线路列表）用：带颜色的余量徽标，没数据返回 null。
+    function limitBadge(provider) {
+      const view = scope() && scope().QuotaBarView;
+      if (!provider || !provider.limit || !view) return null;
+      const resolved = view.resolveProviderLimit(provider.limit, {
+        now: Date.now(),
+        translate: (key, params, fallback) => {
+          const translated = limitTranslate(key, params);
+          return translated && translated !== key ? translated : fallback;
+        },
+        rolled: limitTranslate('quotaRolledWindow'),
+      });
+      if (!resolved || !resolved.text) return null;
+      const badge = el(doc, 'span', 'rc-limit', resolved.text);
+      badge.style.color = resolved.color;
+      if (resolved.title) badge.title = resolved.title;
+      return badge;
     }
 
     function modelState(cli, list) {
@@ -1511,7 +1544,7 @@
       const items = [option(doc, '', tt('runConfigSubFollow', '随主（默认）'))];
       for (const provider of providersOf(cli)) {
         if ((cli === 'codex' || cli === 'codex-exp') && provider.isOfficial) continue;
-        items.push(option(doc, provider.id, aiApi.providerLabel(provider, false)));
+        items.push(option(doc, provider.id, aiApi.providerLabel(provider, false) + limitSuffix(provider)));
       }
       subProviderSelect.replaceChildren(...items);
       const seed = subagentSeed;
@@ -1610,6 +1643,8 @@
       const chip = el(doc, 'span', 'rc-cli-chip');
       chip.append(mark(doc, row.cli, 's'), cliSelect);
       first.append(chip, el(doc, 'b', 'rc-line-name', lineName(row)));
+      const rowLimit = isNativeLine(row.providerId) ? null : limitBadge(providerById(row.cli, row.providerId));
+      if (rowLimit) first.append(rowLimit);
       const second = el(doc, 'div', 'rc-row-l2');
       const issue = rowIssue(row, line, cliLabel);
       if (issue) {
@@ -1844,6 +1879,7 @@
           error: false,
           items: catalogApi.providersForCli(catalog, cli).map(provider => ({
             providerId: String(provider.id), cli, model: provider.model || '', label: provider.name || provider.id,
+            provider,
           })),
         }), () => ({ cli, native: false, error: true, items: [] }));
       }));
@@ -1885,6 +1921,8 @@
             el(doc, 'span', 'rc-picker-name', item.label),
             el(doc, 'span', 'rc-picker-model', item.model || ''),
           );
+          const itemLimit = limitBadge(item.provider);
+          if (itemLimit) rowNode.append(itemLimit);
           if (already) rowNode.append(el(doc, 'span', 'rc-picker-right', `✓ ${tt('runConfigInPool', '已在池里')}`));
           rowNode.onclick = () => addRow(item);
           host.append(rowNode);

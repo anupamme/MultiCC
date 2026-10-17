@@ -516,9 +516,12 @@
         ? t('airProviderReassignTargetPlaceholder') : t('airProviderReassignNoTargets'));
       placeholder.value = ''; select.append(placeholder);
       for (const item of plan.targets) {
+        // 目标线路有余量缓存就挂在选项后面，挑目标时顺带看清还剩多少。
+        const targetProvider = data?.providers.find(entry => entry.id === item.id && entry.appType === provider.appType);
+        const limitText = targetProvider?.limit ? resolveLimit(targetProvider)?.text : '';
         const option = make('option', t('airProviderReassignTargetOption', {
           name: item.name, count: item.compatibleSessions,
-        }));
+        }) + (limitText ? ` · ${limitText}` : ''));
         option.value = item.id;
         if (item.skippedSessions) option.title = t('airProviderReassignTargetSkip', { count: item.skippedSessions });
         select.append(option);
