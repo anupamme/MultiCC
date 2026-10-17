@@ -143,8 +143,19 @@ test('手机底部导航保留最近任务、真实来路与项目切换', async
     await page.navigate('/air');
     assert.ok(await page.waitFor(`document.querySelector('#air-mobile-create') && document.querySelector('.mobile-console-recent')`));
     assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').hidden`), false);
-    assert.equal(await page.evaluate(`document.querySelectorAll('[data-mobile-view]').length`), 3);
-    assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[2].right<=innerWidth;})()`), true);
+    assert.equal(await page.evaluate(`document.querySelectorAll('[data-mobile-view]').length`), 4);
+    assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[3].right<=innerWidth;})()`), true);
+    // 第 4 项「工作目录」直通 library 视图，目录首页（tasks）归它高亮。
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]') != null`), true);
+    await page.evaluate(`document.querySelector('[data-mobile-view="library"]').click()`);
+    assert.ok(await page.waitFor(`!document.querySelector('#directory-library').hidden`), 'library tab opens the directory library');
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]').classList.contains('active')`), true);
+    await page.evaluate(`[...document.querySelectorAll('.directory-card button')].find(x => x.textContent.includes('${state.directories[0].name}')).click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#directory-mode')`), 'directory home reachable from library');
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]').classList.contains('active')`), true, 'directory home highlights the library tab');
+    // 回控制台继续原有的控制台断言。
+    await page.evaluate(`document.querySelector('[data-mobile-view="overview"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-recent')`), 'back to console');
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#mobile-nav')).display`), 'none');
     t.diagnostic(await page.screenshot('mobile-implemented-home'));
     // 控制台不分目录：顶栏没有目录按钮，卡片里两个项目的任务都在。

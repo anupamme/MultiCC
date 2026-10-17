@@ -111,7 +111,8 @@
       }
     }, 'primary'); create.id = 'air-mobile-create';
     const nav = make('nav'); nav.setAttribute('aria-label', root.t('airSidebarNav'));
-    for (const [view, glyph, key] of [['overview', '▦', 'airConsole'], ['recent', '☷', 'airRecentTasks'], ['schedules', '◷', 'airScheduledTasks']]) {
+    // 第 4 项「工作目录」直通 library 视图：目录与终端入口不能只藏在 ⋯ 菜单里。
+    for (const [view, glyph, key] of [['overview', '▦', 'airConsole'], ['recent', '☷', 'airRecentTasks'], ['schedules', '◷', 'airScheduledTasks'], ['library', '▤', 'airWorkspace']]) {
       const tab = button('', () => ctx.setMode(view)); tab.dataset.mobileView = view;
       tab.append(make('span', glyph, 'mobile-nav-icon'), make('span', root.t(key))); nav.append(tab);
     }
@@ -179,7 +180,9 @@
     $('air-mobile-create').textContent = ctx.mode === 'schedules' ? root.t('airNewScheduledTask') : root.t('airNewTask');
     $('air-mobile-create').disabled = ctx.mode !== 'schedules' && !dir;
     for (const tab of document.querySelectorAll('[data-mobile-view]')) {
-      const on = tab.dataset.mobileView === ctx.mode;
+      // 目录首页（tasks）没有自己的 tab，归「工作目录」高亮。
+      const on = tab.dataset.mobileView === ctx.mode
+        || (tab.dataset.mobileView === 'library' && ctx.mode === 'tasks');
       tab.classList.toggle('active', on); if (on) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
     }
     renderSettingsHeader();
