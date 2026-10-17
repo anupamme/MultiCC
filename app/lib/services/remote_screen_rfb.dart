@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'remote_screen_source.dart';
+
 /// Minimal RFB 3.8 client for the 「🖥 屏幕」 live screen.
 ///
 /// Speaks exactly the subset the MultiCC Agent's rfb.sock serves (see
@@ -15,7 +17,7 @@ import 'dart:typed_data';
 /// WebSocket in production, an in-memory controller in tests). Socket frames
 /// do not line up with RFB message boundaries, so reads are reassembled from
 /// an accumulating buffer.
-class RemoteScreenRfb {
+class RemoteScreenRfb with ScreenInputMixin implements ScreenSource {
   RemoteScreenRfb({
     required Stream<Uint8List> incoming,
     required void Function(Uint8List bytes) send,
@@ -40,10 +42,13 @@ class RemoteScreenRfb {
   bool _closed = false;
 
   /// Framebuffer geometry, valid after [run] completes its handshake.
+  @override
   int width = 0;
+  @override
   int height = 0;
 
   /// BGRA bytes, width × height × 4, mutated in place by every update.
+  @override
   Uint8List? framebuffer;
 
   /// Monotonic counter bumped once per applied update — lets a painter skip
@@ -151,47 +156,9 @@ class RemoteScreenRfb {
     _send(m);
   }
 
-  /// Mask bits follow RFB: left 1, middle 2, right 4, wheel-up 8, wheel-down
-  /// 16. The Agent turns transitions into click/drag/scroll ops itself.
-  void pointerEvent(int mask, int x, int y) {
-    final m = Uint8List(6);
-    m[0] = 5;
-    m[1] = mask & 0xFF;
-    _be16(m, 2, x.clamp(0, 0xFFFF));
-    _be16(m, 4, y.clamp(0, 0xFFFF));
-    _send(m);
-  }
-
-  /// Modifier keysyms are tracked Agent-side; printable keysyms become
-  /// unicode type events, anything with ctrl/cmd/alt becomes a chord.
-  void keyEvent(bool down, int keysym) {
-    final m = Uint8List(8);
-    m[0] = 4;
-    m[1] = down ? 1 : 0;
-    _be32(m, 4, keysym);
-    _send(m);
-  }
-
-  /// Types text key-by-key (down+up per code point). CJK code points work:
-  /// the Agent posts them as unicode events, not through an IME.
-  void typeText(String text) {
-    for (final codePoint in text.runes) {
-      keyEvent(true, codePoint);
-      keyEvent(false, codePoint);
-    }
-  }
-
-  /// Sends a key chord like cmd+c as press/release pairs in order.
-  void chord(List<int> modifierKeysyms, int keysym) {
-    for (final mod in modifierKeysyms) {
-      keyEvent(true, mod);
-    }
-    keyEvent(true, keysym);
-    keyEvent(false, keysym);
-    for (final mod in modifierKeysyms.reversed) {
-      keyEvent(false, mod);
-    }
-  }
+  /// RFB 客户端消息的出口（键鼠编码由 [ScreenInputMixin] 统一提供）。
+  @override
+  void sendInput(Uint8List bytes) => _send(bytes);
 
   void _dispose() {
     if (_closed) return;
@@ -291,13 +258,6 @@ Uint8List _ascii(String s) => Uint8List.fromList(s.codeUnits);
 void _be16(Uint8List m, int at, int v) {
   m[at] = (v >> 8) & 0xFF;
   m[at + 1] = v & 0xFF;
-}
-
-void _be32(Uint8List m, int at, int v) {
-  m[at] = (v >> 24) & 0xFF;
-  m[at + 1] = (v >> 16) & 0xFF;
-  m[at + 2] = (v >> 8) & 0xFF;
-  m[at + 3] = v & 0xFF;
 }
 
 int _u16(Uint8List b, int at) => (b[at] << 8) | b[at + 1];
