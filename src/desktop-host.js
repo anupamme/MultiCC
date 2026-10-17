@@ -36,6 +36,7 @@ function profileFor(platform, { home, env = {} } = {}) {
       platform, label: 'macOS', supported: true, transport: 'unix',
       agentSock: env.MULTICC_AGENT_SOCK || path.join(dir, 'agent.sock'),
       rfbSock: env.MULTICC_AGENT_RFB_SOCK || path.join(dir, 'rfb.sock'),
+      h264Sock: env.MULTICC_AGENT_H264_SOCK || path.join(dir, 'h264.sock'),
       features: MAC_FEATURES, modifier: 'cmd',
     };
   }
@@ -45,7 +46,7 @@ function profileFor(platform, { home, env = {} } = {}) {
     return {
       platform, label: 'Windows', supported: false, transport: 'named-pipe',
       agentSock: env.MULTICC_AGENT_PIPE || '\\\\.\\pipe\\multicc-agent',
-      rfbSock: null, features: NO_FEATURES, modifier: 'ctrl',
+      rfbSock: null, h264Sock: null, features: NO_FEATURES, modifier: 'ctrl',
     };
   }
   // Linux agent：X11 走 XShm + XTEST。Wayland 只能走 portal（每次截图/注入都要
@@ -56,7 +57,7 @@ function profileFor(platform, { home, env = {} } = {}) {
     platform: 'linux', label: 'Linux', supported: true, transport: 'unix',
     agentSock: env.MULTICC_AGENT_SOCK
       || path.join(env.XDG_RUNTIME_DIR || `/run/user/${uid()}`, 'multicc-agent', 'agent.sock'),
-    rfbSock: null, features: LINUX_FEATURES, modifier: 'ctrl',
+    rfbSock: null, h264Sock: null, features: LINUX_FEATURES, modifier: 'ctrl',
   };
 }
 

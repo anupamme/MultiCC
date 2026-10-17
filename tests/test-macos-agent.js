@@ -465,6 +465,7 @@ function provisionFixture() {
   fs.writeFileSync(path.join(root, 'scripts', 'macos-agent', 'MultiCCAgent.swift'), '// v1\n');
   fs.writeFileSync(path.join(root, 'scripts', 'macos-agent', 'LidBrightnessBridge.h'), '// header\n');
   fs.writeFileSync(path.join(root, 'scripts', 'macos-agent', 'LidBrightnessBridge.m'), '// bridge\n');
+  fs.writeFileSync(path.join(root, 'scripts', 'macos-agent', 'MultiCCAgentH264.swift'), '// h264\n');
   const env = {
     MULTICC_AGENT_APP: path.join(tmp, 'MultiCC Agent.app'),
     MULTICC_AGENT_PLIST: path.join(tmp, 'agent.plist'),
@@ -481,7 +482,7 @@ function provisionFixture() {
     fs.mkdirSync(path.dirname(env.MULTICC_AGENT_LINK), { recursive: true });
     try { fs.symlinkSync(bin, env.MULTICC_AGENT_LINK); } catch (_) { /* already linked */ }
     const hash = crypto.createHash('sha256').update(source);
-    for (const file of ['LidBrightnessBridge.h', 'LidBrightnessBridge.m'])
+    for (const file of ['LidBrightnessBridge.h', 'LidBrightnessBridge.m', 'MultiCCAgentH264.swift'])
       hash.update(fs.readFileSync(path.join(root, 'scripts', 'macos-agent', file)));
     fs.writeFileSync(path.join(res, 'source.sha256'), `${hash.digest('hex')}\n`);
     fs.writeFileSync(env.MULTICC_AGENT_PLIST, '');
@@ -583,7 +584,7 @@ test('agent provisioning: packages ship the installer, and the installer prefers
   fs.copyFileSync('/usr/bin/true', path.join(prebuilt, 'MultiCCAgent'));
   const sourceDir = path.join(__dirname, '..', 'scripts', 'macos-agent');
   const hash = crypto.createHash('sha256');
-  for (const file of ['MultiCCAgent.swift', 'LidBrightnessBridge.h', 'LidBrightnessBridge.m'])
+  for (const file of ['MultiCCAgent.swift', 'LidBrightnessBridge.h', 'LidBrightnessBridge.m', 'MultiCCAgentH264.swift'])
     hash.update(fs.readFileSync(path.join(sourceDir, file)));
   fs.writeFileSync(path.join(prebuilt, 'source.sha256'), `${hash.digest('hex')}\n`);
   const env = {

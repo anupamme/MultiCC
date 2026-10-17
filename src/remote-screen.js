@@ -39,7 +39,7 @@ const DIR = path.join(createPaths({ dataDir: process.env.MULTICC_DATA_DIR }).ass
 const INPUT_OPS = new Set(['click', 'move', 'scroll', 'drag', 'type', 'press', 'release', 'resume', 'status']);
 const KEEP_SHOTS = 20;
 
-const deps = { agentCall, execFile, sock: null, rfbSock: null, dir: DIR };
+const deps = { agentCall, execFile, sock: null, rfbSock: null, h264Sock: null, dir: DIR };
 
 function agentCall(req, timeoutMs = 8000) {
   return new Promise(resolve => {
@@ -76,6 +76,7 @@ function call(req, timeoutMs) { return deps.agentCall(req, timeoutMs); }
 deps.host = createDesktopHost({ exec: run, call });
 deps.sock = deps.host.profile.agentSock;
 deps.rfbSock = deps.host.profile.rfbSock;
+deps.h264Sock = deps.host.profile.h264Sock;
 
 // Crop the lossless native screenshot FIRST; only full-screen frames are
 // downsampled to logical size. Each capture owns its files (frame/snapshot
@@ -131,6 +132,23 @@ function frame(region = null) {
 // Byte-preserving bridge with bounded queues and stalled-stream recovery.
 function attachRfb(ws) {
   require('./remote-screen-rfb-bridge').attachRfbBridge(ws, { socketPath: deps.rfbSock });
+}
+
+// 高清流畅模式：Agent 的 h264.sock（VideoToolbox 硬编），按帧转发、可丢普通帧。
+function attachH264(ws) {
+  if (!deps.h264Sock) { try { ws.close(1011, 'h264-unavailable'); } catch {} return; }
+  const p2p = require('./remote-screen-p2p');
+  const iceServers = p2p.iceServersFromEnv();
+  require('./remote-screen-h264-bridge').attachH264Bridge(ws, {
+    socketPath: deps.h264Sock,
+    // 直连可用就在这条 WS 上顺带做信令；打不通 / 没装 werift 时帧一直走这条 WS（中继）。
+    ...(p2p.p2pAvailable() ? { p2p: hooks => p2p.createP2pSession({ ...hooks, iceServers }), p2pHello: { iceServers } } : {}),
+  });
+}
+
+// 新版 Agent 才有 h264.sock；前端据此决定先试 H.264 还是直接用 noVNC。
+function streams() {
+  return { h264: !!deps.h264Sock && fs.existsSync(deps.h264Sock), rfb: !!deps.rfbSock && fs.existsSync(deps.rfbSock) };
 }
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
@@ -261,7 +279,7 @@ function mount(app) {
   // 常量回答；agent 装没装不在这里判断——那由各路由真实失败时回各自的 reason。
   app.get('/api/remote-screen/capabilities', (_req, res) => {
     res.set({ 'Cache-Control': 'no-store' });
-    res.json(deps.host.info());
+    res.json({ ...deps.host.info(), streams: streams() });
   });
   app.get('/api/remote-screen/frame', async (req, res) => {
     try {
@@ -292,6 +310,7 @@ function mount(app) {
 module.exports = {
   mount,
   attachRfb,
+  attachH264,
   handleAnnotation,
   isOwnShot,
   buildInput,

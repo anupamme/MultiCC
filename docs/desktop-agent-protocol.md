@@ -175,6 +175,36 @@ CLI 与 socket 走的是同一个 socket、同一段解析，所以 CLI 上的�
 - socket 不存在（平台没有捕获能力 / agent 版本旧）时，服务端 `attachRfb` 会以
   `1011 rfb-unavailable` 关掉 WS，前端自动退回 JPEG 轮询。**这是正常降级，不是错误。**
 
+### 6.1 H.264 串流（可选，优先于 RFB）
+
+第三个 socket 推硬件编码的 H.264，服务端按帧转发到 `/ws/remote-screen?mode=h264`，
+浏览器用 WebCodecs 解码（`public/chat-remote-screen-h264.js`）。同一套帧格式以后也走
+WebRTC DataChannel（P2P）；打洞失败时就走这条 WS——中继只用现有外网通道。
+
+- 地址：macOS 为 `<agentDir>/h264.sock`（`MULTICC_AGENT_H264_SOCK` 可覆盖），同 uid 校验。
+- Agent → 服务端，每帧 `[type u8][len u32 BE][payload]`：`1` config（JSON
+  `{codec,width,height}`，宽高 = 主屏逻辑点）、`2` 关键帧、`3` 普通帧；后两种 payload 是
+  `[µs 时间戳 u64 BE][Annex B]`，关键帧内联 SPS/PPS。只在画面变化时出帧；静止后对最后一帧
+  补编两次（让文字变清晰）；收到关键帧请求时立即把最后一帧编成关键帧。
+- 服务端 → Agent 只有三种定长消息：`0x4B`（要关键帧）、RFB KeyEvent（`4`+7 字节）、
+  RFB PointerEvent（`5`+5 字节，坐标是逻辑点）。输入同样走 `handle()` 全部护栏。
+- 丢帧而不断流：Agent 每个连接排队超过 4 帧、服务端 WS 积压超过水位，都只丢普通帧并等
+  下一个关键帧。出不了首帧（无 socket / 无录屏授权）时服务端以 `1011` 关 WS，前端回退 noVNC。
+
+### 6.2 P2P 直连（服务端可选，与 Agent 无关）
+
+`/ws/remote-screen?mode=h264` 同时是 WebRTC 的信令通道（`src/remote-screen-p2p.js`，werift）：
+服务端发 `{t:'rtc-hello', iceServers}`，浏览器建 DataChannel 并 `rtc-offer`，双方 trickle
+`rtc-ice`；通道打开后服务端先发 `{t:'rtc-active', on:true}` 再把帧改走直连（并要一个关键帧），
+直连断开发 `on:false` 退回这条 WS。浏览器在直连期间丢弃 WS 上残余的帧，输入也改走直连。
+
+- DataChannel 上传的是与 `h264.sock` 相同的字节流，按 16KB 分片，浏览器流式拼回。
+- 只用 STUN 探测公网地址，**从不使用 TURN/第三方中继**；打不通就一直走这条 WS——中继只用
+  现有外网通道。`MULTICC_REMOTE_STUN`：逗号分隔的 `stun:`/`stuns:` 地址，默认小米 + Google
+  STUN；设为空串 = 只在局域网直连。`MULTICC_REMOTE_P2P=0` 完全关闭直连。
+- 依赖 `werift`（纯 JS）；未安装时自动只走中继，不报错。
+- 浏览器直连失败按 5s / 15s / 60s 退避重试；画面全程由中继兜底，不黑屏。
+
 ## 7. 各平台实现要点
 
 ### macOS（已实现）
