@@ -257,4 +257,93 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     transport.close();
   });
+
+  testWidgets('手机控制台按状态格筛选，今日完成只列今天跑完的并带进最近任务', (tester) async {
+    final config = await settings();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final transport = MockClient((req) async {
+      dynamic body = <String, dynamic>{};
+      if (req.url.path == '/api/air') {
+        body = {
+          'ok': true,
+          'clis': ['codex'],
+          'directories': [
+            {'id': 'one', 'name': '项目一', 'path': '/projects/one'},
+          ],
+          'tasks': [
+            {
+              'id': 'w',
+              'dirId': 'one',
+              'title': '等我回答的',
+              'status': 'active',
+              'runState': 'waiting',
+              'updatedAt': now,
+            },
+            {
+              'id': 'd1',
+              'dirId': 'one',
+              'title': '今天做完的',
+              'status': 'active',
+              'runState': 'succeeded',
+              'updatedAt': now - 1000,
+            },
+            {
+              'id': 'd2',
+              'dirId': 'one',
+              'title': '昨天做完的',
+              'status': 'active',
+              'runState': 'succeeded',
+              'updatedAt': now - 2 * 86400000,
+            },
+          ],
+          'sessions': [],
+        };
+      } else if (req.url.path == '/api/settings/power') {
+        body = {'ok': true, 'available': false};
+      } else if (req.url.path == '/api/cron' ||
+          req.url.path == '/api/docs-registry') {
+        body = [];
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: transport),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final today = find.byKey(const ValueKey('air-mobile-console-today'));
+    await tester.ensureVisible(today);
+    expect(
+      find.descendant(of: today, matching: find.text('今日完成 1')),
+      findsOneWidget,
+    );
+    await tester.tap(today);
+    await tester.pumpAndSettle();
+    expect(find.text('今天做完的'), findsOneWidget);
+    expect(find.text('昨天做完的'), findsNothing);
+    // 「全部 ›」带着这一格进最近任务页。
+    final all = find.byKey(const ValueKey('air-mobile-console-all'));
+    await tester.ensureVisible(all);
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('air-mobile-task-search')),
+      findsOneWidget,
+    );
+    final picked = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, '今日完成'),
+    );
+    expect(picked.selected, isTrue);
+    expect(find.text('今天做完的'), findsOneWidget);
+    expect(find.text('昨天做完的'), findsNothing);
+  });
 }

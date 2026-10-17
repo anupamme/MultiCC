@@ -170,6 +170,8 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 打开 Air 就落在控制台（Web 那边裸 `/air` 也落这一页）。第一眼要看到的是
   /// 「有什么在跑、有什么在等我」，而不是某一个目录里的对话。
   _AirMode _mode = _AirMode.console;
+  // 手机「最近任务」页打开时选中哪一格：控制台卡片的「全部 ›」带过来，底部导航进入时清空。
+  AirDirectoryTaskFilter? _mobileRecentFilter;
 
   /// 当前目录首页显示哪一类东西。默认 Chat（任务/对话），和 Web 一致；换一个
   /// 目录也回到 Chat —— 「默认还是 chat 模式」不该被上一次切到 Terminal 记住。

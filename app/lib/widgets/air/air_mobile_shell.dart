@@ -123,6 +123,7 @@ extension _AirMobileShell on _AirTasksViewState {
     data: data,
     directoryId: _directoryId,
     recent: _mode == _AirMode.recent,
+    initialFilter: _mode == _AirMode.recent ? _mobileRecentFilter : null,
     recentTasks: _sidebarTasks(),
     setupNotice: data == null
         ? null
@@ -134,7 +135,10 @@ extension _AirMobileShell on _AirTasksViewState {
           ),
     onOpenTask: (task) => unawaited(_open(task)),
     onRefresh: _refresh,
-    onRecent: () => _updateMobile(() => _mode = _AirMode.recent),
+    onRecent: (filter) => _updateMobile(() {
+      _mobileRecentFilter = filter;
+      _mode = _AirMode.recent;
+    }),
     onResource: (v) {
       switch (v) {
         case 'docs':
@@ -344,13 +348,14 @@ extension _AirMobileShell on _AirTasksViewState {
                   : _mode == _AirMode.recent || _mode == _AirMode.tasks
                   ? 1
                   : 0,
-              onDestinationSelected: (i) => _updateMobile(
-                () => _mode = [
+              onDestinationSelected: (i) => _updateMobile(() {
+                _mobileRecentFilter = null;
+                _mode = [
                   _AirMode.console,
                   _AirMode.recent,
                   _AirMode.schedules,
-                ][i],
-              ),
+                ][i];
+              }),
               destinations: const [
                 NavigationDestination(
                   icon: Icon(Icons.dashboard_outlined),
