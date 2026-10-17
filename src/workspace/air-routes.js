@@ -328,6 +328,11 @@ function mountAirRoutes(app, deps) {
         // 未看过的结果（完成/出错/等回复）只在服务端记一份，所有客户端读同一个答案。
         attention: pendingAttention(t) };
     });
+    // 最近有消息的在前。任务板本身是从旧到新存的，客户端凡是「先放自己知道的几条、
+    // 剩下按原顺序补位」的列表（旧版 App 的手机最近任务就是）都会把新任务压到底。
+    // 平手按 updatedAt；再平手保持任务板原顺序（sort 是稳定的），ETag 不会因排序抖动。
+    tasks.sort((a, b) => (b.lastMessageAt - a.lastMessageAt)
+      || ((Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)));
     lap('cardLoopMs');
     const payload = { ok: true, directories: [...deps.directories.values()].map(d => ({
       id: d.id, name: d.name, path: d.path,

@@ -39,15 +39,32 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   AirDirectoryTaskFilter _filter = AirDirectoryTaskFilter.all;
   bool _all = false;
 
-  List<AirTask> get _rows {
-    final all = widget.data?.tasks ?? <AirTask>[];
-    final ids = widget.recentTasks.map((t) => t.id).toSet();
-    return [...widget.recentTasks, ...all.where((t) => !ids.contains(t.id))]
+  /// 手机「最近任务」：pin 住的排最前，其余按最后活动时间倒序（同 Web
+  /// `air-mobile.js` 的 recentRows）。不沿用侧栏「本机打开过」的顺序——在别的端
+  /// 新建、这台手机没点开过的任务会被挤到底，而快照里的 tasks 本身是从旧到新排的。
+  List<AirTask> get _rows => _rowsOf(withPins: true);
+
+  /// 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），只看谁最近动过。
+  List<AirTask> _rowsOf({required bool withPins}) {
+    final data = widget.data;
+    final all = (data?.tasks ?? <AirTask>[])
         .where(
           (t) => widget.directoryId == null || t.dirId == widget.directoryId,
         )
         .where((t) => _all || t.status != 'archived')
         .toList();
+    final byId = {for (final task in all) task.id: task};
+    final pinned = [
+      for (final id
+          in withPins ? data?.taskPins ?? const <String>[] : const <String>[])
+        if (byId[id] != null) byId[id]!,
+    ];
+    final ids = pinned.map((t) => t.id).toSet();
+    int activeAt(AirTask t) =>
+        t.lastMessageAt > 0 ? t.lastMessageAt : t.updatedAt;
+    final rest = all.where((t) => !ids.contains(t.id)).toList()
+      ..sort((a, b) => activeAt(b).compareTo(activeAt(a)));
+    return [...pinned, ...rest];
   }
 
   Widget _task(AirTask task) => AirTaskTile(
@@ -194,7 +211,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                 ),
               ],
             ),
-            ...rows.take(3).map(_task),
+            ..._rowsOf(withPins: false).take(3).map(_task),
             if (rows.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(16),
