@@ -515,3 +515,94 @@ test('engine: targetSessionId injects into that specific session', async () => {
   assert.equal(h.calls.inject[0][0], 's9');
   assert.equal(h.created.length, 0);
 });
+
+// ── chains: `then` steps run one after another ──────────────────────────────
+test('rules: then steps are validated per step and capped', () => {
+  const opts = { idFactory: () => 'r', nowIso: () => 'n' };
+  const plain = validateEventRule({ on: ['task.finished'], action: { kind: 'notify' } }, opts);
+  assert.deepEqual(plain.rule.then, []);
+  const ok = validateEventRule({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' },
+    then: [{ kind: 'inject-prompt', prompt: 'b' }, { kind: 'notify', message: 'done' }] }, opts);
+  assert.deepEqual(ok.rule.then, [{ kind: 'inject-prompt', prompt: 'b' }, { kind: 'notify', message: 'done' }]);
+  assert.match(validateEventRule({ on: ['task.finished'], action: { kind: 'notify' }, then: [{ kind: 'rm' }] }, opts).error, /^then\[0\]: unknown action/);
+  const many = Array.from({ length: 10 }, () => ({ kind: 'notify' }));
+  assert.match(validateEventRule({ on: ['task.finished'], action: { kind: 'notify' }, then: many }, opts).error, /at most 9/);
+});
+
+function chainHarness(over = {}) {
+  let t = 0;
+  return newSessionHarness({ now: () => (t += 100000), ...over });
+}
+
+test('engine: chain injects the next step only after the previous turn finishes', async () => {
+  const h = chainHarness();
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'step1' },
+    then: [{ kind: 'inject-prompt', prompt: 'step2' }, { kind: 'notify', message: 'all done' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1);
+  assert.ok(h.calls.inject[0][1].trimEnd().endsWith('你的指令：step1'));
+  assert.deepEqual(h.engine.pendingChains().map((c) => [c.sessionId, c.index]), [['s1', 1]]);
+  // step1 still running: nothing else happens
+  h.hub.emit('task.running', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1);
+  // step1's turn finishes with a conclusion -> step2 gets it, and the rule itself does not re-fire
+  h.hub.emit('task.finished', 's1', { goal: 'g', conclusion: 'step1 result' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 2);
+  assert.match(h.calls.inject[1][1], /step1 result/);
+  assert.ok(h.calls.inject[1][1].trimEnd().endsWith('你的指令：step2'));
+  // step2 finishes -> the trailing notify runs, no further inject, chain is over
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 2);
+  assert.equal(h.calls.notify.length, 1);
+  assert.equal(h.calls.notify[0][2], 'all done');
+  assert.equal(h.engine.pendingChains().length, 0);
+  assert.deepEqual(h.engine.recentResults().map((r) => r.step), [1, 2, 3]);
+});
+
+test('engine: a failed or waiting step stops the chain; background keeps waiting', async () => {
+  const h = chainHarness();
+  h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' }, then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  h.hub.emit('task.waiting_background', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.engine.pendingChains().length, 1, '后台任务还在跑，链继续等');
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1);
+  assert.equal(h.engine.pendingChains().length, 0);
+  assert.equal(h.engine.recentResults().at(-1).error, 'chain stopped: task.failed');
+});
+
+test('engine: chain follows a new session; non-inject steps run right away', async () => {
+  const h = chainHarness();
+  h.persistedSessions.set('task-new-1', { id: 'task-new-1', dirId: 'dir1', triggers: [] });
+  h.engine.addGlobal({ on: ['task.achieved'], action: { kind: 'notify', message: 'starting' },
+    then: [{ kind: 'inject-prompt', prompt: 'plan', newSession: {} }, { kind: 'inject-prompt', prompt: 'build' }] });
+  h.hub.emit('task.achieved', 's1', { goal: 'g' });
+  await h.settle(); await h.settle();
+  assert.equal(h.calls.notify.length, 1);
+  assert.equal(h.created.length, 1);
+  assert.equal(h.calls.inject[0][0], 'task-new-1');
+  h.hub.emit('task.finished', 'task-new-1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 2);
+  assert.equal(h.calls.inject[1][0], 'task-new-1', '后续步骤默认接在上一步所在的会话里');
+  assert.equal(h.created.length, 1);
+});
+
+test('engine: disabling a rule mid-chain cancels the remaining steps', async () => {
+  const h = chainHarness();
+  const { rule } = h.engine.addGlobal({ on: ['task.finished'], action: { kind: 'inject-prompt', prompt: 'a' }, then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  h.engine.updateGlobal(rule.id, { enabled: false });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 1);
+  assert.equal(h.engine.recentResults().at(-1).error, 'chain cancelled (rule changed)');
+});

@@ -72,7 +72,7 @@
     owner.append(node('span', item.scope === 'global' ? t('hookOwnerGlobal') : t('hookOwnerSession', { name: item.sessionLabel || item.sessionId })));
     const run = item.lastRun;
     owner.append(node('small', run
-      ? `${t('hookLastRun')} ${when(run.ts)} · ${run.ok ? t('hookRunOk') : t('hookRunFail', { msg: run.error || '' })}`
+      ? `${t('hookLastRun')} ${when(run.ts)}${run.steps ? ` · ${run.step}/${run.steps}` : ''} · ${run.ok ? t('hookRunOk') : t('hookRunFail', { msg: run.error || '' })}`
       : (rule.lastFiredAt ? `${t('hookLastRun')} ${when(rule.lastFiredAt)}` : t('hookNeverRan'))));
 
     const actions = node('footer', null, 'schedule-actions');
@@ -91,6 +91,13 @@
         ? t('hookTargetSession', { id: rule.action.targetSessionId }) : t('hookInjectSource'));
       flow.append(node('small', `（${target}）`));
       if (rule.action.prompt) article.insertBefore(node('p', rule.action.prompt, 'schedule-prompt'), actions);
+    }
+    // 链式钩子：标出总步数，后续步骤的指令按序号列在第一步下面。
+    const then = rule.then || [];
+    if (then.length) {
+      flow.append(node('small', t('hookChainSteps', { n: then.length + 1 })));
+      then.forEach((step, index) => article.insertBefore(
+        node('p', `${index + 2}. ${step.prompt || actionLabel(step.kind)}`, 'schedule-prompt'), actions));
     }
     return article;
   }

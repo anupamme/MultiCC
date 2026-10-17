@@ -86,6 +86,9 @@ dialog.hook-list-dialog .hook-list-close{border:0;background:transparent;font-si
       const card = el('div', null, `hook-list-item${rule.enabled ? '' : ' off'}`);
       card.append(el('div', `${rule.name ? `${rule.name} · ` : ''}${rule.on.map(eventLabel).join(' / ')} → ${actionLabel(rule.action.kind)}`, 'hook-list-flow'));
       if (rule.action.prompt) card.append(el('p', rule.action.prompt, 'hook-list-prompt'));
+      // 链式钩子：后续步骤按顺序列出，编号接在第一步后面。
+      (rule.then || []).forEach((step, index) => card.append(
+        el('p', `${index + 2}. ${step.prompt || actionLabel(step.kind)}`, 'hook-list-prompt')));
       card.append(el('small', rule.lastFiredAt ? `${tr('hookLastRun')} ${new Date(rule.lastFiredAt).toLocaleString()}` : tr('hookNeverRan')));
       const actions = el('div', null, 'hook-list-actions');
       actions.append(

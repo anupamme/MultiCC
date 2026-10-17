@@ -4610,7 +4610,15 @@ window.MULTICC_I18N_CATALOG = {
     "backgroundTypeCommand": "后台命令",
     "backgroundTypeWorkflow": "工作流",
     "backgroundTypeMonitor": "后台监控",
-    "backgroundTypeTool": "工具任务"
+    "backgroundTypeTool": "工具任务",
+    "hookChain": "然后依次执行（可选）",
+    "hookChainAdd": "＋ 添加下一步",
+    "hookChainStepPh": "第 {n} 步的指令",
+    "hookChainRemove": "删除这一步",
+    "hookChainKept": "{kind}（保留原设置）",
+    "hookChainHint": "每一步都等上一步注入的那一轮跑完（任务完成）才开始，接在上一步所在的会话里，并自动带上上一步的结论；某一步失败或停下等你回复时，后面的步骤不再执行。",
+    "hookChainSteps": "共 {n} 步",
+    "hookErrChainEmpty": "后续步骤的指令不能为空"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9222,6 +9230,14 @@ window.MULTICC_I18N_CATALOG = {
     "backgroundTypeCommand": "Background command",
     "backgroundTypeWorkflow": "Workflow",
     "backgroundTypeMonitor": "Background monitor",
-    "backgroundTypeTool": "Tool task"
+    "backgroundTypeTool": "Tool task",
+    "hookChain": "Then, in order (optional)",
+    "hookChainAdd": "+ Add a step",
+    "hookChainStepPh": "Instruction for step {n}",
+    "hookChainRemove": "Remove this step",
+    "hookChainKept": "{kind} (kept as configured)",
+    "hookChainHint": "Each step starts only after the turn injected by the previous step has finished, runs in the same session, and receives that step's conclusion. If a step fails or stops to wait for you, the remaining steps are skipped.",
+    "hookChainSteps": "{n} steps",
+    "hookErrChainEmpty": "A follow-up step needs an instruction"
   }
 };

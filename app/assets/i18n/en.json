@@ -4608,5 +4608,13 @@
   "backgroundTypeCommand": "Background command",
   "backgroundTypeWorkflow": "Workflow",
   "backgroundTypeMonitor": "Background monitor",
-  "backgroundTypeTool": "Tool task"
+  "backgroundTypeTool": "Tool task",
+  "hookChain": "Then, in order (optional)",
+  "hookChainAdd": "+ Add a step",
+  "hookChainStepPh": "Instruction for step {n}",
+  "hookChainRemove": "Remove this step",
+  "hookChainKept": "{kind} (kept as configured)",
+  "hookChainHint": "Each step starts only after the turn injected by the previous step has finished, runs in the same session, and receives that step's conclusion. If a step fails or stops to wait for you, the remaining steps are skipped.",
+  "hookChainSteps": "{n} steps",
+  "hookErrChainEmpty": "A follow-up step needs an instruction"
 }

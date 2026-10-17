@@ -52,6 +52,9 @@ mtrigger test    <id>
 mtrigger add --type event --on task.attention --action notify
 mtrigger add --type event --on task.achieved --action webhook \
   --url https://example.com/hook --secret MY_HOOK_SECRET
+# 链式钩子：完成后依次执行三步，每步等上一步跑完再开始
+mtrigger add --type event --on task.finished --action inject-prompt \
+  --prompt "写实现方案" --then "按方案实现" --then "跑测试并汇报"
 
 参数说明：
 - `--prompt` 可省略；省略时触发会注入一段默认的「检查 git + 提醒提交/测试」指令。
@@ -81,6 +84,8 @@ mtrigger add --type event --on task.achieved --action webhook \
 动作：`inject-prompt`（向会话注入提示；自己引起的那一轮不会再触发注入，冷却下限 10 秒）、`webhook`（可选 HMAC-SHA256 签名，密钥放保险箱用 `--secret` 引用；只允许公网地址，超时 5 秒、5xx 重试）、`notify`（走现有推送）。
 
 `inject-prompt` 的注入目标有三种：默认注入到触发事件的会话；`--target <会话id>` 注入到指定会话；`--new-session` 每次触发新建一个会话再注入（`--dir <工作区id>`、`--cli <claude|codex|…>` 留空则沿用触发事件的会话，`--title` 默认用规则名称）。新建的会话自己完成时不会再触发同一类注入，不会无限滚雪球。
+
+**链式钩子（连续执行）**：规则可带 `then`（最多 9 步，命令行用可重复的 `--then "<指令>"`），第一步之后按顺序执行。注入类步骤会等它注入的那一轮跑完（`task.finished`）才开始下一步，默认接在上一步所在的会话里（第一步用了 `--new-session` 就一路接在那个新会话里），上一步的结论自动放进下一步的信封；通知/Webhook 步骤执行完立刻进入下一步。某一步失败（`task.failed`）或停下等用户回复（`task.waiting_user`）时整条链停止，后台任务（`task.waiting_background`）会继续等；链执行期间该会话自己的完成事件不会再触发其它注入。中途停用/删除规则，剩下的步骤取消。等待中的链只在内存里，服务重启后丢失，单步最长等 6 小时。HTTP 里每步是一个动作对象：`"then":[{"kind":"inject-prompt","prompt":"…"},{"kind":"notify","message":"…"}]`；`GET /api/events/recent` 的 `chains` 列出正在等待的链，`runs` 里带 `step/steps`。
 
 **传给下一个动作的固定信封**（用户不用定义变量，只写指令）：`sessionId`（来源会话，想看全文就用它读历史）、`event`、`goal`、`goalState`、`conclusion`（来源会话最后一条回复，截断到约 2000 字并脱敏）、`summary`、`error`（仅失败，只含类别）、`taskId`、`ts`。`inject-prompt` 会把这些拼成一段固定文本，指令放最后；`webhook` 默认只发 sessionId/goal/goalState 等，要带 `conclusion`/`summary` 必须在动作里设 `includeConclusion: true`（命令行加 `--include-conclusion`）。
 
