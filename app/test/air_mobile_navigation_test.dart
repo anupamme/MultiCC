@@ -346,4 +346,121 @@ void main() {
     expect(find.text('今天做完的'), findsOneWidget);
     expect(find.text('昨天做完的'), findsNothing);
   });
+
+  testWidgets('手机控制台不分目录，目录在最近任务里选，选完留在本页', (tester) async {
+    final config = await settings();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final transport = MockClient((req) async {
+      dynamic body = <String, dynamic>{};
+      if (req.url.path == '/api/air') {
+        body = {
+          'ok': true,
+          'clis': ['codex'],
+          'directories': [
+            {'id': 'one', 'name': '项目一', 'path': '/projects/one'},
+            {'id': 'two', 'name': '项目二', 'path': '/projects/two'},
+          ],
+          'tasks': [
+            {
+              'id': 'a',
+              'dirId': 'one',
+              'title': '项目一的活',
+              'status': 'active',
+              'runState': 'idle',
+              'updatedAt': now,
+            },
+            {
+              'id': 'b',
+              'dirId': 'two',
+              'title': '项目二的活',
+              'status': 'active',
+              'runState': 'idle',
+              'updatedAt': now - 1000,
+            },
+          ],
+          'sessions': [],
+        };
+      } else if (req.url.path == '/api/settings/power') {
+        body = {'ok': true, 'available': false};
+      } else if (req.url.path == '/api/cron' ||
+          req.url.path == '/api/docs-registry') {
+        body = [];
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: transport),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 控制台：两个项目的任务都在，顶栏没有目录按钮。
+    expect(find.text('项目一的活'), findsOneWidget);
+    expect(find.text('项目二的活'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('air-mobile-project-picker')),
+        matching: find.byIcon(Icons.expand_more),
+      ),
+      findsNothing,
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('最近任务'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final picker = find.byKey(const ValueKey('air-mobile-project-picker'));
+    expect(
+      find.descendant(of: picker, matching: find.text('全部项目')),
+      findsOneWidget,
+    );
+    expect(find.text('项目一的活'), findsOneWidget);
+    expect(find.text('项目二的活'), findsOneWidget);
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('air-mobile-project-two')));
+    await tester.pumpAndSettle();
+    // 仍在最近任务页，只剩项目二的任务。
+    expect(
+      find.byKey(const ValueKey('air-mobile-task-search')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: picker, matching: find.text('项目二')),
+      findsOneWidget,
+    );
+    expect(find.text('项目一的活'), findsNothing);
+    expect(find.text('项目二的活'), findsOneWidget);
+    // 选回全部项目。
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('air-mobile-project-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('项目一的活'), findsOneWidget);
+    expect(find.text('项目二的活'), findsOneWidget);
+    // 回控制台，目录筛选不影响控制台。
+    await tester.tap(picker);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('air-mobile-project-two')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('控制台'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('项目一的活'), findsOneWidget);
+    expect(find.text('项目二的活'), findsOneWidget);
+  });
 }

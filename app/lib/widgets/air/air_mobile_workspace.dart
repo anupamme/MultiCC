@@ -99,9 +99,13 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   @override
   Widget build(BuildContext context) {
     final rows = _rows;
-    final urgent = airUrgentTasks(
-      widget.data?.tasksOf(widget.directoryId) ?? [],
-    );
+    // directoryId 为 null（控制台、最近任务的「全部项目」）时看所有项目。
+    final scoped = (widget.data?.tasks ?? <AirTask>[])
+        .where(
+          (t) => widget.directoryId == null || t.dirId == widget.directoryId,
+        )
+        .toList();
+    final urgent = airUrgentTasks(scoped);
     final recentAll = _rowsOf(withPins: false);
     final consoleRows = _consoleFilter == null
         ? recentAll
@@ -126,12 +130,14 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
             widget.recent ? t('airRecentTasks') : t('airConsole'),
             style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 8),
-          Text(
-            widget.data?.directoryOf(widget.directoryId)?.name ??
-                t('airHeaderNoDirectory'),
-            style: const TextStyle(color: AppColors.muted),
-          ),
+          if (widget.recent) ...[
+            const SizedBox(height: 8),
+            Text(
+              widget.data?.directoryOf(widget.directoryId)?.name ??
+                  t('airAllProjects'),
+              style: const TextStyle(color: AppColors.muted),
+            ),
+          ],
           if (widget.recent) ...[
             const SizedBox(height: 18),
             TextField(

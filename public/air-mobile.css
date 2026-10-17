@@ -22,6 +22,7 @@
 @media(max-width:760px) {
  .air-mobile-top:not([hidden]) { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-shrink:0; padding:8px 16px; background:white; border-bottom:1px solid var(--line); }
  .air-mobile-project { min-width:0; flex:1; min-height:44px; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--accent); font-size:16px; font-weight:650; border:0; }
+.air-mobile-spacer { flex:1; min-height:44px; }
  .air-mobile-settings { width:44px; min-height:44px; font-size:22px; border:0; }
  .air-mobile-dock:not([hidden]) { display:flex; flex-direction:column; flex-shrink:0; padding:8px 16px env(safe-area-inset-bottom); background:#f4f8fd; border-top:1px solid var(--line); }
  #air-mobile-create { width:100%; min-height:44px; border-radius:12px; }
