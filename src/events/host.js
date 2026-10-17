@@ -53,7 +53,8 @@ function createEventsHost(deps) {
     sessionInfo: (id) => { const record = persistedSessions.get(id); return record ? { dirId: record.dirId, cli: record.cli } : null; },
     injectPrompt: async (sessionId, prompt) => {
       const chat = chatSessions.get(sessionId);
-      if (!persistedSessions.has(sessionId) || (chat && chat.isStreaming)) return false;
+      if (!persistedSessions.has(sessionId)) return { ok: false, code: 'target_missing' };
+      if (chat && chat.isStreaming) return { ok: false, code: 'target_busy' };
       if (!deps.admit) { bus.emit('chat:run', sessionId, prompt, { originTrigger: true }); return true; }
       // Await the admission so the run log records what really happened —
       // fire-and-forget logged ok even when every gate refused the prompt.

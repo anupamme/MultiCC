@@ -1,7 +1,8 @@
 'use strict';
 
 // Event rule schema: validation, normalization and filter matching. Pure.
-// A rule = which events (`on`) + optional `filter` + one `action`.
+// A rule = which events (`on`) + optional `filter` + one `action`, optionally
+// followed by a chain (`then`) of further actions the engine runs in order.
 // The same shape is used for session-level triggers (type:'event') and for
 // global rules; only the storage differs.
 
@@ -11,6 +12,7 @@ const ACTION_KINDS = Object.freeze(['inject-prompt', 'webhook', 'notify']);
 const MAX_PATTERNS = 10;
 const MAX_FILTER_IDS = 50;
 const MIN_INJECT_COOLDOWN_MS = 10000;
+const MAX_CHAIN_STEPS = 9; // follow-up steps after the first action
 
 function clampInt(value, min, max, fallback) {
   const number = parseInt(value, 10);
@@ -85,6 +87,15 @@ function validateEventRule(body = {}, { idFactory, nowIso, scope = 'global' } = 
   const validated = validateAction(body.action);
   if (validated.error) return { error: validated.error };
 
+  const steps = body.then == null ? [] : (Array.isArray(body.then) ? body.then : [body.then]);
+  if (steps.length > MAX_CHAIN_STEPS) return { error: `then allows at most ${MAX_CHAIN_STEPS} steps` };
+  const then = [];
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = validateAction(steps[index]);
+    if (step.error) return { error: `then[${index}]: ${step.error}` };
+    then.push(step.action);
+  }
+
   const filter = {};
   const source = body.filter && typeof body.filter === 'object' ? body.filter : {};
   const sessionIds = idList(source.sessionIds);
@@ -104,6 +115,7 @@ function validateEventRule(body = {}, { idFactory, nowIso, scope = 'global' } = 
     on,
     filter,
     action: validated.action,
+    then,
     cooldownMs: Math.max(
       injecting ? MIN_INJECT_COOLDOWN_MS : 0,
       clampInt(body.cooldownMs, 0, 86400000, injecting ? 60000 : 0),
@@ -123,4 +135,4 @@ function matchesFilter(rule, event) {
   return true;
 }
 
-module.exports = { ACTION_KINDS, MIN_INJECT_COOLDOWN_MS, validateEventRule, validateAction, validateWebhookUrl, matchesFilter };
+module.exports = { ACTION_KINDS, MIN_INJECT_COOLDOWN_MS, MAX_CHAIN_STEPS, validateEventRule, validateAction, validateWebhookUrl, matchesFilter };

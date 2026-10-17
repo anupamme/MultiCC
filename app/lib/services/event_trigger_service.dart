@@ -8,8 +8,19 @@ import 'settings_service.dart';
 /// 触发器（事件 → 动作）— 镜像网页 public/hook-editor.js 与
 /// public/air-trigger-center.js，后端见 src/events/。
 ///
-/// 一条规则：`on`（事件模式，可多选）发生时执行 `action`。传给下一个动作的参数
-/// 是后端拼好的固定信封，这里不让用户定义变量，注入类动作只写「指令」。
+/// 一条规则：`on`（事件模式，可多选）发生时执行 `action`，之后可按顺序再执行
+/// `then` 里的后续步骤（链式钩子，最多 [kHookMaxChainSteps] 步）。传给下一个动作的
+/// 参数是后端拼好的固定信封，这里不让用户定义变量，注入类动作只写「指令」。
+
+/// 后续步骤上限，与 src/events/rules.js 的 MAX_CHAIN_STEPS 一致。
+const int kHookMaxChainSteps = 9;
+
+/// 后续步骤能否在表单里编辑：只有「注入到上一步所在会话」的指令可以；经 API 建的
+/// 通知 / Webhook / 指定目标步骤原样保留、只能删除（与网页 hook-editor.js 一致）。
+bool hookChainStepEditable(Map<String, dynamic> step) =>
+    step['kind'] == 'inject-prompt' &&
+    step['targetSessionId'] == null &&
+    step['newSession'] == null;
 
 /// 「注入到 / 作用范围」下拉的一个选项。
 typedef HookChoice = ({String id, String label});
@@ -82,12 +93,24 @@ class HookRun {
   final int? ts;
   final bool ok;
   final String error;
-  const HookRun({this.ts, required this.ok, this.error = ''});
+
+  /// 链式钩子的第几步 / 共几步；单步规则为 null。
+  final int? step;
+  final int? steps;
+  const HookRun({
+    this.ts,
+    required this.ok,
+    this.error = '',
+    this.step,
+    this.steps,
+  });
 
   factory HookRun.fromJson(Map<String, dynamic> j) => HookRun(
     ts: (j['ts'] as num?)?.toInt(),
     ok: j['ok'] == true,
     error: (j['error'] ?? '').toString(),
+    step: (j['step'] as num?)?.toInt(),
+    steps: (j['steps'] as num?)?.toInt(),
   );
 }
 
@@ -98,6 +121,9 @@ class HookRule {
   final List<String> on;
   final Map<String, dynamic> filter;
   final Map<String, dynamic> action;
+
+  /// 第一步之后依次执行的动作（链式钩子）。
+  final List<Map<String, dynamic>> then;
   final int cooldownMs;
 
   const HookRule({
@@ -107,6 +133,7 @@ class HookRule {
     required this.on,
     required this.filter,
     required this.action,
+    this.then = const [],
     this.cooldownMs = 0,
   });
 
@@ -125,6 +152,10 @@ class HookRule {
     on: ((j['on'] as List?) ?? const []).map((e) => e.toString()).toList(),
     filter: ((j['filter'] as Map?) ?? const {}).cast<String, dynamic>(),
     action: ((j['action'] as Map?) ?? const {}).cast<String, dynamic>(),
+    then: [
+      for (final step in (j['then'] as List?) ?? const [])
+        if (step is Map) step.cast<String, dynamic>(),
+    ],
     cooldownMs: (j['cooldownMs'] as num?)?.toInt() ?? 0,
   );
 }
@@ -194,6 +225,9 @@ class HookDraft {
   /// 非 null = 每次触发新建一个会话再注入（与 [targetSessionId] 互斥）。
   /// dirId / cli 为空串 = 沿用触发事件的会话。
   final HookNewSession? newSession;
+
+  /// 后续步骤，按顺序；每项是后端的动作对象（见 [HookRule.then]）。
+  final List<Map<String, dynamic>> then;
   final int cooldownSeconds;
   final bool enabled;
   final Map<String, dynamic> baseFilter;
@@ -210,6 +244,7 @@ class HookDraft {
     this.prompt = '',
     this.targetSessionId = '',
     this.newSession,
+    this.then = const [],
     this.cooldownSeconds = 0,
     this.enabled = true,
     this.baseFilter = const {},
@@ -219,6 +254,12 @@ class HookDraft {
   String? validate() {
     if (on.isEmpty) return '请至少选择一个事件';
     if (kind == 'webhook' && url.trim().isEmpty) return '请填写 Webhook 地址';
+    for (final step in then) {
+      if (hookChainStepEditable(step) &&
+          (step['prompt'] ?? '').toString().trim().isEmpty) {
+        return '后续步骤的指令不能为空';
+      }
+    }
     return null;
   }
 
@@ -250,6 +291,7 @@ class HookDraft {
       'on': on,
       'filter': filter,
       'action': action,
+      'then': then,
       'enabled': enabled,
       'cooldownMs': cooldownSeconds < 0 ? 0 : cooldownSeconds * 1000,
     };

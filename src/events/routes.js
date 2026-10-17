@@ -11,7 +11,7 @@ function mountEventRoutes(app, { hub, engine }) {
   });
   app.get('/api/events/recent', (req, res) => {
     const limit = parseInt(req.query.limit, 10);
-    res.json({ events: hub.recent(Number.isNaN(limit) ? 50 : limit), runs: engine.recentResults() });
+    res.json({ events: hub.recent(Number.isNaN(limit) ? 50 : limit), runs: engine.recentResults(), chains: engine.pendingChains() });
   });
   app.get('/api/event-triggers', (req, res) => res.json({ items: engine.listAll() }));
   app.get('/api/event-rules', (req, res) => res.json({ rules: engine.listGlobal() }));

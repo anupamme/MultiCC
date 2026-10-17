@@ -2,7 +2,7 @@
 
 // ── 钩子（事件触发器）规则表单（public/hook-editor.js）─────────────────────────
 // 会话页头的 🪝 和定时任务中心「触发器」tab 共用的唯一一张表单：
-//   当 [事件…] 发生时 → 执行 [动作]
+//   当 [事件…] 发生时 → 执行 [动作] → 然后依次执行 [后续步骤…]（链式，见 src/events/engine.js）
 // 两个入口只在默认范围上不同（会话入口固定为本会话，触发器 tab 可选全局/指定会话），
 // 所以表单、校验、保存、测试都只写这一份，免得两边漂移。后端见 src/events/。
 //
@@ -32,6 +32,7 @@
     ['turn.completed', 'hookEvTurn'],
   ]);
   const NEW_SESSION = '__new__'; // 「注入到」里代表“每次触发新建一个会话”的哨兵值
+  const MAX_CHAIN_STEPS = 9;     // 与 src/events/rules.js 一致
   const ACTION_OPTIONS = Object.freeze([
     ['notify', 'hookActNotify'],
     ['webhook', 'hookActWebhook'],
@@ -60,6 +61,13 @@ dialog.hook-dialog .hook-error{margin:0;min-height:1em;color:#c0392b;font-size:1
 dialog.hook-dialog .hook-actions{display:flex;justify-content:flex-end;gap:8px}
 dialog.hook-dialog .hook-head{display:flex;justify-content:space-between;align-items:center}
 dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:#718398}
+dialog.hook-dialog .hook-chain-step{display:flex;gap:6px;align-items:flex-start}
+dialog.hook-dialog .hook-chain-step>b{flex:0 0 auto;padding-top:8px;min-width:18px;color:#6b7f93}
+dialog.hook-dialog .hook-chain-step>textarea,dialog.hook-dialog .hook-chain-step>span{flex:1;min-width:0}
+dialog.hook-dialog .hook-chain-step>span{padding-top:8px}
+dialog.hook-dialog .hook-chain-step>button{flex:0 0 auto;border:0;background:transparent;font-size:18px;line-height:1;padding:6px 4px;cursor:pointer;color:#c0392b}
+dialog.hook-dialog #hook-chain{display:flex;flex-direction:column;gap:6px}
+dialog.hook-dialog #hook-chain-add{align-self:flex-start;font:inherit;padding:4px 10px;border:1px dashed #9fb5ca;border-radius:8px;background:#fff;color:inherit;cursor:pointer}
 @media (max-width:520px){dialog.hook-dialog .hook-events{grid-template-columns:1fr}}
 `;
 
@@ -125,6 +133,10 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
         h('label', {}, h('span', { text: tr('hookInjectPrompt') }),
           h('textarea', { name: 'prompt', rows: '4', maxlength: '4000', placeholder: tr('hookInjectPromptPh') })),
         h('p', { class: 'hook-note', text: tr('hookInjectHint') })),
+      h('fieldset', {}, h('legend', { text: tr('hookChain') }),
+        h('div', { id: 'hook-chain' }),
+        h('button', { type: 'button', id: 'hook-chain-add', text: tr('hookChainAdd') }),
+        h('p', { class: 'hook-note', text: tr('hookChainHint') })),
       h('label', {}, h('span', { text: tr('hookCooldown') }),
         h('input', { type: 'number', name: 'cooldown', min: '0', max: '86400', step: '1' })),
       h('label', { class: 'hook-check' }, h('input', { type: 'checkbox', name: 'enabled', checked: true }),
@@ -141,9 +153,55 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     form.elements.targetFilter.oninput = () => renderFiltered(form.elements.target);
     form.elements.scopeFilter.oninput = () => renderFiltered(form.elements.scopeSession);
     form.elements.scope.onchange = syncScope;
+    form.querySelector('#hook-chain-add').onclick = () => { addChainStep({ kind: 'inject-prompt', prompt: '' }).querySelector('textarea').focus(); };
     form.querySelector('#hook-close').onclick = () => dialog.close();
     form.querySelector('#hook-cancel').onclick = () => dialog.close();
     form.onsubmit = event => { event.preventDefault(); void save(); };
+  }
+
+  // 后续步骤：表单里只编辑「注入指令」（注入到上一步所在的会话）；经 API 建的
+  // 通知 / Webhook / 指定目标步骤原样保留、只能删除，免得编辑一次就把它们抹掉。
+  function addChainStep(step) {
+    const list = form.querySelector('#hook-chain');
+    const editable = step.kind === 'inject-prompt' && !step.targetSessionId && !step.newSession;
+    const row = h('div', { class: 'hook-chain-step' }, h('b'),
+      editable
+        ? h('textarea', { name: 'chainPrompt', rows: '2', maxlength: '4000' })
+        : h('span', { text: tr('hookChainKept', { kind: actionName(step.kind) }) }),
+      h('button', { type: 'button', 'aria-label': tr('hookChainRemove'), title: tr('hookChainRemove'), text: '×' }));
+    row._step = step;
+    if (editable) row.querySelector('textarea').value = step.prompt || '';
+    row.querySelector('button').onclick = () => { row.remove(); syncChain(); };
+    list.append(row);
+    syncChain();
+    return row;
+  }
+
+  function syncChain() {
+    const rows = [...form.querySelectorAll('.hook-chain-step')];
+    rows.forEach((row, index) => {
+      row.querySelector('b').textContent = `${index + 2}.`;
+      const area = row.querySelector('textarea');
+      if (area) area.placeholder = tr('hookChainStepPh', { n: index + 2 });
+    });
+    form.querySelector('#hook-chain-add').hidden = rows.length >= MAX_CHAIN_STEPS;
+  }
+
+  function collectChain() {
+    const steps = [];
+    for (const row of form.querySelectorAll('.hook-chain-step')) {
+      const area = row.querySelector('textarea');
+      if (!area) { steps.push(row._step); continue; }
+      const prompt = area.value.trim();
+      if (!prompt) throw invalid(tr('hookErrChainEmpty'));
+      steps.push({ kind: 'inject-prompt', prompt });
+    }
+    return steps;
+  }
+
+  function actionName(kind) {
+    const hit = ACTION_OPTIONS.find(([value]) => value === kind);
+    return hit ? tr(hit[1]) : kind;
   }
 
   function syncKind() {
@@ -241,6 +299,9 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     form.elements.cooldown.value = rule && rule.cooldownMs ? String(Math.round(rule.cooldownMs / 1000)) : '';
     form.elements.enabled.checked = rule ? rule.enabled !== false : true;
     form.querySelector('#hook-error').textContent = '';
+    form.querySelector('#hook-chain').textContent = '';
+    for (const step of (rule && Array.isArray(rule.then) ? rule.then : [])) addChainStep(step);
+    syncChain();
 
     const scopeRow = form.querySelector('#hook-scope-row');
     scopeRow.hidden = Boolean(session);
@@ -299,7 +360,7 @@ dialog.hook-dialog .hook-head button{border:0;background:transparent;font-size:2
     if (form.elements.skipCancelled.checked) filter.cancelled = false;
     else delete filter.cancelled;
     const body = {
-      type: 'event', name: form.elements.name.value.trim(), on, filter, action,
+      type: 'event', name: form.elements.name.value.trim(), on, filter, action, then: collectChain(),
       enabled: form.elements.enabled.checked,
     };
     const cooldown = form.elements.cooldown.value;

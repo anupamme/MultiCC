@@ -42,16 +42,16 @@ function api(method, pathSuffix, body) {
   });
 }
 
-// Minimal flag parser: --key value, repeatable --paths collected into an array.
+// Minimal flag parser: --key value, repeatable --paths / --then collected into arrays.
 function parseFlags(argv) {
-  const out = { paths: [] };
+  const out = { paths: [], then: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) continue;
     const key = a.slice(2);
     const val = argv[i + 1];
     i++;
-    if (key === 'paths') out.paths.push(val);
+    if (key === 'paths' || key === 'then') out[key].push(val);
     else out[key] = val;
   }
   return out;
@@ -62,7 +62,11 @@ function fmt(t) {
   let what;
   if (t.type === 'file-change') what = `file-change [${(t.paths || []).join(', ')}] debounce=${t.debounceMs}ms`;
   else if (t.type === 'schedule') what = `schedule "${t.cron}"`;
-  else if (t.type === 'event') what = `event [${(t.on || []).join(', ')}] -> ${t.action && t.action.kind}`;
+  else if (t.type === 'event') {
+    what = `event [${(t.on || []).join(', ')}] -> ${t.action && t.action.kind}`;
+    if (t.action && t.action.prompt) what += `\n      1. ${t.action.prompt}`;
+    (t.then || []).forEach((step, i) => { what += `\n      ${i + 2}. ${step.prompt || step.kind}`; });
+  }
   else what = 'post-turn';
   const cd = t.cooldownMs ? ` cooldown=${t.cooldownMs}ms` : '';
   const last = t.lastFiredAt ? ` last=${new Date(t.lastFiredAt).toLocaleString()}` : '';
@@ -111,6 +115,8 @@ async function main() {
         if (f['new-session'] === 'true') {
           body.action.newSession = { dirId: f.dir || '', cli: f.cli || '', title: f.title || '' };
         }
+        // 链式：每个 --then 是一个后续步骤，等上一步注入的那一轮完成后才注入（接在同一会话里）。
+        if (f.then.length) body.then = f.then.map((prompt) => ({ kind: 'inject-prompt', prompt }));
         const filter = {};
         if (f['goal-state']) filter.goalState = f['goal-state'];
         if (f.cancelled) filter.cancelled = f.cancelled === 'true';

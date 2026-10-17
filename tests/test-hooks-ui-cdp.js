@@ -137,7 +137,7 @@ test('Air schedule center: tabs, trigger list, create / edit / test / delete', a
     assert.equal(created.length, 1);
     assert.deepEqual(JSON.parse(created[0].body), {
       type: 'event', name: '发布完成', on: ['task.achieved'], filter: {},
-      action: { kind: 'webhook', url: 'https://hooks.example.com/x', secretName: 'HOOK_SECRET', includeConclusion: true },
+      action: { kind: 'webhook', url: 'https://hooks.example.com/x', secretName: 'HOOK_SECRET', includeConclusion: true }, then: [],
       enabled: true, cooldownMs: 30000,
     });
     assert.ok(await page.waitFor(`document.querySelectorAll('#hook-list .schedule-card').length === 3`), '保存后列表自己刷新');
@@ -237,9 +237,57 @@ test('chat header hook button: count badge and the shared form scoped to this se
     assert.equal(posted.length, 1);
     assert.deepEqual(JSON.parse(posted[0].body), {
       type: 'event', name: '', on: ['task.done'], filter: {},
-      action: { kind: 'inject-prompt', prompt: '整理发布说明', newSession: { dirId: 'd2', cli: 'codex', title: '发布说明' } }, enabled: true,
+      action: { kind: 'inject-prompt', prompt: '整理发布说明', newSession: { dirId: 'd2', cli: 'codex', title: '发布说明' } }, then: [], enabled: true,
     });
     assert.ok(await page.waitFor(`document.getElementById('hook-btn').textContent === '钩子 2'`), '保存后角标自己刷新');
+  });
+});
+
+test('hook form: chained steps are listed, edited in order, and kept when not editable', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  const routes = staticRoutes();
+  const chain = { id: 't1', type: 'event', enabled: true, on: ['task.finished'], filter: {},
+    action: { kind: 'inject-prompt', prompt: '先写方案' },
+    then: [{ kind: 'inject-prompt', prompt: '按方案实现' }, { kind: 'notify', message: '完成' }] };
+  routes['/api/sessions/s1/triggers'] = () => json({ triggers: [chain] });
+  routes['PUT /api/sessions/s1/triggers/t1'] = ({ body }) => json({ ...chain, ...JSON.parse(body) });
+  routes['/stub.html'] = { headers: { 'content-type': 'text/html' }, body: `<!doctype html><meta charset="utf-8"><body>
+    <button id="hook-btn">钩子</button>
+    <script src="/i18n-catalog.js"></script><script src="/i18n.js"></script><script src="/error-envelope.js"></script>
+    <script src="/api-client.js"></script><script src="/hook-editor.js"></script><script src="/chat-hooks.js"></script></body>` };
+  await withCdpHarness({ routes, screenshotDir: path.join(os.tmpdir(), 'multicc-hooks-ui') }, async page => {
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 900, height: 900, deviceScaleFactor: 1, mobile: false });
+    await page.navigate('/stub.html?session=s1');
+    await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-list-dialog')?.open === true`));
+    // 列表里按序号列出后续步骤；非注入步骤显示动作名。
+    const prompts = await page.evaluate(`[...document.querySelectorAll('.hook-list-dialog .hook-list-prompt')].map(p => p.textContent)`);
+    assert.deepEqual(prompts.slice(0, 2), ['先写方案', '2. 按方案实现']);
+    assert.match(await page.evaluate(`document.querySelectorAll('.hook-list-dialog .hook-list-prompt')[2].textContent`), /^3\. /);
+    await click(page, `[...document.querySelectorAll('.hook-list-dialog button')].find(b => b.textContent === '编辑规则')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    // 编辑：可编辑的注入步骤带出原指令，通知步骤原样保留、只显示说明。
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.hook-dialog .hook-chain-step')].map(r => [r.querySelector('b').textContent, r.querySelector('textarea') ? r.querySelector('textarea').value : 'kept'])`),
+      [['2.', '按方案实现'], ['3.', 'kept']]);
+    // 加一步但不填 → 拦下；填上后保存，顺序与保留的通知步骤都在请求体里。
+    await click(page, `document.getElementById('hook-chain-add')`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('.hook-dialog .hook-chain-step').length`), 3);
+    assert.equal(await page.evaluate(`document.querySelectorAll('.hook-dialog .hook-chain-step')[2].querySelector('textarea').placeholder`), '第 4 步的指令');
+    await click(page, `document.getElementById('hook-save')`);
+    assert.ok(await page.waitFor(`document.getElementById('hook-error').textContent === '后续步骤的指令不能为空'`));
+    await page.evaluate(`document.querySelectorAll('.hook-dialog .hook-chain-step')[2].querySelector('textarea').value = '跑测试并汇报'`);
+    await page.screenshot('hook-chain-editor.png');
+    await click(page, `document.getElementById('hook-save')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog').open === false`));
+    assert.deepEqual(JSON.parse(requestsOf(page, 'PUT', '/api/sessions/s1/triggers/t1')[0].body).then,
+      [{ kind: 'inject-prompt', prompt: '按方案实现' }, { kind: 'notify', message: '完成' }, { kind: 'inject-prompt', prompt: '跑测试并汇报' }]);
+    // 删掉一步后编号重排。
+    await click(page, `document.getElementById('hook-btn')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-list-dialog')?.open === true`));
+    await click(page, `[...document.querySelectorAll('.hook-list-dialog button')].find(b => b.textContent === '编辑规则')`);
+    assert.ok(await page.waitFor(`document.querySelector('.hook-dialog')?.open === true`));
+    await click(page, `document.querySelector('.hook-dialog .hook-chain-step button')`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.hook-dialog .hook-chain-step b')].map(b => b.textContent)`), ['2.']);
   });
 });
 
