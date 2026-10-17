@@ -406,17 +406,22 @@ extension _AirMobileShell on _AirTasksViewState {
               ),
             NavigationBar(
               height: 68,
-              selectedIndex: schedules
-                  ? 2
-                  : _mode == _AirMode.recent || _mode == _AirMode.tasks
-                  ? 1
-                  : 0,
+              // 「工作目录」是底部导航第 4 项：10-17 改版把它收进 ⋯ 菜单后，
+              // 终端/目录入口深了一层，摸不到入口的用户以为功能被删了。目录首页
+              // （tasks）也归这一项高亮。
+              selectedIndex: switch (_mode) {
+                _AirMode.schedules => 2,
+                _AirMode.library || _AirMode.tasks => 3,
+                _AirMode.recent => 1,
+                _AirMode.console => 0,
+              },
               onDestinationSelected: (i) => _updateMobile(() {
                 _mobileRecentFilter = null;
                 _mode = [
                   _AirMode.console,
                   _AirMode.recent,
                   _AirMode.schedules,
+                  _AirMode.library,
                 ][i];
               }),
               destinations: const [
@@ -431,6 +436,10 @@ extension _AirMobileShell on _AirTasksViewState {
                 NavigationDestination(
                   icon: Icon(Icons.schedule),
                   label: '定时任务',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.folder_outlined),
+                  label: '工作目录',
                 ),
               ],
             ),

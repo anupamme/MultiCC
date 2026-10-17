@@ -463,4 +463,35 @@ void main() {
     expect(find.text('项目一的活'), findsOneWidget);
     expect(find.text('项目二的活'), findsOneWidget);
   });
+
+  testWidgets('底部导航第 4 项直达工作目录，目录首页归它高亮', (tester) async {
+    final config = await settings();
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: client()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 第 4 项「工作目录」→ 目录库视图，目录卡可见。
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('工作目录'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('air-directory-one')), findsOneWidget);
+    // 点目录卡进目录首页：NavigationBar 的选中项仍是「工作目录」（index 3）。
+    await tester.tap(find.byKey(const ValueKey('air-directory-one')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('air-directory-mode')), findsOneWidget);
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      3,
+    );
+  });
 }
