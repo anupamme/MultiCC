@@ -143,7 +143,7 @@ test('plain provider models and CLI fallback choices never retain a stale provid
 
   const grok = state({ providers: [], defaults: {}, cli: 'grok' });
   assert.deepEqual(ai.buildModelChoices('', grok),
-    ['', 'grok-code-fast-1', 'grok-4', '__custom__']);
+    ['', 'grok-4.6', 'grok-4.5', '__custom__']);
   assert.equal(ai.modelChoiceLabel('', '', grok), '默认（跟随 Grok 配置）');
   assert.deepEqual(ai.effortOptions('grok'), []);
 
@@ -466,6 +466,39 @@ test('opencode native providers (Zen / Go) become Provider rows that filter the 
     assert.deepEqual(ai.buildModelChoices('opencode-native:opencodego', state),
       ['opencodego/kimi-k2', 'opencodego/glm-5', '__custom__']);
     assert.equal(ai.buildModelChoices('', state).length, 5);
+  } finally {
+    delete globalThis.window;
+    delete require.cache[modulePath];
+  }
+});
+
+test('commandcode and grok pickers read the live catalog and keep the vendor grouping', () => {
+  const modulePath = require.resolve('../public/chat-ai-config');
+  const at = Date.now();
+  const store = {
+    'multicc.commandcode.models.v1': JSON.stringify({ at, models: [
+      { model: 'deepseek/deepseek-v4.1-flash', group: 'Open Source' },
+      { model: 'claude-sonnet-5-5', group: 'Anthropic' },
+      { model: 'deepseek/deepseek-flash', group: 'DeepSeek Flash (byok)' },
+    ] }),
+    'multicc.grok.models.v1': JSON.stringify({ at, models: [{ model: 'grok-4.6' }, { model: 'grok-5' }] }),
+  };
+  delete require.cache[modulePath];
+  globalThis.window = { localStorage: { getItem: key => store[key] || null } };
+  const ai = require(modulePath);
+  try {
+    const cc = { cli: 'commandcode', providers: [] };
+    assert.deepEqual(ai.buildModelChoices('', cc),
+      ['', 'deepseek/deepseek-v4.1-flash', 'claude-sonnet-5-5', 'deepseek/deepseek-flash', '__custom__']);
+    assert.equal(ai.modelChoiceGroup('claude-sonnet-5-5', cc), 'Anthropic');
+    assert.equal(ai.modelChoiceGroup('deepseek/deepseek-flash', cc), 'DeepSeek Flash (byok)');
+    assert.equal(ai.modelChoiceGroup('', cc), '');
+    assert.equal(ai.modelChoiceGroup('__custom__', cc), '');
+    assert.equal(ai.modelChoiceGroup('claude-sonnet-5-5', { cli: 'grok' }), '', 'only Command Code is grouped');
+    assert.deepEqual(ai.buildModelChoices('', { cli: 'grok', providers: [] }), ['', 'grok-4.6', 'grok-5', '__custom__']);
+    assert.equal(ai.modelChoiceLabel('claude-sonnet-5-5', '', cc), 'claude-sonnet-5-5');
+    // empty model still means the BYOK DeepSeek Flash the adapter defaults to
+    assert.equal(ai.modelChoiceLabel('', '', cc), '默认（DeepSeek Flash）');
   } finally {
     delete globalThis.window;
     delete require.cache[modulePath];

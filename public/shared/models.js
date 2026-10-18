@@ -210,6 +210,46 @@
     return codebuddyModelsPromise;
   }
 
+  // ── Command Code / Grok live model lists ────────────────────────────────
+  // GET /api/commandcode/models (`commandcode --list-models`, entries carry the
+  // vendor's own `group`) and GET /api/grok/models (`grok models`). Same
+  // 1-hour contract as WorkBuddy; one small factory instead of a third copy.
+  function createLiveCatalog(key, url) {
+    const ttl = 60 * 60 * 1000;
+    let inflight = null;
+    function read() {
+      try {
+        const raw = window.localStorage && window.localStorage.getItem(key);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        const at = Number(obj && obj.at) || 0;
+        const models = obj && Array.isArray(obj.models) ? obj.models : [];
+        if (!at || (Date.now() - at) >= ttl || !models.length) return null;
+        return { at, models };
+      } catch (_) { return null; }
+    }
+    async function load() {
+      const cached = read();
+      if (cached) return cached.models;
+      if (inflight) return inflight;
+      inflight = (async () => {
+        try {
+          const data = await window.fetch(url, { credentials: 'same-origin' }).then(r => (r && r.ok ? r.json() : null));
+          const models = data && Array.isArray(data.models) ? data.models : [];
+          // fallback / unauthenticated lists are served but never pinned for an hour
+          if (models.length && data.source === 'cli') {
+            try { window.localStorage.setItem(key, JSON.stringify({ at: Date.now(), models })); } catch (_) { /* quota */ }
+          }
+          return models;
+        } catch (_) { return []; } finally { inflight = null; }
+      })();
+      return inflight;
+    }
+    return { load, readSync: () => { const c = read(); return c ? c.models : []; } };
+  }
+  const commandcodeCatalog = createLiveCatalog('multicc.commandcode.models.v1', '/api/commandcode/models');
+  const grokCatalog = createLiveCatalog('multicc.grok.models.v1', '/api/grok/models');
+
   // ── Codex account model list ───────────────────────────────────────────
   // GET /api/codex/models calls the supported Codex app-server `model/list`
   // method. Unlike a static table, it carries this account's rollout and
@@ -372,6 +412,8 @@
   window.loadQoderModels = loadQoderModels;
   window.readQoderModelsSync = readQoderModelsSync;
   window.loadCodebuddyModels = loadCodebuddyModels;
+  window.loadCommandcodeModels = commandcodeCatalog.load;
+  window.loadGrokModels = grokCatalog.load;
   window.readCodebuddyModelsSync = readCodebuddyModelsSync;
   window.loadCodexModels = loadCodexModels;
   window.readCodexModelCatalogSync = readCodexModelCatalogSync;

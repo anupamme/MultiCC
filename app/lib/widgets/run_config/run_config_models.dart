@@ -7,6 +7,7 @@ library;
 import '../../models/message.dart';
 import '../../services/claude_models_service.dart';
 import '../../services/codebuddy_models_service.dart';
+import '../../services/commandcode_grok_models_service.dart';
 import '../../services/codex_models_service.dart';
 import '../../services/opencode_models_service.dart';
 import '../../services/qoder_models_service.dart';
@@ -38,10 +39,10 @@ List<String> runModelChoices(
     return kGeminiModelOptions.map((option) => option.key).toList();
   }
   if (cli == SessionCli.commandcode) {
-    return kCommandCodeModelOptions.map((option) => option.key).toList();
+    return CommandCodeModelsService.options().map((option) => option.key).toList();
   }
   if (cli == SessionCli.grok) {
-    return kGrokModelOptions.map((option) => option.key).toList();
+    return GrokModelsService.options().map((option) => option.key).toList();
   }
   if (cli == SessionCli.opencode && provider.isEmpty) {
     return ['', ...openCodeNativeModelOptions(providers)];
@@ -166,3 +167,8 @@ String effortChipLabel(SessionCli cli, String? effort) {
     _ => value,
   };
 }
+
+/// 候选模型所属的厂商分组（Command Code 的 Open Source / Anthropic / OpenAI …），
+/// 没有分组信息的车道返回空串 = 平铺。
+String runModelGroup(SessionCli cli, String model) =>
+    cli == SessionCli.commandcode ? CommandCodeModelsService.groupOf(model) : '';

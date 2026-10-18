@@ -94,6 +94,7 @@ dialog .air-config-field input { margin-top: 7px; }
   border-radius: 9px; background: #fbfdff; font-size: 12px;
 }
 .rc-field input[hidden] { display: none; }
+.rc-field .rc-model-search { margin-bottom: 5px; }
 .rc-note { margin: 7px 0 0; color: #7f90a2; font-size: 10px; line-height: 1.5; }
 /* 账户（Command Code / OpenCode 的 API Key 账户）：一行下拉 + 删除，展开内联添加表单。 */
 .rc-account-field { margin-bottom: 12px; }

@@ -18,6 +18,8 @@ import '../services/manage_service.dart';
 import '../services/session_service.dart';
 import '../services/claude_models_service.dart';
 import '../services/codebuddy_models_service.dart';
+import '../services/commandcode_grok_models_service.dart';
+import 'model_menu.dart';
 import '../services/codex_models_service.dart';
 import '../services/opencode_models_service.dart';
 import '../services/qoder_models_service.dart';
@@ -117,6 +119,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
 
   String? _pickedProvider; // null or '' = default; id = that provider
   String? _pickedModel;
+  String _modelFilter = '';
   late String _pickedEffort;
   bool _customModel = false;
   final _customModelCtrl = TextEditingController();
@@ -226,7 +229,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     _pickedEffort = _defaultEffort;
     _loadPresets();
     if (_isQoder) _loadQoderModels();
-    if (_pickedCli == SessionCli.codebuddy) _loadCodebuddyModels();
+    if (_isLiveModelCli(_pickedCli)) _loadLiveModels();
     if (_isClaude) _loadClaudeModels();
     if (_isCodex) _loadCodexModels();
     final opts = _currentModelOptions;
@@ -310,16 +313,46 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     });
   }
 
-  /// WorkBuddy twin of [_loadQoderModels]: pull the host CLI's live catalog and
-  /// re-seed the model field once it lands.
-  Future<void> _loadCodebuddyModels() async {
-    final before = CodebuddyModelsService.cached.length;
+  static bool _isLiveModelCli(SessionCli cli) =>
+      cli == SessionCli.codebuddy ||
+      cli == SessionCli.commandcode ||
+      cli == SessionCli.grok;
+
+  String _modelGroupOf(String key) =>
+      _pickedCli == SessionCli.commandcode
+      ? CommandCodeModelsService.groupOf(key)
+      : '';
+
+  /// How many live models the picked self-account CLI has cached right now.
+  int _liveModelCount(SessionCli cli) => switch (cli) {
+    SessionCli.codebuddy => CodebuddyModelsService.cached.length,
+    SessionCli.commandcode => CommandCodeModelsService.cached.length,
+    SessionCli.grok => GrokModelsService.cached.length,
+    _ => 0,
+  };
+
+  Future<void> _fetchLiveModels(SessionCli cli) async {
+    switch (cli) {
+      case SessionCli.codebuddy:
+        await CodebuddyModelsService(settings: widget.settings).load();
+      case SessionCli.commandcode:
+        await CommandCodeModelsService(settings: widget.settings).load();
+      case SessionCli.grok:
+        await GrokModelsService(settings: widget.settings).load();
+      default:
+        break;
+    }
+  }
+
+  /// WorkBuddy / Command Code / Grok twin of [_loadQoderModels]: pull the host
+  /// CLI's live catalog and re-seed the model field once it lands.
+  Future<void> _loadLiveModels() async {
+    final cli = _pickedCli;
+    final before = _liveModelCount(cli);
     try {
-      await CodebuddyModelsService(settings: widget.settings).load();
+      await _fetchLiveModels(cli);
     } catch (_) {}
-    if (!mounted ||
-        _pickedCli != SessionCli.codebuddy ||
-        CodebuddyModelsService.cached.length == before) {
+    if (!mounted || _pickedCli != cli || _liveModelCount(cli) == before) {
       return;
     }
     setState(() {
@@ -385,8 +418,10 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     }
     if (_pickedCli == SessionCli.dsh) return kDshModelOptions;
     if (_pickedCli == SessionCli.gemini) return kGeminiModelOptions;
-    if (_pickedCli == SessionCli.commandcode) return kCommandCodeModelOptions;
-    if (_pickedCli == SessionCli.grok) return kGrokModelOptions;
+    if (_pickedCli == SessionCli.commandcode) {
+      return CommandCodeModelsService.options();
+    }
+    if (_pickedCli == SessionCli.grok) return GrokModelsService.options();
     if (_pickedCli == SessionCli.opencode && _effectiveProviderId.isEmpty) {
       return [
         const MapEntry('', '默认（跟随 OpenCode 设置）'),
@@ -623,7 +658,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
         _pickedModel = opts.isNotEmpty ? opts.first.key : null;
       });
       if (cli == SessionCli.qoder) _loadQoderModels();
-      if (cli == SessionCli.codebuddy) _loadCodebuddyModels();
+      if (_isLiveModelCli(cli)) _loadLiveModels();
       return;
     }
     // Claude has a provider pool, but Claude Official exposes no modelOptions —
@@ -736,6 +771,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
       );
     }
     final modelOptions = _currentModelOptions;
+    final showModelSearch = modelOptions.length > kModelSearchMin;
     return AlertDialog(
       backgroundColor: const Color(0xFFffffff),
       title: Text(
@@ -987,30 +1023,38 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
                 style: const TextStyle(color: Color(0xFF6f8096), fontSize: 11),
               ),
               const SizedBox(height: 4),
+              if (showModelSearch) ...[
+                modelSearchField(
+                  onChanged: (v) => setState(() => _modelFilter = v),
+                  decoration: sheetInputDecoration(),
+                  style: const TextStyle(
+                    color: Color(0xFF233249),
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
               DropdownButtonFormField<String>(
                 value: _customModel ? '__custom__' : _pickedModel,
                 isExpanded: true,
                 dropdownColor: const Color(0xFFffffff),
                 style: const TextStyle(color: Color(0xFF233249), fontSize: 13),
                 decoration: sheetInputDecoration(),
-                items: [
-                  ...modelOptions.map(
-                    (e) => DropdownMenuItem(
-                      value: e.key,
-                      child: Text(
-                        e.value,
-                        style: const TextStyle(color: Color(0xFF233249)),
-                      ),
-                    ),
+                items: modelMenuItems(
+                  keys: [for (final e in modelOptions) e.key, '__custom__'],
+                  labelOf: (key) => key == '__custom__'
+                      ? t('customOption')
+                      : modelOptions.firstWhere((e) => e.key == key).value,
+                  groupOf: _modelGroupOf,
+                  style: const TextStyle(color: Color(0xFF233249)),
+                  headerStyle: const TextStyle(
+                    color: Color(0xFF6f8096),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
                   ),
-                  DropdownMenuItem(
-                    value: '__custom__',
-                    child: Text(
-                      t('customOption'),
-                      style: const TextStyle(color: Color(0xFF6f8096)),
-                    ),
-                  ),
-                ],
+                  filter: showModelSearch ? _modelFilter : '',
+                  keep: _customModel ? '__custom__' : _pickedModel,
+                ),
                 onChanged: (v) {
                   setState(() {
                     if (v == '__custom__') {
