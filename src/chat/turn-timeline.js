@@ -76,6 +76,7 @@ function observeClaude(cs, evt, t = Date.now()) {
   const tl = cs && cs.turnTimeline;
   if (!tl || !evt || typeof evt !== 'object' || evt.parent_tool_use_id) return;
   if (evt.type === 'stream_event') {
+    tl.partial = true;
     const e = evt.event || {};
     if (e.type === 'content_block_start') {
       const bt = e.content_block && e.content_block.type;
@@ -118,6 +119,7 @@ function observeAdapter(cs, evt, t = Date.now()) {
       break;
     }
     case 'part_delta': {
+      tl.partial = true;
       const d = evt.delta && typeof evt.delta === 'object' ? evt.delta : evt;
       if (d.type === 'reasoning') mark(tl, 'thinking', t);
       else if (d.type === 'text') mark(tl, 'output', t);
@@ -125,6 +127,27 @@ function observeAdapter(cs, evt, t = Date.now()) {
     }
     default: break;
   }
+}
+
+// What the model is doing RIGHT NOW, for the live liveness pill. Only meaningful
+// while a turn is in flight (the timeline object outlives the turn).
+//   request  — request sent / tool results returned, nothing streamed back yet
+//   thinking — reasoning is streaming
+//   output   — answer text / tool-call arguments are streaming
+//   tool     — a tool is executing (model not in the loop)
+// `precise` is false when this lane has shown no frame-level streaming evidence
+// (codex-style CLIs only surface reasoning at item.completed), so `request` may
+// really be hidden reasoning and the UI should say so instead of claiming a
+// pure network wait. Claude always streams partials, hence precise from t0.
+function currentStage(cs, now = Date.now()) {
+  const tl = cs && cs.turnTimeline;
+  if (!tl) return null;
+  const cur = last(tl);
+  if (!cur) return null;
+  const precise = tl.partial === true || (cs.cli || null) === 'claude';
+  if (tl.open.size) return { stage: 'tool', since: null, ageMs: null, precise };
+  const lastAt = cur.e == null ? cur.s : cur.e;
+  return { stage: cur.k, since: cur.s, ageMs: Math.max(0, now - lastAt), precise };
 }
 
 // Persistable snapshot; still-open spans are closed at `now`. Zero-length
@@ -146,4 +169,4 @@ function field(cs, now = Date.now()) {
   return timeline ? { timeline } : {};
 }
 
-module.exports = { MERGE_GAP_MS, startTurn, observeClaude, observeAdapter, snapshot, field, _mark: mark };
+module.exports = { MERGE_GAP_MS, startTurn, observeClaude, observeAdapter, currentStage, snapshot, field, _mark: mark };

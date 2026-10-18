@@ -284,6 +284,48 @@ Widget classifyChip(SessionStatus? live, {bool showLabel = true}) {
   }
 }
 
+/// 回合进行中的细分阶段（服务端 liveness 的 `stage`，来自各 CLI 统一的
+/// turn-timeline）：request 请求已发出尚无回包 / thinking 推理流 / output
+/// 回答或工具参数流 / tool 工具执行。只对 working 生效；没有 stage 时退回
+/// 代理的 `proxyPhase == 'request'`（直连/代理会话没有 timeline 的情形），
+/// 再没有就保持原来的「产出中」。
+///
+/// 不支持逐帧流式的 CLI（codex 系只在 item.completed 才吐推理）在 request
+/// 段里可能其实是在想，服务端用 `stagePrecise=false` 标出来，这里就写成
+/// 「请求/思考中」，不去声称一定是纯网络等待。
+({Color color, String label, String emoji}) livenessStageBadge(
+  Map<String, dynamic>? verdict,
+) {
+  final working = livenessBadge('working')!;
+  var stage = verdict?['stage'] as String?;
+  if (stage == null && verdict?['proxyPhase'] == 'request') stage = 'request';
+  final precise = verdict?['stagePrecise'] != false;
+  switch (stage) {
+    case 'request':
+      return (
+        color: working.color,
+        label: t(
+          precise ? 'livenessRequesting' : 'livenessRequestingOrThinking',
+        ),
+        emoji: working.emoji,
+      );
+    case 'thinking':
+      return (
+        color: working.color,
+        label: t('livenessThinking'),
+        emoji: working.emoji,
+      );
+    case 'tool':
+      return (
+        color: working.color,
+        label: t('livenessToolRunning'),
+        emoji: working.emoji,
+      );
+    default:
+      return working;
+  }
+}
+
 /// Chat-page policy for [livenessChip]: only working (a turn is running) and
 /// stalled (stuck) earn the dedicated liveness line under the header. idle and
 /// unknown are the resting states — a permanent「空闲」pill row is noise, so
@@ -311,8 +353,9 @@ bool chatLivenessDeservesLine(String? state) =>
 /// working/stalled turn so "stuck for 3m" reads at a glance.
 Widget livenessChip(Map<String, dynamic>? verdict) {
   final state = verdict == null ? null : verdict['state'] as String?;
-  final b = livenessBadge(state);
-  if (b == null) return const SizedBox.shrink();
+  final base = livenessBadge(state);
+  if (base == null) return const SizedBox.shrink();
+  final b = state == 'working' ? livenessStageBadge(verdict) : base;
   var label = b.label;
   final silentMs = (verdict?['silentMs'] as num?)?.toInt() ?? 0;
   if ((state == 'stalled' || state == 'working') && silentMs >= 5000) {

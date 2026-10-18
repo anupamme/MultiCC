@@ -394,8 +394,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +7 keys: task grouping, document search and artifact retention controls.
     // +8 键（hookChain*/hookErrChainEmpty）：链式钩子「然后依次执行」后续步骤，实测 9244/585263。
     // +5 键（airTodo*）：任务列表「待办」筛选与手动标记待办，实测 9254/585697。
-    maxLines: 9254,
-    maxBytes: 585697,
+    // +4 键（livenessRequesting 等）：进展条按回合阶段显示请求中/思考中/工具执行中，实测 9262/586055。
+    maxLines: 9262,
+    maxBytes: 586055,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
