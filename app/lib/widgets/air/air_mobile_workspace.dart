@@ -20,6 +20,7 @@ class AirMobileWorkspace extends StatefulWidget {
     this.recent = false,
     this.initialFilter,
     this.setupNotice,
+    this.onToggleTodo,
   });
   final AirSnapshot? data;
   final String? directoryId;
@@ -35,6 +36,9 @@ class AirMobileWorkspace extends StatefulWidget {
   /// 最近任务页一打开就选中的那一格（从控制台卡片的「全部 ›」带过来）。
   final AirDirectoryTaskFilter? initialFilter;
   final Widget? setupNotice;
+
+  /// 长按任务行：切换「手动待办」（同目录任务列表，见 toggleAirTaskTodo）。
+  final ValueChanged<AirTask>? onToggleTodo;
 
   @override
   State<AirMobileWorkspace> createState() => _AirMobileWorkspaceState();
@@ -92,6 +96,9 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   Widget _task(AirTask task) => AirTaskTile(
     task: task,
     onTap: () => widget.onOpenTask(task),
+    onLongPress: widget.onToggleTodo == null
+        ? null
+        : () => widget.onToggleTodo!(task),
     showTime: true,
     trailing: widget.data?.isPinned(task.id) == true
         ? const Icon(Icons.push_pin_rounded, size: 16, color: AppColors.accent)

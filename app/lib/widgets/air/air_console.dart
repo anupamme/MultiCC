@@ -329,6 +329,16 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     if (deleted && mounted) await _load();
   }
 
+  /// 长按任务行切换「手动待办」；切完重拉快照，行上的 🚩 跟着变。
+  void _toggleTodo(AirTask task) => unawaited(
+    toggleAirTaskTodo(
+      context: context,
+      service: _service,
+      task: task,
+      onChanged: _load,
+    ),
+  );
+
   /// 「全部」那一格的清单。控制台是跨目录的，这里不按当前目录收窄 —— 目录是
   /// 执行上下文，不是「能不能看见这条任务」的前提。
   ///
@@ -517,6 +527,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                   onPage: _changePage,
                   onOpenTask: widget.onOpenTask,
                   onDeleteTask: _deleteTask,
+                  onToggleTodo: _toggleTodo,
                   unread: urgent.length,
                   onOpenAttention: () => _openAttention(urgent),
                   onClose: () => setState(() => _tile = null),
@@ -586,6 +597,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
           builder: (_) => AirAttentionScreen(
             tasks: urgent,
             directoryName: _directoryName,
+            onToggleTodo: _toggleTodo,
             onOpenTask: (task) {
               Navigator.of(context).pop();
               widget.onOpenTask(task);
@@ -1138,6 +1150,7 @@ class _TileDrawer extends StatelessWidget {
     required this.onPage,
     required this.onOpenTask,
     required this.onDeleteTask,
+    required this.onToggleTodo,
     required this.unread,
     required this.onOpenAttention,
     required this.onClose,
@@ -1170,6 +1183,7 @@ class _TileDrawer extends StatelessWidget {
   final ValueChanged<int> onPage;
   final ValueChanged<AirTask> onOpenTask;
   final ValueChanged<AirTask> onDeleteTask;
+  final ValueChanged<AirTask> onToggleTodo;
 
   /// 跨目录待处理的总数。「等我回复」那一格后面挂的整页出口用它。
   final int unread;
@@ -1239,6 +1253,7 @@ class _TileDrawer extends StatelessWidget {
               showTime: true,
               timeAt: tile == _ConsoleTile.all ? sortAt(visible[i]) : null,
               onTap: () => onOpenTask(visible[i]),
+              onLongPress: () => onToggleTodo(visible[i]),
               // 删除只在「全部」那格里给：其余四格都是「现在有事」的清单，在这里
               // 删掉一条，读的人多半还没看清它是什么。
               trailing: tile == _ConsoleTile.all

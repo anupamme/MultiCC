@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../i18n.dart';
 import '../../services/air_service.dart';
 import '../../theme.dart';
 
@@ -11,6 +12,44 @@ Set<String> _taskDeleteRisks(Object error) {
             code == 'task_workspace_dirty' || code == 'task_workspace_unmerged',
       )
       .toSet();
+}
+
+/// 标记 / 取消「手动待办」，并用一条 SnackBar 回执。清单在服务端
+/// （`air-todos.json`），Web 与各台 App 读同一份；回执按服务端返回的新清单写，
+/// 不按本地快照猜。[onChanged] 让调用方刷新快照，行上的 🚩 才会跟着变。
+///
+/// 每一条任务行的长按、详情面板里那颗按钮都走这里，所以哪个列表里长按都一样。
+Future<bool> toggleAirTaskTodo({
+  required BuildContext context,
+  required AirService service,
+  required AirTask task,
+  Future<void> Function()? onChanged,
+}) async {
+  try {
+    final todos = await service.toggleTaskTodo(task.id);
+    if (onChanged != null && context.mounted) await onChanged();
+    if (!context.mounted) return true;
+    // 连着长按两下（标了又取消）时，上一条回执已经过时，不让它排在新的前面。
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            t(todos.contains(task.id) ? 'airTodoMarked' : 'airTodoUnmarked', {
+              'title': task.title,
+            }),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    return true;
+  } catch (error) {
+    if (!context.mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+    );
+    return false;
+  }
 }
 
 /// 列表、详情与聊天菜单共用的一次性删除流程。这里集中维护确认文案、请求和错误
