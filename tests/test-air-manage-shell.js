@@ -123,7 +123,8 @@ test('the docs panel switches 按时间 / 按目录 and toggles 永久保留 ind
   assertLocalized(admin, 'public/air-admin.js', 'docsScopeDir', '按目录', "\\['dir', 'docsScopeDir'\\]");
   assertLocalized(admin, 'public/air-admin.js', 'docsScopeLabel', '排列方式', "setAttribute\\('data-i18n-aria-label', 'docsScopeLabel'\\)");
   // 按目录视图按 entry.dir 分组，dir 为 null 的归到「未归属目录」且排最后。
-  assert.match(admin, /function docsDirGroups\(\)/);
+  // 分组函数后来也承担「按任务」视图（docsScope === 'task'），故名为 docsGroups。
+  assert.match(admin, /function docsGroups\(rows\)/);
   assertLocalized(admin, 'public/air-admin.js', 'docsNoDir', '未归属目录');
   assert.match(admin, /const ordered = \[\.\.\.groups\.values\(\)\]\.filter\(group => group\.key\)/);
   // 永久保留是独立的一次 PATCH，只带 permanent，不带 pinned。
