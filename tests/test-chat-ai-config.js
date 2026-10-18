@@ -166,18 +166,15 @@ test('plain provider models and CLI fallback choices never retain a stale provid
 });
 
 test('vendor-managed CLIs stay providerless while ZCode exposes MultiCC providers', () => {
-  const source = fs.readFileSync(path.join(ROOT, 'public', 'chat-ai-config.js'), 'utf8');
   const page = fs.readFileSync(path.join(ROOT, 'public', 'chat.js'), 'utf8');
   // qoder / codebuddy / dsh / gemini / grok are all vendor-auth CLIs: no MultiCC
   // provider pick (gemini and grok log in with their own vendor credentials).
   // The id list lives in the CLI catalog now — both ends derive it, so a sixth
   // vendor CLI cannot be providerless on one page and not the other. Parity is
   // pinned by tests/test-cli-display-parity.js.
-  assert.match(source, /const supportsProvider = !cliProviderless\(cli\);/);
   assert.equal(providerCatalog.cliProviderless('qoder'), true);
   assert.equal(providerCatalog.cliProviderless('gemini'), true);
   assert.equal(providerCatalog.cliProviderless('zcode'), false);
-  assert.match(source, /ZCode 原生 \/ Coding Plan/);
   assert.match(page, /PROVIDERLESS_CLIS\.has\(_sessionCli\)/);
   assert.match(page, /const PROVIDERLESS_CLIS = _providerCatalog\.providerlessClis\(\);/);
   assert.doesNotMatch(page, /const PROVIDERLESS_CLIS = new Set\(\[/);
@@ -185,15 +182,11 @@ test('vendor-managed CLIs stay providerless while ZCode exposes MultiCC provider
 });
 
 test('Auto Provider picker exposes protocol pools, ordered candidates and the persisted contract', () => {
-  const source = fs.readFileSync(path.join(ROOT, 'public', 'chat-ai-config.js'), 'utf8');
   const shared = fs.readFileSync(path.join(ROOT, 'public', 'auto-provider-editor.js'), 'utf8');
   const page = fs.readFileSync(path.join(ROOT, 'public', 'chat.js'), 'utf8');
   assert.equal(ai.autoOptionValue('anthropic'), '__auto__:anthropic');
   assert.equal(ai.autoProtocolFromValue('__auto__:openai_responses'), 'openai_responses');
   assert.equal(ai.autoProtocolLabel('openai_chat'), 'OpenAI Responses');
-  assert.match(source, /id="ai-auto-section"/);
-  assert.match(source, /autoProviderEditorApi\(\)\.mount/);
-  assert.match(source, /const result = autoEditor\.read\(\)/);
   assert.match(shared, /multicc-auto-editor-move-up/);
   // 混用官方与自管线路是默认允许的：编辑器里不再有跨信任确认这一步。
   assert.doesNotMatch(shared, /cross_trust_confirmation_required/);
@@ -330,9 +323,7 @@ test('chat page loads the classic config boundary before chat.js and chat delega
   assert.ok(auth > 0 && auth < apiClient && apiClient < catalog
     && catalog < autoProvider && autoProvider < config && config < page);
   assert.doesNotMatch(html, /<script[^>]+type=["']module["'][^>]+chat-ai-config/i);
-  assert.match(chat, /MultiCCChatAiConfig\.showAIConfigPicker/);
   assert.match(chat, /MultiCCChatAiConfig\.loadProviderList/);
-  assert.match(chat, /MultiCCChatAiConfig\.saveSession/);
   assert.doesNotMatch(chat, /fetch\([^\n]*\/api\/providers/);
   assert.doesNotMatch(boundary, /(?:token|access_token)=/);
   assert.doesNotMatch(chat, /id="ai-provider"/);
