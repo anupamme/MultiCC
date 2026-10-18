@@ -12,7 +12,7 @@ import '../git_status_row.dart';
 /// 分两张卡各自带一行标题、各自一段留白，而它们读的又是同一份目录状态。合起来
 /// 之后标题只有一处，两边的动作（这一格的「现在回收」、Web 侧那颗 push）都还在
 /// 原处。
-class AirWorkspaceCard extends StatelessWidget {
+class AirWorkspaceCard extends StatefulWidget {
   const AirWorkspaceCard({
     super.key,
     required this.lifecycle,
@@ -20,9 +20,24 @@ class AirWorkspaceCard extends StatelessWidget {
     this.idleMs = 0,
     this.busy = false,
     this.onReclaim,
+    this.onPush,
+    this.onCommit,
+    this.pushing = false,
+    this.committing = false,
   });
 
   final AirWorktreeLifecycle lifecycle;
+
+  /// 「推送」：主检出有未推送提交且有远端时出现。null = 不提供（测试/只读）。
+  final VoidCallback? onPush;
+
+  /// 「提交全部改动」：主检出有未提交文件时出现，提交说明由服务端按改动自动生成，
+  /// 不用再回对话里提需求。null = 不提供。
+  final VoidCallback? onCommit;
+
+  /// 推送 / 提交进行中：按钮置灰，避免连点。
+  final bool pushing;
+  final bool committing;
 
   /// 主检出的 git 状态（宿主从 `/api/directories` 那一份拿到的 `pushState`）。
   ///
@@ -41,8 +56,17 @@ class AirWorkspaceCard extends StatelessWidget {
   final VoidCallback? onReclaim;
 
   @override
+  State<AirWorkspaceCard> createState() => _AirWorkspaceCardState();
+}
+
+class _AirWorkspaceCardState extends State<AirWorkspaceCard> {
+  /// 手机上这张卡占半屏，不是每次都要看：点抬头收起，只剩标题一行。
+  bool _collapsed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final git = pushState;
+    final w = widget;
+    final git = w.pushState;
     return Container(
       key: const ValueKey('air-directory-workspace'),
       margin: const EdgeInsets.only(bottom: 14),
@@ -54,48 +78,109 @@ class AirWorkspaceCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(14, 11, 14, 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'WORKSPACE',
-                  style: TextStyle(
+          InkWell(
+            key: const ValueKey('air-workspace-toggle'),
+            onTap: () => setState(() => _collapsed = !_collapsed),
+            borderRadius: BorderRadius.circular(AppColors.radiusCard),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 11, 8, 4),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'WORKSPACE',
+                          style: TextStyle(
+                            color: AppColors.faint,
+                            fontSize: 10.5,
+                            letterSpacing: 0.6,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          '工作区',
+                          key: ValueKey('air-workspace-heading'),
+                          style: TextStyle(
+                            color: AppColors.text,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    _collapsed
+                        ? Icons.keyboard_arrow_down_rounded
+                        : Icons.keyboard_arrow_up_rounded,
                     color: AppColors.faint,
-                    fontSize: 10.5,
-                    letterSpacing: 0.6,
                   ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  '工作区',
-                  key: ValueKey('air-workspace-heading'),
-                  style: TextStyle(
-                    color: AppColors.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // 上半格：代码状态。GitStatusRow 自己知道哪些字段有得说（分支 / 未推送 /
-          // 未提交），这里只决定「这一格摆不摆」。
-          if (git != null && git.available)
-            _WorkspaceBlock(
-              label: '代码状态',
-              child: Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: GitStatusRow(pushState: git),
+                ],
               ),
             ),
-          AirWorktreeBlock(
-            lifecycle: lifecycle,
-            idleMs: idleMs,
-            busy: busy,
-            onReclaim: onReclaim,
           ),
+          if (_collapsed)
+            const SizedBox(height: 8)
+          else ...[
+            // 上半格：代码状态。GitStatusRow 自己知道哪些字段有得说（分支 / 未推送 /
+            // 未提交），这里只决定「这一格摆不摆」。
+            if (git != null && git.available)
+              _WorkspaceBlock(
+                label: '代码状态',
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: GitStatusRow(pushState: git),
+                ),
+              ),
+            if (git != null && git.available) _gitActions(git),
+            AirWorktreeBlock(
+              lifecycle: w.lifecycle,
+              idleMs: w.idleMs,
+              busy: w.busy,
+              onReclaim: w.onReclaim,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 代码状态下面的快捷动作：有未提交文件 → 一键提交（说明自动生成）；有未推送
+  /// 提交且有远端 → 推送。两者都没有就不占位。
+  Widget _gitActions(DirectoryPushState git) {
+    final w = widget;
+    final canCommit = git.dirty > 0 && w.onCommit != null;
+    final canPush = git.ahead > 0 && git.hasRemote && w.onPush != null;
+    if (!canCommit && !canPush) return const SizedBox.shrink();
+    ButtonStyle style() => OutlinedButton.styleFrom(
+      side: const BorderSide(color: AppColors.lineStrong),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      minimumSize: const Size(0, 32),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          if (canCommit)
+            OutlinedButton.icon(
+              key: const ValueKey('air-workspace-commit'),
+              onPressed: w.committing || w.pushing ? null : w.onCommit,
+              icon: const Icon(Icons.check_rounded, size: 16),
+              label: Text(w.committing ? '提交中…' : '提交 ${git.dirty} 个改动'),
+              style: style(),
+            ),
+          if (canPush)
+            OutlinedButton.icon(
+              key: const ValueKey('air-workspace-push'),
+              onPressed: w.pushing || w.committing ? null : w.onPush,
+              icon: const Icon(Icons.arrow_upward_rounded, size: 16),
+              label: Text(w.pushing ? '推送中…' : '推送 ${git.ahead} 个提交'),
+              style: style(),
+            ),
         ],
       ),
     );

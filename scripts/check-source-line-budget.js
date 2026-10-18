@@ -397,8 +397,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +4 键（livenessRequesting 等）：进展条按回合阶段显示请求中/思考中/工具执行中，实测 9262/586055。
     // +3 键（rsStreamHd/rsStreamRfb/rsStreamTitle）：🖥 屏幕「高清 / 流畅」切换按钮，与上一格合并后实测 9268/586408。
     // +2 键（chatSessionGone*）：App 聊天页「任务已删除」提示条。
-    maxLines: 9272,
-    maxBytes: 586644,
+    // +7 键（airGitCommit*/airGitCollapse/airGitExpand）：目录 Git 面板一键提交与收缩，实测 9286/587404。
+    maxLines: 9290,
+    maxBytes: 587640,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

@@ -383,7 +383,9 @@
             <div class="section-heading">
               <div><span class="caption">GIT</span><strong id="directory-git-title" data-i18n="airCodeAndWorktrees">代码与 Worktree</strong></div>
               <span id="directory-git-note" class="admin-panel-note"></span>
+              <button id="directory-git-toggle" type="button" class="directory-git-toggle" aria-expanded="true" aria-controls="directory-git-body" data-i18n-aria-label="airGitCollapse" aria-label="收起"></button>
             </div>
+            <div id="directory-git-body">
             <div id="directory-git-brief"></div>
             <section id="directory-worktrees" class="directory-worktrees" hidden aria-label="目录 Worktree 生命周期" data-i18n-aria-label="airWorktreeLifecycle">
               <div class="section-heading">
@@ -392,6 +394,7 @@
               </div>
               <div id="directory-worktree-body"></div>
             </section>
+            </div>
           </section>
           <!-- 全站唯一的那一个输入框模块。它在目录首页是常驻的，侧栏那颗
                「＋ 新任务」会把它临时搬进 #quick-task-dialog（air.js 的

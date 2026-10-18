@@ -701,6 +701,31 @@
     paintDirectoryGit();
   }
 
+  // 面板收缩（手机上这张卡占半屏）：偏好记在本机，所有目录共用。
+  const GIT_COLLAPSE_KEY = 'multicc.air.gitPanelCollapsed';
+  function applyGitCollapsed(collapsed) {
+    const body = $('directory-git-body');
+    const toggle = $('directory-git-toggle');
+    if (!body || !toggle) return;
+    body.hidden = collapsed;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.textContent = collapsed ? '▸' : '▾';
+    toggle.title = toggle.ariaLabel = t(collapsed ? 'airGitExpand' : 'airGitCollapse');
+  }
+  {
+    const toggle = $('directory-git-toggle');
+    if (toggle) {
+      let collapsed = false;
+      try { collapsed = localStorage.getItem(GIT_COLLAPSE_KEY) === '1'; } catch (_) { /* 无存储就不记 */ }
+      applyGitCollapsed(collapsed);
+      toggle.onclick = () => {
+        collapsed = !collapsed;
+        try { localStorage.setItem(GIT_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch (_) { /* 同上 */ }
+        applyGitCollapsed(collapsed);
+      };
+    }
+  }
+
   async function loadDirectoryGit() {
     try {
       const status = await api(`/api/git/directory-status?dirId=${encodeURIComponent(directoryId)}`);
@@ -833,6 +858,27 @@
       chips.append(dirtyChip);
     } else chips.append(chip(t('airGitMainClean'), 'ok'));
     const actions = node('div', null, 'directory-git-actions');
+    if (dirty.length) {
+      // 一键提交：不用回对话里提需求。message 留空，由服务端按改动文件生成。
+      const commit = node('button', t('airGitCommitAll', { n: dirty.length }), 'primary');
+      commit.type = 'button';
+      commit.title = t('airGitCommitTip');
+      commit.onclick = async () => {
+        commit.disabled = true;
+        commit.textContent = t('airGitCommitting');
+        try {
+          const result = await api(`/api/directories/${encodeURIComponent(directoryId)}/commit`, {});
+          notice(result.committed ? t('airGitCommitted') : t('airGitMainClean'));
+          directoryGitView.fetchedAt = 0;
+          await loadDirectoryGit();
+        } catch (cause) {
+          notice(t('airGitCommitFailed', { msg: cause.message }));
+          commit.disabled = false;
+          commit.textContent = t('airGitCommitAll', { n: dirty.length });
+        }
+      };
+      actions.append(commit);
+    }
     const logButton = node('button', t('gitManagerOpen'), 'subtle');
     logButton.type = 'button';
     logButton.onclick = () => window.MultiCCGitManager?.open({ dirId: directoryId, api, t });
