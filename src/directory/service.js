@@ -277,6 +277,22 @@ function createDirectoryService({ repo, git, sessions, events, fsPort, helpers, 
     }
   }
 
+  // Subject for a quick commit nobody typed a message for: names what changed
+  // (verb by dominant status, first few file basenames, total count) so the
+  // log stays readable without a trip into the chat to ask for a message.
+  function autoCommitMessage(porcelain) {
+    const rows = String(porcelain || '').split('\n').filter(Boolean)
+      .map(line => ({ status: line.slice(0, 2), path: line.slice(3).replace(/^"|"$/g, '').split(' -> ').pop() }));
+    if (!rows.length) return 'chore: update working tree';
+    const added = rows.filter(r => r.status.includes('?') || r.status.includes('A')).length;
+    const removed = rows.filter(r => r.status.includes('D')).length;
+    const verb = added === rows.length ? 'add' : removed === rows.length ? 'remove' : 'update';
+    const names = [...new Set(rows.map(r => r.path.split('/').pop()))];
+    const shown = names.slice(0, 3).join(', ');
+    const more = rows.length > 3 ? ` and ${rows.length - 3} more` : '';
+    return `chore: ${verb} ${shown}${more}`;
+  }
+
   // Quick-commit-all on the directory's main working tree. Used by the "未提交"
   // warning affordance to clear a dirty main before merging session branches.
   async function commitAll(id, message) {
@@ -287,7 +303,7 @@ function createDirectoryService({ repo, git, sessions, events, fsPort, helpers, 
       const ps = await git.pushState(d.path, branch, { force: true });
       if (ps.dirty === 0) return ok({ ok: true, committed: false, pushState: ps });
       const msg = (message ? String(message) : '').trim()
-        || `multicc: 提交未跟踪改动（${new Date().toISOString().slice(0, 19).replace('T', ' ')}）`;
+        || autoCommitMessage(await git.statusPorcelain(d.path));
       await git.stageAll(d.path);
       await git.commit(d.path, msg);
       git.invalidatePushCache(d.path, branch);

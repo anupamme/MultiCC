@@ -173,4 +173,57 @@ void main() {
 
     expect(find.byKey(const ValueKey('air-worktree-reclaim')), findsNothing);
   });
+
+  testWidgets('有未提交文件与未推送提交时出现提交/推送按钮，点了各回调一次', (tester) async {
+    var commits = 0;
+    var pushes = 0;
+    await _pump(
+      tester,
+      AirWorkspaceCard(
+        lifecycle: _life,
+        pushState: _git,
+        onCommit: () => commits++,
+        onPush: () => pushes++,
+      ),
+    );
+
+    expect(find.text('提交 3 个改动'), findsOneWidget);
+    expect(find.text('推送 2 个提交'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('air-workspace-commit')));
+    await tester.tap(find.byKey(const ValueKey('air-workspace-push')));
+    expect(commits, 1);
+    expect(pushes, 1);
+  });
+
+  testWidgets('干净且无未推送时不摆提交/推送按钮', (tester) async {
+    await _pump(
+      tester,
+      AirWorkspaceCard(
+        lifecycle: _life,
+        pushState: const DirectoryPushState(hasRemote: true),
+        onCommit: () {},
+        onPush: () {},
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('air-workspace-commit')), findsNothing);
+    expect(find.byKey(const ValueKey('air-workspace-push')), findsNothing);
+  });
+
+  testWidgets('点抬头可收起：内容隐藏、抬头还在，再点展开', (tester) async {
+    await _pump(
+      tester,
+      const AirWorkspaceCard(lifecycle: _life, pushState: _git),
+    );
+    expect(find.text('Worktree 生命周期'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('air-workspace-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Worktree 生命周期'), findsNothing);
+    expect(find.byKey(const ValueKey('air-workspace-heading')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('air-workspace-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('Worktree 生命周期'), findsOneWidget);
+  });
 }

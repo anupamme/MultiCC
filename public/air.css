@@ -2470,3 +2470,8 @@ dialog { border-color: var(--hairline); border-radius: 22px; box-shadow: var(--s
 .air-docs-filters input{flex:1;min-width:180px;max-width:480px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
 .air-docs-filters small{color:var(--muted)}
 @media(max-width:420px){.air-docs-scope button{padding:0 10px}.air-docs-filters input{width:100%;max-width:none}}
+
+/* 目录 Git 面板的收缩键：只占一个小方块，收起后面板只剩抬头。 */
+.directory-git-toggle { flex: 0 0 auto; min-width: 28px; min-height: 28px; padding: 0 6px; border: 1px solid #dbe6f1; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.directory-git-panel .section-heading { align-items: center; }
+#directory-git-body[hidden] { display: none; }

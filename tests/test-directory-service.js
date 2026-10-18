@@ -251,6 +251,12 @@ function makeFakes({ dirs = [], sessions = [], fsDirs = new Set(), fsFiles = new
       'commitAll: dirty tree stages + commits with trimmed message');
     ok(fakes.calls.events.some(e => e.type === 'committed' && e.detail === '提交 1 个未提交改动'),
       'commitAll: event detail uses ahead-delta when it grew');
+    phase = 0;
+    committed = [];
+    fakes.git.statusPorcelain = async () => ' M src/app.js\n?? a/b.txt\n M c.js\n D d.js\n';
+    await fakes.svc.commitAll('d1');
+    ok(committed[0] === 'chore: update app.js, b.txt, c.js and 1 more',
+      'commitAll: empty message → generated from changed files');
   }
 
   // ── push ──

@@ -148,6 +148,8 @@ class _AirTasksViewState extends State<AirTasksView>
   bool _openingTerminal = false;
   bool _creatingTerminal = false;
   bool _reclaiming = false;
+  bool _pushing = false;
+  bool _committing = false;
   final _taskSearch = TextEditingController();
   late final _directorySearch = AirDirectorySearch(_service)
     ..addListener(_searchChanged);
@@ -966,6 +968,58 @@ class _AirTasksViewState extends State<AirTasksView>
     await _refresh();
     if (!mounted) return;
     _snack('已刷新共享工作区「${fleet.name}」');
+  }
+
+  /// 工作区卡上的「推送」：把主检出已提交的内容推到远端（同 Web 那颗 ↑N 胶囊，
+  /// `POST /api/directories/:id/push`）。完成后重取目录表，让 ahead 数当场归零。
+  Future<void> _pushMainCheckout(AirDirectory directory) async {
+    final mgr = context.read<SessionManager?>();
+    if (_pushing || mgr == null) return;
+    setState(() => _pushing = true);
+    try {
+      final result = await mgr.service.pushDirectory(directory.id);
+      if (!mounted) return;
+      final failed = result['ok'] == false;
+      _snack(
+        failed
+            ? '推送失败：${result['error'] ?? ''}'
+            : result['pushed'] == false
+            ? '没有待推送的提交。'
+            : '已推送。',
+        danger: failed,
+      );
+      await mgr.loadDashboard();
+    } catch (e) {
+      if (mounted) _snack('推送失败：$e', danger: true);
+    } finally {
+      if (mounted) setState(() => _pushing = false);
+    }
+  }
+
+  /// 工作区卡上的「提交全部改动」：message 留空，服务端按改动文件自动生成提交说明，
+  /// 不用再回对话里提需求（`POST /api/directories/:id/commit`）。
+  Future<void> _commitMainCheckout(AirDirectory directory) async {
+    final mgr = context.read<SessionManager?>();
+    if (_committing || mgr == null) return;
+    setState(() => _committing = true);
+    try {
+      final result = await mgr.service.commitAll(directory.id);
+      if (!mounted) return;
+      final failed = result['ok'] == false;
+      _snack(
+        failed
+            ? '提交失败：${result['error'] ?? ''}'
+            : result['committed'] == false
+            ? '没有需要提交的改动。'
+            : '已提交，提交说明已自动生成。',
+        danger: failed,
+      );
+      await mgr.loadDashboard();
+    } catch (e) {
+      if (mounted) _snack('提交失败：$e', danger: true);
+    } finally {
+      if (mounted) setState(() => _committing = false);
+    }
   }
 
   /// 「现在回收」（Web 目录页那颗按钮，`POST /api/air/worktrees/reclaim`）。
@@ -2194,6 +2248,10 @@ class _AirTasksViewState extends State<AirTasksView>
                       idleMs: data?.worktreePolicy.idleMs ?? 0,
                       busy: _reclaiming,
                       onReclaim: () => _reclaimWorktrees(directory!),
+                      pushing: _pushing,
+                      committing: _committing,
+                      onPush: () => _pushMainCheckout(directory!),
+                      onCommit: () => _commitMainCheckout(directory!),
                     ),
                   if (directory != null)
                     Padding(
