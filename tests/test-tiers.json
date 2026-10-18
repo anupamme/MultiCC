@@ -3163,6 +3163,15 @@
       ]
     },
     {
+      "path": "tests/test-hotword-corrector.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-http-error-boundary.js",
       "tier": "core",
       "lane": "deterministic",

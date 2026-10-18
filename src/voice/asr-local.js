@@ -18,6 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { correctWithHotwords } = require('./hotword-corrector');
 
 const SENSE_VOICE_DIR_NAME = 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17';
 
@@ -141,7 +142,9 @@ function status() {
 // SenseVoice has no decode-time hotword boost, so the user-corrected terms in
 // whisper_vocab.json (multicc, ccfw, worktree, …) are applied afterwards: an
 // ASCII term matches itself case-insensitively with optional internal spaces
-// ("multi cc" → "multicc"). Chinese homophone correction is out of scope here.
+// ("multi cc" → "multicc"). The user's own hotword list (the voice settings
+// "Prompt" field) additionally gets pinyin matching for Chinese terms and
+// `term=alias` spellings, see hotword-corrector.js.
 let _vocabCache = { at: 0, regexes: [] };
 function vocabRegexes() {
   const now = Date.now();
@@ -164,6 +167,10 @@ function applyVocabCorrections(text) {
   if (!text) return text;
   let out = text;
   for (const { re, term } of vocabRegexes()) out = out.replace(re, term);
+  try {
+    // Read at call time: the settings route hot-applies WHISPER_PROMPT.
+    out = correctWithHotwords(out, require('./config').cfg.WHISPER_PROMPT);
+  } catch (_) {}
   return out;
 }
 

@@ -1,0 +1,118 @@
+#!/usr/bin/env node
+// Pinyin hotword post-correction (src/voice/hotword-corrector.js).
+const assert = require('assert');
+const Module = require('module');
+
+const hot = require('../src/voice/hotword-corrector');
+
+let failed = 0;
+function test(name, fn) {
+  try { fn(); console.log(`✓ ${name}`); } catch (e) { failed++; console.error(`✗ ${name}\n  ${e.message}`); }
+}
+const fix = (text, list) => hot.correctWithHotwords(text, list);
+
+test('parseHotwords splits on commas/newlines/、, dedupes, reads aliases', () => {
+  const e = hot.parseHotwords('React, Claude=克劳德/克拉德\n哈勃、react,  ');
+  assert.deepStrictEqual(e.map(x => x.term), ['React', 'Claude', '哈勃']);
+  assert.deepStrictEqual(e[1].aliases, ['克劳德', '克拉德']);
+});
+
+test('stripAliases leaves only the terms for a cloud prompt', () => {
+  assert.strictEqual(hot.stripAliases('React, Claude=克劳德/克拉德, 哈勃'), 'React, Claude, 哈勃');
+});
+
+test('homophone of a two-character term is replaced', () => {
+  assert.strictEqual(fix('这个权线需要再确认一下', '权限'), '这个权限需要再确认一下');
+});
+
+test('two-character terms accept homophones only, never near-sounds', () => {
+  assert.strictEqual(fix('打开设值', '设置'), '打开设置');
+  assert.strictEqual(fix('打开设自', '设置'), '打开设自'); // zi vs zhi: near, not equal
+});
+
+test('longer terms tolerate one near syllable, not two', () => {
+  assert.strictEqual(fix('做资识图谱', '知识图谱'), '做知识图谱'); // zi/zhi
+  assert.strictEqual(fix('做资私图谱', '知识图谱'), '做资私图谱'); // zi/zhi + si/shi
+  assert.strictEqual(fix('打开开发者中心文挡', '开发者中心文档'), '打开开发者中心文档'); // homophone
+});
+
+test('three-character term allows exactly one near syllable', () => {
+  assert.strictEqual(fix('请打开设自页', '设置页'), '请打开设置页');
+  assert.strictEqual(fix('请打开色自页', '设置页'), '请打开色自页'); // se/she + zi/zhi
+});
+
+test('alias spellings are rewritten to the canonical term', () => {
+  assert.strictEqual(fix('让克劳德帮我看一下', 'Claude=克劳德/克拉德'), '让Claude帮我看一下');
+  assert.strictEqual(fix('克拉德写得不错', 'Claude=克劳德/克拉德'), 'Claude写得不错');
+});
+
+test('the correct spelling is left alone and shields its span from shorter terms', () => {
+  assert.strictEqual(fix('哈勃望远镜', '哈勃望远镜, 哈勃'), '哈勃望远镜');
+  assert.strictEqual(fix('哈勃望远镜', '哈勃, 哈勃望远镜'), '哈勃望远镜');
+});
+
+test('a polyphone is read in context, not by its first reading', () => {
+  // 银行 is yin-hang here; 杭 has only that reading, so only context can match.
+  assert.strictEqual(fix('去银行办事', '音杭'), '去音杭办事');
+  assert.strictEqual(fix('去音杭办事', '音杭'), '去音杭办事');
+});
+
+test('matches never cross non-Chinese characters', () => {
+  assert.strictEqual(fix('权, 线', '权限'), '权, 线');
+  assert.strictEqual(fix('权abc线', '权限'), '权abc线');
+});
+
+test('ASCII terms ignore case and inner spaces but respect word boundaries', () => {
+  assert.strictEqual(fix('open multi cc now', 'MultiCC'), 'open MultiCC now');
+  assert.strictEqual(fix('use TYPESCRIPT here', 'TypeScript'), 'use TypeScript here');
+  assert.strictEqual(fix('reactive', 'React'), 'reactive');
+});
+
+test('empty input and empty list are no-ops', () => {
+  assert.strictEqual(fix('', '权限'), '');
+  assert.strictEqual(fix('权线', ''), '权线');
+  assert.strictEqual(fix('权线', '   '), '权线');
+  assert.strictEqual(fix(undefined, '权限'), undefined);
+});
+
+test('changing the list takes effect on the next call', () => {
+  assert.strictEqual(fix('这个权线', '权限'), '这个权限');
+  assert.strictEqual(fix('这个权线', '哈勃'), '这个权线');
+});
+
+test('size and entry caps hold', () => {
+  const many = Array.from({ length: 500 }, (_, i) => `词${i}`).join(',');
+  assert.ok(hot.parseHotwords(many).length <= 200);
+  assert.strictEqual(hot.parseHotwords('x'.repeat(41)).length, 0);
+});
+
+test('missing pinyin-pro degrades to ASCII-only correction without throwing', () => {
+  const origLoad = Module._load;
+  const resolved = require.resolve('../src/voice/hotword-corrector');
+  const cached = require.cache[resolved];
+  delete require.cache[resolved];
+  Module._load = function (request, ...rest) {
+    if (request === 'pinyin-pro') { const e = new Error("Cannot find module 'pinyin-pro'"); e.code = 'MODULE_NOT_FOUND'; throw e; }
+    return origLoad.call(this, request, ...rest);
+  };
+  try {
+    const bare = require('../src/voice/hotword-corrector');
+    assert.strictEqual(bare.correctWithHotwords('这个权线 multi cc', '权限, MultiCC'), '这个权线 MultiCC');
+  } finally {
+    Module._load = origLoad;
+    delete require.cache[resolved];
+    if (cached) require.cache[resolved] = cached;
+  }
+});
+
+test('nearSyllable covers accent pairs and rejects unrelated sounds', () => {
+  assert.ok(hot.nearSyllable('zhi', 'zi'));
+  assert.ok(hot.nearSyllable('xin', 'xing'));
+  assert.ok(hot.nearSyllable('nan', 'lan'));
+  assert.ok(hot.nearSyllable('yan', 'yang'));
+  assert.ok(!hot.nearSyllable('ba', 'pa'));
+  assert.ok(!hot.nearSyllable('ma', 'mo'));
+});
+
+if (failed) { console.error(`\n${failed} failed`); process.exit(1); }
+console.log('\nall passed');
