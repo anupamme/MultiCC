@@ -168,8 +168,9 @@ function applyVocabCorrections(text) {
   let out = text;
   for (const { re, term } of vocabRegexes()) out = out.replace(re, term);
   try {
-    // Read at call time: the settings route hot-applies WHISPER_PROMPT.
-    out = correctWithHotwords(out, require('./config').cfg.WHISPER_PROMPT);
+    // Read at call time: the settings route hot-applies WHISPER_PROMPT, and
+    // the learned list grows as the user corrects transcripts.
+    out = correctWithHotwords(out, require('./config').hotwordList());
   } catch (_) {}
   return out;
 }

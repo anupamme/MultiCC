@@ -15,7 +15,7 @@ const RUNTIME_BASENAMES = new Set([
   'aux-config.json', 'goal-config.json', 'notes.json', 'push_subscriptions.json',
   'push_notification_receipts.json', 'event_rules.json',
   'token_usage.json', 'token_daily.json', 'token_by_role.json', 'providers.json',
-  'official-provider-selection.json', 'provider-defaults.json', 'voice_examples.json', 'whisper_vocab.json',
+  'official-provider-selection.json', 'provider-defaults.json', 'voice_examples.json', 'whisper_vocab.json', 'voice_hotwords.json',
   'tunnel-config.json', 'tunnel-repair-ledger.json', 'orchestration.json', 'orchestration.sqlite',
   'orchestration.sqlite-wal', 'orchestration.sqlite-shm', 'task_board.json',
   // 敏感信息保险箱：明文 API key 的唯一落盘处。它同时被 build-task-shell-image 的

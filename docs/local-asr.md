@@ -60,6 +60,21 @@ CI 容器正是靠 `ASR_LOCAL=off` 保证门禁不会去拉这 229MB。
   段间静音 250ms 判定）。`ASR_PROVIDER=auto`（新默认）时本地就绪即优先本地。
 - 用户纠错词表（whisper_vocab.json）：SenseVoice 无解码期热词，改为转写后
   ASCII 术语正则纠错（"multi cc" → "multicc"），沿用同一份词表。
+- 热词纠错（src/voice/hotword-corrector.js）：识别出口按拼音滑窗把同音/近音片段
+  换成热词，支持 `正确词=别名`。热词来源两份，合并使用、手填的优先：
+  1. 语音设置的「Prompt」（WHISPER_PROMPT），用户手填；
+  2. **自动学习的 voice_hotwords.json**（src/voice/hotword-learner.js + hotword-miner.js），
+     不用任何人填：
+     - 服务首次启动先回放 voice_examples.json 里已有的修改记录，之后每次
+       `POST /api/voice/feedback`（用户改完识别结果再发送）立刻增量学习；
+     - 每 24 小时在后台扫一次聊天记录（每个会话文件只读末尾 512KB、最多 300 个会话、
+       逐文件让出事件循环），收集用户自己写过的专有名词（驼峰/短缩写/连字符名，
+       写法取用户最常用的那种；定时任务模板、后台通知、`__aux__` 等机器消息不计）；
+     - 防误伤：「错词→正词」要**同一对出现两次**才生效；中文对中文必须等长且一半以上
+       音节相同或相近；整句被改写时只信落在英文术语上的修改；用户自己写过并保留的错词
+       （如真的写「热水」）一票否决。
+     - 查看：`GET /api/voice/hotwords`（active / pending / vetoed）；否决某条：
+       `POST /api/voice/hotwords/reject {term, alias?}`；整体关闭：`VOICE_AUTO_HOTWORDS=0`。
 
 ## 配置（env）
 

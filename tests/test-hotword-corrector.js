@@ -74,6 +74,7 @@ test('a multi-word term keeps its space and never rewrites paths or identifiers'
   assert.strictEqual(fix('claudecode 是目录名', 'Claude Code'), 'claudecode 是目录名');
   assert.strictEqual(fix('读 MULTICC_BASE_URL 和 multicc-base', 'MultiCC'), '读 MULTICC_BASE_URL 和 multicc-base');
   assert.strictEqual(fix('看 .multicc 目录', 'MultiCC'), '看 .multicc 目录');
+  assert.strictEqual(fix('spawned claude pid=4679 和 pid 都在', 'PID'), 'spawned claude pid=4679 和 PID 都在');
   assert.strictEqual(fix('这是multicc。', 'MultiCC'), '这是MultiCC。');
 });
 

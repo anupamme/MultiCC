@@ -173,6 +173,9 @@ function createPaths({ dataDir } = {}) {
     orchestrationFile: path.join(root, 'orchestration.json'),
     voiceExamplesFile: path.join(root, 'voice_examples.json'),
     whisperVocabFile: path.join(root, 'whisper_vocab.json'),
+    // Hotwords MultiCC learns from voice corrections and chat history
+    // (src/voice/hotword-learner.js).
+    voiceHotwordsFile: path.join(root, 'voice_hotwords.json'),
   };
 }
 

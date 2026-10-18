@@ -10,10 +10,29 @@ const fs = require('fs');
 const { createPaths } = require('../paths');
 const { atomicWriteJson } = require('../runtime-security');
 const { stripAliases } = require('./hotword-corrector');
+const { createHotwordLearner } = require('./hotword-learner');
 
 const RUNTIME_PATHS = createPaths({ dataDir: process.env.MULTICC_DATA_DIR });
 const VOICE_EXAMPLES_FILE = RUNTIME_PATHS.voiceExamplesFile;
 const WHISPER_VOCAB_FILE = RUNTIME_PATHS.whisperVocabFile;
+
+// Learned hotwords. Set VOICE_AUTO_HOTWORDS=0 to switch learning and its use
+// off. Learning only runs once the voice host starts it (the real server, never
+// a test that merely requires this module).
+const autoHotwordsEnabled = !/^(0|off|false)$/i.test(process.env.VOICE_AUTO_HOTWORDS || '');
+const autoHotwords = createHotwordLearner({
+  file: RUNTIME_PATHS.voiceHotwordsFile,
+  examplesFile: VOICE_EXAMPLES_FILE,
+  chatHistoryDir: RUNTIME_PATHS.chatHistoryDir,
+});
+
+// What the local corrector should use: the user's own list first (its entries
+// win on duplicates because parseHotwords keeps the first spelling of a term),
+// then the learned one.
+function hotwordList() {
+  const learned = autoHotwordsEnabled ? autoHotwords.list() : '';
+  return [cfg.WHISPER_PROMPT || '', learned].filter(s => s.trim()).join(', ');
+}
 
 // Mutable runtime config, keyed by env var name for trivial applyEnvUpdates().
 const cfg = {
@@ -167,7 +186,7 @@ function buildWhisperPrompt() {
   // 1. User-configured static prompt (highest priority)
   // `term=alias` spellings are for the local corrector only; a cloud prompt
   // should carry just the terms.
-  const staticTerms = stripAliases(cfg.WHISPER_PROMPT).trim();
+  const staticTerms = stripAliases(hotwordList()).trim();
   if (staticTerms) parts.push(staticTerms);
 
   // 2. Load accumulated vocabulary from user corrections
@@ -290,4 +309,7 @@ module.exports = {
   mergeWhisperVocab,
   buildWhisperPrompt,
   callVoiceAPI,
+  autoHotwords,
+  autoHotwordsEnabled,
+  hotwordList,
 };
