@@ -9,6 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'tour.js'), 
 const root = path.join(__dirname, '..');
 const airHtml = fs.readFileSync(path.join(root, 'public', 'air.html'), 'utf8');
 const airJs = fs.readFileSync(path.join(root, 'public', 'air.js'), 'utf8');
+const airOnboarding = fs.readFileSync(path.join(root, 'public', 'air-onboarding.js'), 'utf8');
 
 test('onboarding teaches a safe first result instead of implementation concepts', () => {
   assert.match(source, /选择一个工作区/);
@@ -66,6 +67,7 @@ test('directory creation leaves roles and execution to tasks', () => {
 // 在已退役的 manage/chat 页上——主入口此前没有任何引导。首启配置卡补上
 // 这个缺口，且它教的是两件真正必须的事：先有模型，再配 AI Assistant。
 test('the Air landing page teaches model setup and mandatory AI Assist config', () => {
+  const zh = JSON.parse(fs.readFileSync(path.join(root, 'app', 'assets', 'i18n', 'zh.json'), 'utf8'));
   // 卡片本体与两个直达入口都在 Air 页上
   assert.match(airHtml, /id="setup-card"/);
   assert.match(airHtml, /id="setup-provider"/);
@@ -85,23 +87,31 @@ test('the Air landing page teaches model setup and mandatory AI Assist config', 
     '首启卡应当只出现在控制台那一页里，而不是目录首页',
   );
   assert.equal(airHtml.match(/id="setup-card"/g).length, 1);
-  // 第一步覆盖两条来路：导入已有线路，或用 CLI 自带登录
-  assert.match(airHtml, /导入你已有的 API 线路/);
-  assert.match(airHtml, /CLI 自带的登录/);
-  // AI Assist 的定位要说清三件事：核心、必须配置、flash 级弱模型就够。i18n 之后
-  // 「配置 AI Assistant」和后半句各自带 data-i18n，中间隔着那个 span，所以这里容下它。
-  assert.match(airHtml, /AI Assistant<\/strong><span[^>]*>：它是 MultiCC 的核心/);
-  assert.match(airHtml, /必须配置/);
-  assert.match(airHtml, /flash \/ 轻量模型即可/);
+  // 2.6.2 起卡片是三步引导（模型+AI 助手 / 项目 / 第一个任务）
+  assert.equal(airHtml.match(/id="setup-step-\d"/g).length, 3);
+  // 第一步覆盖两条来路：导入已有线路，或用 CLI 自带登录。文案已移入词典，
+  // 结构留在 air.html（data-i18n 键仍指向同一句），所以断言落在词典与键上。
+  assert.match(airHtml, /data-i18n="airGuideModel"/);
+  assert.match(zh.airSetupModelText, /导入你已有的 API 线路/);
+  assert.match(zh.airSetupModelText, /CLI 自带的登录/);
+  // AI Assist 的定位要说清三件事：核心、必须配置、flash 级弱模型就够。
+  assert.equal(zh.airSetupAuxMust, '必须配置');
+  assert.match(zh.airSetupAuxText, /它是 MultiCC 的核心/);
+  assert.match(zh.airSetupAuxText2, /flash \/ 轻量模型即可/);
 });
 
 test('the setup card is driven by the real aux config, not a guess', () => {
   // 显示与否由 /api/aux/config 的 providerId 说话：null=未配置才亮卡
   assert.match(airJs, /api\('\/api\/aux\/config'\)/);
   assert.match(airJs, /auxConfigured = !!config\.providerId/);
-  assert.match(airJs, /card\.hidden = !\(data && auxConfigured === false && !setupDismissed\)/);
-  // 离开 AI Assistant 设置页时重查：刚保存过的话卡片当场消失
-  assert.match(airJs, /mode === 'aux' && next !== 'aux'/);
+  // 2.6.2 起卡片按三步完成度决定去留（AI 助手 / 项目 / 第一个任务），
+  // 完成度算在 air-onboarding.js 里；未查到配置（null）时不亮卡。
+  assert.match(airOnboarding,
+    /const done = \[auxConfigured === true, data\.directories\.length > 0, data\.tasks\.length > 0\]/);
+  assert.match(airOnboarding, /const incomplete = count < 3 && auxConfigured !== null/);
+  assert.match(airOnboarding, /\$\('setup-card'\)\.hidden = !incomplete \|\| dismissed/);
+  // 离开 AI Assistant（或线路）设置页时重查：刚保存过的话卡片当场消失
+  assert.match(airJs, /\['aux', 'provider'\]\.includes\(mode\) && next !== mode/);
   // 跳过只藏卡不等于已配置，且记录在本机
-  assert.match(airJs, /air:setup-dismissed/);
+  assert.match(airOnboarding, /air:setup-dismissed/);
 });
