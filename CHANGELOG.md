@@ -2,6 +2,20 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.6.2 — Live model lists, a talking liveness pill, and HD remote screens (2026-10-18)
+
+### Highlights
+
+- **Model pickers read the CLI's own catalogue instead of a hardcoded table** — Command Code and Grok now list whatever `--list-models` / `models` reports, so a model that disappears upstream disappears from the picker, and a new one shows up without a release. Command Code's vendor grouping is carried through, the surrounding non-model chatter is ignored, and the headless-only section is dropped; an unauthenticated Grok list is served but never cached (`src/routes/commandcode-models.js`, `src/routes/grok-models.js`, `app/lib/services/live_model_catalog.dart`, `public/shared/models.js`). Both the run-config sheet and the App's session dialog share the same searchable menu (`app/lib/widgets/model_menu.dart`).
+- **The liveness pill says what the turn is doing** — the per-lane turn timeline now exposes a stage (requesting / thinking / output / running tool) plus how long it has been silent, so the pill distinguishes "waiting on the model" from "stuck" instead of showing one opaque "Working". Lanes that never stream partials (codex-style) mark the stage imprecise rather than claiming a pure network wait (`src/chat/turn-timeline.js`, `src/liveness/runtime.js`, `app/lib/utils/session_status_helpers.dart`).
+- **A deleted task stops pretending to reconnect** — when the session behind a task is gone, the App stops its reconnect loop and shows a "this task was deleted" notice instead of spinning on "Connecting…" forever (`app/lib/services/chat_service.dart`, `app/lib/widgets/chat_session_gone_banner.dart`).
+- **Remote screen gets an HD/Smooth switch** — the phone can pick the H.264 live stream (sharper, lighter) or the compatibility RFB path with a local cursor, and the macOS agent's H.264 encoder was adjusted to match (`public/chat-remote-screen-h264.js`, `app/lib/services/platform_h264_decoder.dart`, `scripts/macos-agent/MultiCCAgentH264.swift`).
+- **Session creation and the Air console fill in** — the create-session dialog picks up the live catalogues for CodeBuddy / Command Code / Grok with a filter, and the Air workspace card, task actions and mobile navigation gained the remaining detail views (`app/lib/widgets/create_session_dialog.dart`, `app/lib/widgets/air/air_workspace_card.dart`, `app/lib/widgets/air/air_task_actions.dart`).
+
+### Release tier
+
+- The reviewed core set grew to 318 entries (271 deterministic, 25 isolated, 22 non-UI Flutter) with `tests/test-commandcode-grok-models-route.js`: pure parsing of a captured `--list-models` output plus fake-CLI catalogues in a temp dir, no network and no real account.
+
 ## v2.6.1 — A to-do lens on tasks, the mobile directory tab, and hook fixes (2026-10-17)
 
 ### Highlights

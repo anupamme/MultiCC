@@ -277,6 +277,13 @@ function createDirectoryService({ repo, git, sessions, events, fsPort, helpers, 
     }
   }
 
+  // `git status --porcelain` letters (X = index, Y = worktree) — '?' untracked,
+  // 'A' added, 'D' deleted. These are git's alphabet, not the classify letters
+  // src/classify/vocab.js owns, so they are matched as regexes here rather than
+  // through a classify predicate.
+  const GIT_ADDED = /[?A]/;
+  const GIT_DELETED = /D/;
+
   // Subject for a quick commit nobody typed a message for: names what changed
   // (verb by dominant status, first few file basenames, total count) so the
   // log stays readable without a trip into the chat to ask for a message.
@@ -284,8 +291,8 @@ function createDirectoryService({ repo, git, sessions, events, fsPort, helpers, 
     const rows = String(porcelain || '').split('\n').filter(Boolean)
       .map(line => ({ status: line.slice(0, 2), path: line.slice(3).replace(/^"|"$/g, '').split(' -> ').pop() }));
     if (!rows.length) return 'chore: update working tree';
-    const added = rows.filter(r => r.status.includes('?') || r.status.includes('A')).length;
-    const removed = rows.filter(r => r.status.includes('D')).length;
+    const added = rows.filter(r => GIT_ADDED.test(r.status)).length;
+    const removed = rows.filter(r => GIT_DELETED.test(r.status)).length;
     const verb = added === rows.length ? 'add' : removed === rows.length ? 'remove' : 'update';
     const names = [...new Set(rows.map(r => r.path.split('/').pop()))];
     const shown = names.slice(0, 3).join(', ');

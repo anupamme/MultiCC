@@ -257,13 +257,20 @@ test('core runner covers every selected path and expands declared variants', () 
   // 补齐此前登记的 cli-key-accounts（临时目录与假密钥、无真实登录），以及本次
   // claude-oauth-proxy-recovery（本地模拟上游、假凭据）。两者验证核心鉴权不变量，
   // 均无需真实服务或账号；315 + 2 = 317，deterministic 270，commands 298。
-  assert.equal(core.length, 317, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 317);
+  // 2026-10-18 v2.6.2 发版复核：+1 core deterministic。
+  //   - tests/test-commandcode-grok-models-route.js：Command Code / Grok 实时模型目录
+  //     （src/routes/commandcode-models.js、src/routes/grok-models.js）的契约——按真实
+  //     `--list-models` 抓取固化 vendor 分组、忽略周边非模型文本、丢弃 headless-only
+  //     段、未鉴权 Grok 列表可服务但不进缓存、兜底列表不缓存。完全 hermetic：
+  //     fixture 文本 + mkdtemp 里的假 CLI 脚本，不碰网络/端口/真账号。
+  // 317 + 1 = 318，deterministic 271，commands 299。
+  assert.equal(core.length, 318, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 318);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 270);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 271);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 22,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -273,8 +280,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 298,
-    '295 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 299,
+    '296 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],
