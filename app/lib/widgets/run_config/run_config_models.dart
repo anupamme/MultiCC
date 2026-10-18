@@ -6,6 +6,7 @@ library;
 
 import '../../models/message.dart';
 import '../../services/claude_models_service.dart';
+import '../../services/codebuddy_models_service.dart';
 import '../../services/codex_models_service.dart';
 import '../../services/opencode_models_service.dart';
 import '../../services/qoder_models_service.dart';
@@ -28,7 +29,7 @@ List<String> runModelChoices(
     return QoderModelsService.options().map((option) => option.key).toList();
   }
   if (cli == SessionCli.codebuddy) {
-    return kCodebuddyModelOptions.map((option) => option.key).toList();
+    return CodebuddyModelsService.options().map((option) => option.key).toList();
   }
   if (cli == SessionCli.dsh) {
     return kDshModelOptions.map((option) => option.key).toList();
