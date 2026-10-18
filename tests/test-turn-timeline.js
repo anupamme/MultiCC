@@ -82,3 +82,32 @@ test('every persist and result path carries the timeline', () => {
   assert.match(read('src/codex/usage.js'), /turnTimeline\.field\(cs, now\(\)\)/);
   assert.match(read('src/chat/finalize-host.js'), /turnTimeline\.field\(cs, now\(\)\)/);
 });
+
+test('currentStage: request -> thinking -> output -> tool -> request across lanes', () => {
+  const claude = { cli: 'claude', turnStartedAt: 1000 };
+  tl.startTurn(claude);
+  assert.equal(tl.currentStage(claude, 1200).stage, 'request');
+  assert.equal(tl.currentStage(claude, 1200).precise, true, 'claude streams partials from t0');
+  tl.observeClaude(claude, se({ type: 'content_block_start', content_block: { type: 'thinking' } }), 2000);
+  assert.equal(tl.currentStage(claude, 2100).stage, 'thinking');
+  tl.observeClaude(claude, se({ type: 'content_block_start', content_block: { type: 'text' } }), 3000);
+  assert.equal(tl.currentStage(claude, 3100).stage, 'output');
+  tl.observeClaude(claude, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1' }] } }, 3200);
+  assert.equal(tl.currentStage(claude, 3300).stage, 'tool');
+  tl.observeClaude(claude, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1' }] } }, 4000);
+  assert.equal(tl.currentStage(claude, 4100).stage, 'request');
+
+  // A completed-block-only lane (codex-style) is imprecise until a delta shows up.
+  const codex = { cli: 'codex', turnStartedAt: 1000 };
+  tl.startTurn(codex);
+  assert.deepEqual(
+    (({ stage, precise }) => ({ stage, precise }))(tl.currentStage(codex, 1500)),
+    { stage: 'request', precise: false },
+  );
+  tl.observeAdapter(codex, { type: 'thinking', text: 'x' }, 2000);
+  assert.equal(tl.currentStage(codex, 2100).stage, 'thinking');
+  assert.equal(tl.currentStage(codex, 2100).precise, false);
+  tl.observeAdapter(codex, { type: 'part_delta', delta: { type: 'text' } }, 2500);
+  assert.equal(tl.currentStage(codex, 2600).precise, true);
+  assert.equal(tl.currentStage({}, 1), null);
+});

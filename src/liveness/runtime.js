@@ -34,6 +34,8 @@ const DEFAULTS = Object.freeze({
   idleRecentMs: 10 * 60_000,
 });
 
+const turnTimeline = require('../chat/turn-timeline');
+
 function assertFn(value, name) {
   if (typeof value !== 'function') throw new TypeError(`[liveness] ${name} must be a function`);
 }
@@ -161,8 +163,15 @@ function createLivenessRuntime(deps = {}) {
     const pid = (streamStatus && Number.isInteger(streamStatus.pid)) ? streamStatus.pid
       : (cs && cs.claudeProc && Number.isInteger(cs.claudeProc.pid)) ? cs.claudeProc.pid
         : null;
+    // Model stage (request / thinking / output / tool) of the in-flight turn,
+    // from the per-lane turn timeline. Null when no turn is running so a stale
+    // timeline from the previous turn can never label an idle session.
+    const stage = (isStreaming || busy) ? turnTimeline.currentStage(cs, t) : null;
     return {
       at: t, isStreaming, busy, pid,
+      stage: stage ? stage.stage : null,
+      stageAgeMs: stage ? stage.ageMs : null,
+      stagePrecise: stage ? stage.precise : null,
       lastStreamAt, turnStartedAt, heartbeatSilentMs,
       proxyPhase: proxy ? proxy.phase : null,
       proxyAgeMs,

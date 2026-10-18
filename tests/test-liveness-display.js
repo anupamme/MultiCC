@@ -40,3 +40,23 @@ test('every label key it can return exists in the i18n catalog (zh + en)', () =>
     assert.ok(occurrences >= 2, `${key} must be defined in both zh and en (found ${occurrences})`);
   }
 });
+
+test('working is refined by turn stage; imprecise lanes say requesting / thinking', () => {
+  const key = v => livenessDisplay('working', v).labelKey;
+  assert.equal(key({ stage: 'request', stagePrecise: true }), 'livenessRequesting');
+  assert.equal(key({ stage: 'request', stagePrecise: false }), 'livenessRequestingOrThinking');
+  assert.equal(key({ stage: 'thinking' }), 'livenessThinking');
+  assert.equal(key({ stage: 'tool' }), 'livenessToolRunning');
+  assert.equal(key({ stage: 'output' }), 'livenessWorking');
+  assert.equal(key({ proxyPhase: 'request' }), 'livenessRequesting');
+  assert.equal(key(undefined), 'livenessWorking');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const catalog = fs.readFileSync(path.join(__dirname, '..', 'public', 'i18n-catalog.js'), 'utf8');
+  const zh = fs.readFileSync(path.join(__dirname, '..', 'app', 'assets', 'i18n', 'zh.json'), 'utf8');
+  const en = fs.readFileSync(path.join(__dirname, '..', 'app', 'assets', 'i18n', 'en.json'), 'utf8');
+  for (const k of ['livenessRequesting', 'livenessRequestingOrThinking', 'livenessThinking', 'livenessToolRunning']) {
+    assert.ok(catalog.split(`"${k}"`).length - 1 >= 2, `${k} in web catalog zh+en`);
+    assert.ok(zh.includes(`"${k}"`) && en.includes(`"${k}"`), `${k} in app json`);
+  }
+});

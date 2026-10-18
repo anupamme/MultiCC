@@ -624,7 +624,7 @@
         pill.onclick = null;
         return;
       }
-      const disp = livenessDisplay(verdict.state);
+      const disp = livenessDisplay(verdict.state, verdict);
       const dotEl = doc.getElementById('liveness-pill-dot');
       const labelEl = doc.getElementById('liveness-pill-label');
       let label = translate(disp.labelKey);
@@ -1831,9 +1831,22 @@
   // transport-level liveness verdict (working / idle / stalled) from
   // GET /api/sessions/:id/liveness. Kept module-level and translate-free so it is
   // unit-testable; the label is localized at render time.
-  function livenessDisplay(state) {
+  // Working may be refined by the turn stage (request / thinking / tool) the
+  // server derives from the per-lane turn timeline; `stagePrecise === false`
+  // means the lane never streams frame-level reasoning, so `request` is
+  // "requesting / thinking" rather than a pure network wait.
+  const LIVENESS_STAGE_KEYS = Object.freeze({
+    request: 'livenessRequesting', thinking: 'livenessThinking', tool: 'livenessToolRunning',
+  });
+  function livenessDisplay(state, verdict) {
     switch (state) {
-      case 'working': return { tint: 'running', dot: 'working', labelKey: 'livenessWorking' };
+      case 'working': {
+        let stage = verdict && verdict.stage;
+        if (!stage && verdict && verdict.proxyPhase === 'request') stage = 'request';
+        let labelKey = LIVENESS_STAGE_KEYS[stage] || 'livenessWorking';
+        if (stage === 'request' && verdict.stagePrecise === false) labelKey = 'livenessRequestingOrThinking';
+        return { tint: 'running', dot: 'working', labelKey };
+      }
       case 'stalled': return { tint: 'error', dot: 'stalled', labelKey: 'livenessStalled' };
       case 'idle': return { tint: 'idle', dot: 'idle', labelKey: 'livenessIdle' };
       default: return { tint: 'idle', dot: 'unknown', labelKey: 'livenessUnknown' };
