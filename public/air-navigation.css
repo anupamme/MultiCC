@@ -50,6 +50,44 @@
 .console-filter-tabs .admin-stat strong { font-size: 14px; }
 .console-filter-tabs .admin-stat small { display: none; }
 .console-filter-tabs .admin-stat.selected { color: var(--accent-strong); background: var(--blue-soft); }
+
+/* 目录首页（控制台）：顶栏搜索 + 新建，跨目录待办流，全部目录网格，底部「更多」。 */
+.console-home { min-width: 0; }
+.console-home-top { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+.console-home-top input { flex: 1; min-width: 0; }
+.console-home-actions { display: flex; flex-shrink: 0; gap: 8px; }
+.console-home-actions button { white-space: nowrap; }
+.console-flow { display: flex; flex-direction: column; gap: 18px; }
+.console-flow .console-priority { margin-bottom: 0; }
+.console-flow .console-running, .console-flow .console-recent { padding: 14px 18px; }
+.console-flow .admin-panel-head { margin-bottom: 6px; }
+.console-running-list, .console-recent-list { min-width: 0; }
+.console-recent .admin-empty, .console-running .admin-empty { padding: 6px 4px; }
+.console-mobile-slot:empty { display: none; }
+.console-directories { margin-top: 22px; }
+.console-directories .admin-panel-head { margin-bottom: 6px; }
+.admin-panel-note { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+.console-directory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 12px; }
+.console-directory-grid .directory-card { min-width: 0; display: flex; flex-direction: column; gap: 8px; cursor: grab; }
+.console-directory-grid .directory-card:active { cursor: grabbing; }
+.console-directory-grid .directory-card.is-dragging { opacity: .55; }
+.console-directory-grid .directory-card > button { flex: 1; width: 100%; min-width: 0; padding: 20px; border-radius: 16px; text-align: left; box-shadow: var(--shadow-1); }
+.console-directory-grid strong, .console-directory-grid small { display: block; overflow-wrap: anywhere; }
+.console-directory-grid strong { margin-bottom: 7px; font-size: 15px; }
+.console-directory-grid small + small { margin-top: 9px; color: #3e75ad; }
+.console-directory-grid .directory-memo { align-self: flex-end; padding: 4px 12px; color: var(--accent-strong); font-size: 12px; }
+.console-more { margin-top: 26px; border-top: 1px solid var(--hairline); }
+.console-more > summary { padding: 14px 2px 6px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.console-more-body { padding-top: 10px; }
+.console-more-body .admin-stats { margin-top: 6px; }
+@media (max-width: 760px) {
+  .console-home-top { flex-wrap: wrap; gap: 8px; }
+  .console-home-top input { flex-basis: 100%; }
+  .console-home-actions { width: 100%; }
+  .console-home-actions button { flex: 1; }
+  .console-directory-grid { grid-template-columns: 1fr; gap: 10px; }
+  .console-directories .admin-panel-note { display: none; }
+}
 .air-settings-layout { display: grid; grid-template-columns: 190px minmax(0,1fr); gap: 24px; align-items: start; }
 .air-settings-categories { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--hairline); border-radius: 14px; background: var(--panel); }
 .air-settings-categories button { border: 0; background: transparent; text-align: left; }

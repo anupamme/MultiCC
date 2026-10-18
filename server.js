@@ -1402,6 +1402,8 @@ const classifyStateMachine = createClassifyStateMachine({
   appendChatMessage: (...args) => appendChatMessage(...args),
   annotateChatTurn: (...args) => chatHistoryRuntime?.annotateTurn(...args) || [],
   getAuxRunLog: () => auxRunLog,
+  // 目录建议（「更适合另一个目录」）的清单来源；只读快照，token 截断在 task-attribution。
+  getDirectories: () => [...directories.values()],
   hasBackgroundPending: sessionName => backgroundTaskRuntime.hasProcessBackgroundTasks(sessionName),
   // P4 蒸馏：folderMemory 在下方才创建，这里闭包惰性取——写入只发生在 turn
   // 结束后，届时早已初始化完成。

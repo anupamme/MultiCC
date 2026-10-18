@@ -773,6 +773,9 @@
   <!-- 全文检索的浏览器侧（搜索框 → /api/task-board/search）。和 status-presentation
        一样是 air-admin.js / air.js 共用的能力，必须排在两者前面。 -->
   <script src="task-search.js"></script>
+  <!-- 目录首页的目录排序：与 App 共享的服务端 ui-layout（dirOrder）。控制台在
+       air-admin.js 里渲染，必须排在它前面。 -->
+  <script src="ui-layout-store.js"></script>
   <script src="air-admin.js"></script>
   <script src="qrcode.min.js"></script>
   <!-- 通知标题的唯一来源（pwa.js 的本地通知兜底也读它）。 -->

@@ -200,5 +200,45 @@ void main() {
       // duplicating them.
       expect(mergeGroupOrder(['c1', 'c2'], ['c2', 'c1']), ['c2', 'c1']);
     });
+
+    test('reorderIdsForDrop translates ReorderableListView indices', () {
+      // Dragging down one slot arrives as newIndex == oldIndex + 2; the raw
+      // index would insert *after* the slot it already occupies.
+      expect(reorderIdsForDrop(['a', 'b', 'c'], 0, 2), ['b', 'a', 'c']);
+      expect(reorderIdsForDrop(['a', 'b', 'c'], 2, 0), ['c', 'a', 'b']);
+      // Dropping back where it started is a no-op, not a save.
+      expect(reorderIdsForDrop(['a', 'b', 'c'], 1, 1), ['a', 'b', 'c']);
+      expect(reorderIdsForDrop(['a', 'b', 'c'], 1, 2), ['a', 'b', 'c']);
+      // Out-of-range indices never lose entries.
+      expect(reorderIdsForDrop(['a', 'b'], 5, 0), ['a', 'b']);
+      expect(reorderIdsForDrop(['a', 'b'], 0, 9), ['a', 'b']);
+    });
+
+    test('ManualOrderDraft hands back a rollback snapshot only when moved', () {
+      final draft = ManualOrderDraft();
+      expect(draft.order, isEmpty, reason: '还没拖过，默认顺序说了算');
+
+      // First drag freezes the whole visible column, so a later save does not
+      // rank only the dragged card and push everything else to the tail.
+      final snapshot = draft.drop(['a', 'b', 'c'], 0, 2);
+      expect(snapshot, isEmpty);
+      expect(draft.order, ['b', 'a', 'c']);
+
+      final second = draft.drop(['b', 'a', 'c'], 2, 0);
+      expect(second, ['b', 'a', 'c']);
+      expect(draft.order, ['c', 'b', 'a']);
+
+      // A no-op drag returns null and leaves the draft untouched.
+      expect(draft.drop(['c', 'b', 'a'], 1, 1), isNull);
+      expect(draft.order, ['c', 'b', 'a']);
+
+      // Saving failed: go back to the snapshot before that drag.
+      draft.rollback(second!);
+      expect(draft.order, ['b', 'a', 'c']);
+
+      // A server-confirmed arrangement replaces the local draft wholesale.
+      draft.replace(const ['x', 'y']);
+      expect(draft.order, ['x', 'y']);
+    });
   });
 }

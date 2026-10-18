@@ -24,6 +24,15 @@ const RETRIEVAL_SNIPPET_CHARS = 90;
 // inside their own list.
 const RETRIEVAL_MESSAGE_LIMIT = 3;
 
+// Directory hints share the attribution prompt, so they are on the same token
+// budget: a board can have dozens of registered directories and the model only
+// needs enough of each one to recognise it. The cap is on the list (ordered by
+// the caller), not on how many directories the host has.
+const DIRECTORY_HINT_LIMIT = 30;
+const DIRECTORY_NAME_CHARS = 40;
+const DIRECTORY_PATH_CHARS = 48;
+const DIRECTORY_REASON_CHARS = 240;
+
 const PHASE_ALIASES = Object.freeze({
   planning: 'planning', '规划中': 'planning',
   implementing: 'implementing', '实现中': 'implementing',
@@ -36,6 +45,52 @@ function cleanName(value) {
   const name = String(value || '').trim().replace(/^[-—]+$/, '');
   if (name.length < 2) return '';
   return name.slice(0, 60);
+}
+
+// The prompt only needs the id, a recognisable name, and the tail of the path.
+// A full path would blow the budget on a shared prefix every directory has.
+function directoryTail(value) {
+  const parts = String(value || '').split(/[\\/]+/).filter(Boolean);
+  return parts.slice(-2).join('/').slice(-DIRECTORY_PATH_CHARS);
+}
+
+function directoryEntries(directories) {
+  const value = directories && !Array.isArray(directories) && typeof directories.values === 'function'
+    ? [...directories.values()] : directories;
+  const source = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const rows = [];
+  for (const dir of source) {
+    const id = String(dir?.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    rows.push({
+      id,
+      name: String(dir?.name || '').trim().slice(0, DIRECTORY_NAME_CHARS),
+      tail: directoryTail(dir?.path),
+    });
+    if (rows.length >= DIRECTORY_HINT_LIMIT) break;
+  }
+  return rows;
+}
+
+// Parsing is the trust boundary: the model may only name a directory that was
+// actually offered, it may never point at the task's current directory, and a
+// continuation of the same task never carries a hint at all. Anything else is
+// dropped rather than reported as a suggestion the user would have to reject.
+function parseDirectoryHint(value, {
+  allowedDirIds = null, currentDirId = null, relation = 'same', firstTurn = false,
+} = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (relation !== 'new' && firstTurn !== true) return null;
+  const allowed = allowedDirIds == null ? null : new Set([...allowedDirIds].map(String));
+  if (!allowed || !allowed.size) return null;
+  const dirId = String(value.dirId || '').trim();
+  const current = String(currentDirId || '').trim();
+  if (!dirId || (current && dirId === current) || !allowed.has(dirId)) return null;
+  const reason = String(value.reason || '').trim().slice(0, DIRECTORY_REASON_CHARS);
+  if (!reason) return null;
+  return { dirId, reason };
 }
 
 function stripThinking(text) {
@@ -59,7 +114,10 @@ function parseJsonObject(text) {
   }
 }
 
-function parseTaskAttribution(text, { fallbackTaskId = null, allowedTaskIds = null } = {}) {
+function parseTaskAttribution(text, {
+  fallbackTaskId = null, allowedTaskIds = null, allowedDirIds = null,
+  currentDirId = null, firstTurn = false,
+} = {}) {
   const object = parseJsonObject(text);
   if (object) {
     const relation = String(object.relation || '').toLowerCase() === 'new' ? 'new' : 'same';
@@ -76,6 +134,9 @@ function parseTaskAttribution(text, { fallbackTaskId = null, allowedTaskIds = nu
       && requestedRelatedTaskId !== ownId
       && (!allowed || allowed.has(requestedRelatedTaskId))
       ? requestedRelatedTaskId : null;
+    const directoryHint = parseDirectoryHint(object.directoryHint, {
+      allowedDirIds, currentDirId, relation, firstTurn,
+    });
     return {
       taskName: cleanName(object.taskName || object.goal || object.title),
       phase: PHASE_ALIASES[String(object.phase || '').trim()] || null,
@@ -91,6 +152,9 @@ function parseTaskAttribution(text, { fallbackTaskId = null, allowedTaskIds = nu
         separation: { title: cleanName(object.splitTaskName),
           reason: String(object.relevanceReason || '').trim().slice(0, 240) },
       } : {}),
+      // Absent, not null, when there is no valid hint: replayed verdicts and
+      // existing readers keep the exact shape they already handle.
+      ...(directoryHint ? { directoryHint } : {}),
     };
   }
 
@@ -279,7 +343,7 @@ function retrieveRelatedTasks(board, {
 
 function buildTaskAttributionSystemPrompt({
   recentTasks = [], relatedTasks = [], currentTaskId = null, provisionalTaskId = null,
-  identityLocked = false,
+  identityLocked = false, directories = [], currentDirId = null, firstTurn = false,
 } = {}) {
   const known = recentTasks.length
     ? recentTasks.map(task => `- ${task.taskId}: ${task.taskName || '（名称待提取）'}`).join('\n')
@@ -296,6 +360,22 @@ function buildTaskAttributionSystemPrompt({
       ? `${provisionalTaskId} 是本轮候选 ID：若目标不同输出 relation=new/taskId=null（候选 ID 会升格）；若新任务由某个旧任务衍生或与其属于同一工作主题，把该旧 ID 填入 relatedTaskId；若完全无关则 relatedTaskId=null。若是同一任务续作，relation=same 必须选择最近任务（或内容相关任务）中另一个既有 canonical taskId，relatedTaskId=null。`
       : '';
   const relevanceRule = '另外独立判断最新一轮与当前聊天窗口前序工作的关联度 contextRelevance（high|medium|low）。即使任务身份锁定，也必须判断关联度；锁定只约束 taskId/relation。最新一轮明确转向与前序不同的交付目标时判 low——同一仓库、同一产品内的不同功能或问题也算不同交付目标；只有同一交付目标的继续/追问/纠正/状态询问，或首轮无前序工作，才不判 low；拿不准时用 medium。low 时 splitTaskName 给出新目标的简短名称，relevanceReason 用一句话说明区别，taskName 保留原任务名称；其余两字段填 null。这只是建议，只有用户确认才会分离。';
+  // Directory hints are a suggestion with a narrower gate than separation: only
+  // a brand-new task (or a conversation's first turn) may carry one. An
+  // in-flight task must never be interrupted by a "move it" prompt, so a
+  // continuation always answers null. The list is capped and truncated above;
+  // this rule is what keeps the model from naming a directory the host did not
+  // offer or the one the task already lives in.
+  const directoryRows = directoryEntries(directories);
+  const currentDir = String(currentDirId || '').trim();
+  const directoryList = directoryRows.length
+    ? `\n\n已注册目录（id: 名称（路径末段））：\n${directoryRows.map(dir =>
+      `- ${dir.id}: ${dir.name || '（未命名）'}${dir.tail ? `（${dir.tail}）` : ''}${dir.id === currentDir ? '（当前）' : ''}`).join('\n')}`
+    : '';
+  const directoryGate = firstTurn ? 'relation=new 或本轮是首轮工作' : 'relation=new';
+  const directoryRule = directoryRows.length
+    ? `${directoryList}\n\n判断目录：只有本轮明确属于另一个已注册目录（例如代码/交付物属于另一个项目仓库）时，才填 directoryHint={"dirId":"清单里的某个 id","reason":"一句话说明为什么更适合该目录"}；拿不准必须填 null。不得指向当前目录${currentDir ? `（${currentDir}）` : ''}，dirId 必须来自上面的清单。只有${directoryGate}时才产出；同一任务续作一律填 null。这只是给用户的迁移建议，不会自动移动任务。`
+    : '判断目录：本轮没有可用的目录清单，directoryHint 一律填 null。';
   const relatedRule = relatedTasks.length
     ? `\n\n「内容相关任务」是按最新一轮内容从整个任务板和全部历史对话里检索出来的，可能包含本次会话从没提过的任务。命中只说明材料/主题相关：若最新一轮确实是其中某个任务的继续、追问或修订，可以 relation=same 并填它的 id；若它与最新一轮属于同一工作主题但交付物不同，relation=new 并把它的 id 填进 relatedTaskId；判定不了就忽略它。不要仅因命中就复用它的 taskId。`
     : '';
@@ -315,7 +395,7 @@ function buildTaskAttributionSystemPrompt({
   // phase（推进到哪一步）不是同一个判断，允许与 phase 不同——这正是把它独立成
   // 一个输出的意义（如 phase=verifying 但只差用户一句确认 → interact）。
   const goalStateRule = '随后独立判断 goalState（achieved|interact|null）——目标这件事成没成，不是推进到哪一步：沿用①的进度读数，当前任务段的每条要求都有可验证结果且没有遗留下一步填 achieved；目标明确但有要求没落地、或需要用户回答/确认/决策才能继续填 interact；没有明确目标或判断不了填 null。它允许与 phase 不同（phase=verifying 但只差用户一句确认就是 interact；助手口头说完成而记录里查无结果的不能给 achieved）。';
-  return `你是任务归集器，只负责给消息归属任务，不负责判断 turn 的运行状态。\n\n${stateRule}\n\n最近任务：\n${known}${related}${relatedRule}\n当前任务ID：${currentTaskId || '无'}${identityRule ? `\n${identityRule}` : ''}\n\n判断最新一轮是真正的新任务，还是最近某个任务的继续、追问或修订。同一交付目标的继续才复用原任务名和 taskId。产生独立交付物、子任务或衍生任务时 relation=new，保留新任务身份；若它与某个旧任务属于同一工作主题，用 relatedTaskId 指向该旧任务，仅供任务面板归组。relation=same 时也可填 relatedTaskId 表示弱关联（同主题分组），但不能指向当前任务自己。\n\n${nameRule}\n\n${goalStateRule}\n\n${relevanceRule}\n\n同时提炼 memory_candidate：本轮对话中值得沉淀进任务长期记忆的稳定事实、决策或结论（接口约定、踩坑、方案取舍），一句话、不含过程描述；没有值得记的就填 null。\n\n只输出一个 JSON 对象：\n{"taskName":"简短任务名","phase":"planning|implementing|verifying|wrapping|done","goalState":"achieved|interact|null","relation":"same|new","taskId":"same 时填写上面的既有 ID；new 时为 null","relatedTaskId":"相关时填写既有 ID；否则 null","contextRelevance":"high|medium|low","splitTaskName":null,"relevanceReason":null,"memory_candidate":"值得记的一条结论，或 null"}\n不要输出状态字母、解释或 Markdown。`;
+  return `你是任务归集器，只负责给消息归属任务，不负责判断 turn 的运行状态。\n\n${stateRule}\n\n最近任务：\n${known}${related}${relatedRule}\n当前任务ID：${currentTaskId || '无'}${identityRule ? `\n${identityRule}` : ''}\n\n判断最新一轮是真正的新任务，还是最近某个任务的继续、追问或修订。同一交付目标的继续才复用原任务名和 taskId。产生独立交付物、子任务或衍生任务时 relation=new，保留新任务身份；若它与某个旧任务属于同一工作主题，用 relatedTaskId 指向该旧任务，仅供任务面板归组。relation=same 时也可填 relatedTaskId 表示弱关联（同主题分组），但不能指向当前任务自己。\n\n${nameRule}\n\n${goalStateRule}\n\n${relevanceRule}\n\n${directoryRule}\n\n同时提炼 memory_candidate：本轮对话中值得沉淀进任务长期记忆的稳定事实、决策或结论（接口约定、踩坑、方案取舍），一句话、不含过程描述；没有值得记的就填 null。\n\n只输出一个 JSON 对象：\n{"taskName":"简短任务名","phase":"planning|implementing|verifying|wrapping|done","goalState":"achieved|interact|null","relation":"same|new","taskId":"same 时填写上面的既有 ID；new 时为 null","relatedTaskId":"相关时填写既有 ID；否则 null","contextRelevance":"high|medium|low","splitTaskName":null,"relevanceReason":null,"directoryHint":{"dirId":"清单里的目录 id","reason":"为什么更适合该目录"},"memory_candidate":"值得记的一条结论，或 null"}\n不要输出状态字母、解释或 Markdown。`;
 }
 
 function buildTaskAttributionConversation(history, reply = '') {
@@ -340,11 +420,14 @@ module.exports = {
   attributionQueryText,
   buildTaskAttributionConversation,
   buildTaskAttributionSystemPrompt,
+  directoryEntries,
   messageRelatedTasks,
+  parseDirectoryHint,
   parseTaskAttribution,
   recentTaskContext,
   retrieveRelatedTasks,
   sessionTaskMap,
+  DIRECTORY_HINT_LIMIT,
   RETRIEVAL_LIMIT,
   RETRIEVAL_MESSAGE_LIMIT,
   RETRIEVAL_RELATIVE_FLOOR,

@@ -34,19 +34,30 @@
     await context.refresh?.();
   }
 
-  // 让 list 里带 data-dir-id 的行可以拖着换位。每次 render 都会造一份新列表，
-  // 所以这里不做去重登记，直接在新元素上挂。
-  function sortable(list, context, rowSelector = '[data-dir-id]') {
-    if (!list || !context || typeof context.api !== 'function') return;
+  // 让 list 里带 data-dir-id 的行可以拖着换位。行是每次 render 新建的，所以行级
+  // 监听直接挂；列表级的 dragover/drop 只挂一次（同一张网格会被反复重画，重复挂
+  // 会让一次拖动插入好几次）。
+  //
+  // options.commit(ids)：自定义落盘方式。控制台目录首页用与 App 共享的
+  // ui-layout 语义（PUT /api/ui-layout/dir-order），目录切换浮层仍走旧的
+  // /api/directories/order —— 两者共用同一套拖拽交互，但存的不是同一份数据。
+  function sortable(list, context, rowSelector = '[data-dir-id]', options = {}) {
+    if (!list || !context) return;
+    const commit = typeof options.commit === 'function'
+      ? options.commit
+      : (typeof context.api === 'function' ? ids => commitOrder(context, ids) : null);
+    if (!commit) return;
     const order = () => [...list.querySelectorAll(rowSelector)].map(row => row.dataset.dirId);
-    let dragging = null;
-    let before = '';
+    const state = list.__dirSortState || (list.__dirSortState = { dragging: null, before: '' });
+    state.rowSelector = rowSelector;
+    state.context = context;
+    state.commit = commit;
     for (const row of list.querySelectorAll(rowSelector)) {
       row.draggable = true;
       row.title = translate('airDirDragHint');
       row.addEventListener('dragstart', event => {
-        dragging = row;
-        before = order().join(',');
+        state.dragging = row;
+        state.before = order().join(',');
         row.classList.add('is-dragging');
         list.classList.add('is-sorting');
         if (event.dataTransfer) {
@@ -57,24 +68,30 @@
       row.addEventListener('dragend', () => {
         row.classList.remove('is-dragging');
         list.classList.remove('is-sorting');
-        const moved = dragging;
-        dragging = null;
+        const moved = state.dragging;
+        state.dragging = null;
         // 拖的中途快照刷新把整栏重画了：这份旧列表已不在页面上，它的顺序不作数。
         if (!moved || !list.isConnected) return;
         const ids = order();
-        if (ids.join(',') !== before) void commitOrder(context, ids);
+        if (ids.join(',') !== state.before) void state.commit(ids);
       });
     }
+    if (list.__dirSortBound) return;
+    list.__dirSortBound = true;
     list.addEventListener('dragover', event => {
-      if (!dragging) return;
+      const current = list.__dirSortState;
+      if (!current || !current.dragging) return;
+      const selector = current.rowSelector;
       event.preventDefault();
-      const over = event.target && event.target.closest ? event.target.closest(rowSelector) : null;
-      if (!over || over === dragging || !list.contains(over)) return;
+      const over = event.target && event.target.closest ? event.target.closest(selector) : null;
+      if (!over || over === current.dragging || !list.contains(over)) return;
       const box = over.getBoundingClientRect();
       const after = event.clientY > box.top + box.height / 2;
-      list.insertBefore(dragging, after ? over.nextSibling : over);
+      list.insertBefore(current.dragging, after ? over.nextSibling : over);
     });
-    list.addEventListener('drop', event => { if (dragging) event.preventDefault(); });
+    list.addEventListener('drop', event => {
+      if (list.__dirSortState?.dragging) event.preventDefault();
+    });
   }
 
   // Click, keyboard and touch share one project menu.

@@ -77,3 +77,75 @@ List<String> mergeGroupOrder(List<String> stored, List<String> groupOrder) {
   final inGroup = groupOrder.toSet();
   return [...groupOrder, ...stored.where((id) => !inGroup.contains(id))];
 }
+
+/// 把 `ReorderableListView` 的落点翻译成完整的新顺序。
+///
+/// `onReorder(oldIndex, newIndex)` 的 [newIndex] 是**移走之前**的插入位：向下
+/// 拖时它比最终位置大 1（Flutter 文档里那句 `newIndex -= 1`）。[reorderAround]
+/// 是按「目标项」定义的，所以这里先把偏移抹平，再交给同一套语义 —— 两端
+/// （目录、会话）的规则因此不会分叉。
+///
+/// 越界、拖回原位（包括 `newIndex == oldIndex + 1` 这种相邻往下拖）原样返回；
+/// 调用方据「有没有变」决定要不要发保存请求。
+List<String> reorderIdsForDrop(
+  List<String> visibleIds,
+  int oldIndex,
+  int newIndex,
+) {
+  if (oldIndex < 0 || oldIndex >= visibleIds.length) {
+    return List<String>.from(visibleIds);
+  }
+  final targetIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+  if (targetIndex == oldIndex ||
+      targetIndex < 0 ||
+      targetIndex >= visibleIds.length) {
+    return List<String>.from(visibleIds);
+  }
+  return reorderAround(
+    visibleIds,
+    visibleIds[oldIndex],
+    visibleIds[targetIndex],
+  );
+}
+
+/// 一次拖拽的乐观状态：屏幕先落到新顺序，保存失败时按 [drop] 给出的快照回滚。
+///
+/// 顺序只在用户拖过之后才变成「完整列表」—— 见 [reorderAround] 的注释：第一次
+/// 拖拽要把当前看到的整列固化下来，否则未排过的项会全挤到后面。未拖过时
+/// [order] 为空，调用方照旧用默认顺序。
+class ManualOrderDraft {
+  ManualOrderDraft([Iterable<String> order = const []])
+    : _order = List<String>.from(order);
+
+  List<String> _order;
+
+  /// 当前的完整手动顺序；空 = 还没拖过（默认顺序说了算）。
+  List<String> get order => List<String>.unmodifiable(_order);
+
+  /// 把这次拖拽落成完整顺序，返回**回滚快照**。没有实际移动时返回 null。
+  List<String>? drop(List<String> visibleIds, int oldIndex, int newIndex) {
+    final next = reorderIdsForDrop(visibleIds, oldIndex, newIndex);
+    if (_sameIds(next, visibleIds)) return null;
+    final previous = List<String>.from(_order);
+    _order = next;
+    return previous;
+  }
+
+  /// 用加载到（或服务端定稿）的排布覆盖本地草稿。
+  void replace(Iterable<String> order) {
+    _order = List<String>.from(order);
+  }
+
+  /// 保存失败：回到 [drop] 返回的快照。
+  void rollback(List<String> snapshot) {
+    _order = List<String>.from(snapshot);
+  }
+}
+
+bool _sameIds(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) return false;
+  }
+  return true;
+}

@@ -20,6 +20,9 @@
 
   let _layout = { dirOrder: [], sessionOrder: {} };
   let _loaded = null;
+  // 最近一次保存失败的原因。`put` 只回一个布尔，调用方要把「为什么没保存」
+  // 说给用户听，所以失败详情在同一个模块里留一份（成功即清空）。
+  let _lastError = '';
 
   function adopt(layout) {
     _layout = {
@@ -82,6 +85,10 @@
   // and the request settles behind it. A failed write leaves the user looking at
   // an arrangement the server does not have, so it is logged and the server's
   // answer (when it comes) wins.
+  //
+  // Returns whether the server kept the new order. Callers that painted
+  // optimistically use that to tell "saved" from "roll back and reload" — silent
+  // failure used to leave the screen showing an order that vanished on refresh.
   async function put(url, order, apply) {
     apply();
     try {
@@ -91,10 +98,21 @@
         body: JSON.stringify({ order }),
       });
       const body = await res.json();
-      if (res.ok && body && body.layout) adopt(body.layout);
-      else console.warn('[ui-layout] server rejected the new order:', (body && body.error) || res.status);
+      if (res.ok && body && body.layout) {
+        // The server prunes ids it does not know; adopt its copy so the next
+        // render matches what was actually stored.
+        adopt(body.layout);
+        _lastError = '';
+        return true;
+      }
+      const reason = (body && (body.error || body.message)) || `HTTP ${res.status}`;
+      _lastError = String(reason);
+      console.warn('[ui-layout] server rejected the new order:', reason);
+      return false;
     } catch (err) {
+      _lastError = String(err && err.message || err || '');
       console.warn('[ui-layout] save failed:', err && err.message);
+      return false;
     }
   }
 
@@ -153,6 +171,6 @@
 
   root.MultiCCUiLayout = {
     ready, load, dirOrder, sessionOrder, saveDirOrder, saveSessionOrder,
-    applyOrder, reorderAround, mergeGroupOrder,
+    applyOrder, reorderAround, mergeGroupOrder, lastError: () => _lastError,
   };
 })(typeof window !== 'undefined' ? window : null);

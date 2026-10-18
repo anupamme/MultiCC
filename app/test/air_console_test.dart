@@ -16,9 +16,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 的路由：没有 Scaffold，也没有自己的 AppBar。数据仍然只有两份 —— `/api/air`
 /// 那份快照（任务 + 目录）和 `/api/cron`。
 ///
-/// 这一页的形状照 Web `public/air-admin.js` 的 `renderOverview`：五个可点选的统计
-/// 格 → 一行小字 → 点开哪一格就在原地长出来的清单 → 工作目录 → AI Assistant →
-/// 工具格。默认什么都不展开：第一眼是数字，不是一堵清单墙。
+/// 这一页的形状照 Web 新的「目录首页、任务优先」方向：跨目录任务流（需要你处理 /
+/// 正在运行 / 最近使用）→ 工作目录（可长按拖拽排序）→ AI Assistant → 底部「更多」
+/// （五格统计 → 小字 → 点开哪一格就在原地长出来的清单 → 工具格）。统计与工具默认
+/// 收起：第一眼是任务与目录，不是一堵数字墙。
 MockClient _client(
   List<String> requests, {
   List<Map<String, dynamic>>? tasks,
@@ -31,12 +32,47 @@ MockClient _client(
   Map<String, dynamic>? cliAvailability,
   bool installSpecsFail = false,
   List<String>? todos,
+  List<String>? dirOrder,
+  bool dirOrderFails = false,
+  List<String>? uiLayoutBodies,
 }) => MockClient((request) async {
   const headers = {'content-type': 'application/json; charset=utf-8'};
   final path = request.url.path;
   // 记录带查询串的完整路径：控制台那一份检索是**跨目录**的，它不传 dirId 这件事
   // 只能从请求本身看出来（见「服务端命中」那条用例）。
   requests.add(request.url.query.isEmpty ? path : '$path?${request.url.query}');
+  // 目录顺序与 Web 共用服务端 ui-layout.json。控制台起页读一次，拖拽时写一次。
+  if (path == '/api/ui-layout') {
+    return http.Response(
+      jsonEncode({
+        'ok': true,
+        'layout': {
+          'dirOrder': dirOrder ?? const <String>[],
+          'sessionOrder': const <String, List<String>>{},
+        },
+      }),
+      200,
+      headers: headers,
+    );
+  }
+  if (path == '/api/ui-layout/dir-order') {
+    uiLayoutBodies?.add(request.body);
+    if (dirOrderFails) return http.Response('nope', 500);
+    final next = ((jsonDecode(request.body) as Map)['order'] as List)
+        .cast<String>();
+    dirOrder = next;
+    return http.Response(
+      jsonEncode({
+        'ok': true,
+        'layout': {
+          'dirOrder': next,
+          'sessionOrder': const <String, List<String>>{},
+        },
+      }),
+      200,
+      headers: headers,
+    );
+  }
   if (path == '/api/cron') {
     if (schedulesFail) return http.Response('nope', 500);
     return http.Response(
@@ -267,8 +303,26 @@ Finder _tile(String id) => find.byKey(ValueKey('air-console-tile-$id'));
 Finder _tileValue(String id, String value) =>
     find.descendant(of: _tile(id), matching: find.text(value));
 
+/// 统计格、背景小字和工具格都收在底部「更多」里；点开它，那些入口才进渲染树。
+Future<void> _expandMore(WidgetTester tester) async {
+  if (find
+      .byKey(const ValueKey('air-console-more-body'))
+      .evaluate()
+      .isNotEmpty) {
+    return;
+  }
+  await tester.ensureVisible(find.byKey(const ValueKey('air-console-more')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('air-console-more')));
+  await tester.pumpAndSettle();
+}
+
 /// 展开某一格。清单默认是收起的 —— 控制台第一眼只看数字。
 Future<void> _openTile(WidgetTester tester, String id) async {
+  await _expandMore(tester);
+  // 「更多」在整页列表的底部：手机画布上它可能还没滚进视口，先滚到再点。
+  await tester.ensureVisible(_tile(id));
+  await tester.pumpAndSettle();
   await tester.tap(_tile(id));
   await tester.pumpAndSettle();
 }
@@ -328,10 +382,15 @@ void main() {
 
     await tester.pumpWidget(_console(settings: settings, client: client));
     await tester.pumpAndSettle();
+    // 「更多」默认收起：第一眼是任务流与目录，不是一堵数字/清单墙。
+    expect(find.byKey(const ValueKey('air-console-more-body')), findsNothing);
+    expect(_row('t1'), findsNothing);
+    await _expandMore(tester);
 
     // 两份数据各拉一次，控制台不自己造统计口径；第三趟只问首启卡该不该亮
-    // （aux 配没配），不参与任何一个数字。
+    // （aux 配没配），不参与任何一个数字。目录顺序另有一趟 ui-layout。
     expect(requests, [
+      '/api/ui-layout',
       '/api/air',
       '/api/external-fleets',
       '/api/cron',
@@ -339,6 +398,7 @@ void main() {
     ]);
 
     // 「进行中」只认注册表说在转的那一个状态：r1 在跑，t1/t2/t3 都不在跑。
+    // 统计与工具收进了「更多」，展开后仍照旧工作。
     expect(_tileValue('running', '1'), findsOneWidget);
     expect(find.text('1 个目录正在跑'), findsOneWidget);
     // 「等我回复」和「异常」是两格：一个有人等我回答，一个是跑出错了。
@@ -354,10 +414,10 @@ void main() {
     expect(find.text('未归档 · 共 7 条记录，可搜索'), findsOneWidget);
 
     // 目录数与定时任务数降成一行小字：它们是背景信息，不占读数带。
-    expect(find.text('2 个工作目录'), findsOneWidget);
+    expect(find.text('2 个项目'), findsOneWidget);
     expect(find.text('定时任务 2/3 条启用'), findsOneWidget);
 
-    // 默认什么都不展开：第一眼是数字，不是一堵清单墙。
+    // 展开「更多」不等于展开某一格：清单仍然收起。
     expect(find.byKey(const ValueKey('air-console-collapse')), findsNothing);
     expect(_row('t1'), findsNothing);
 
@@ -383,6 +443,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     expect(_tileBorder(tester, 'waiting'), AppColors.line);
 
@@ -434,27 +495,106 @@ void main() {
     client.close();
   });
 
-  testWidgets('分区的先后：谁在等我 → 我有哪些目录 → 工具格', (tester) async {
+  testWidgets('分区的先后：任务流 → 我有哪些目录 → 更多里的工具格', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final client = _client(<String>[]);
 
     await tester.pumpWidget(_console(settings: settings, client: client));
     await tester.pumpAndSettle();
-    await _openTile(tester, 'all');
 
     // 拿 eyebrow 定位（「工作目录」这几个字别处也有，用标题会撞上）。
     double sectionY(String eyebrow) => tester.getTopLeft(find.text(eyebrow)).dy;
     expect(
-      sectionY('WORK DIRECTORIES'),
-      greaterThan(sectionY('ACROSS ALL WORKSPACES')),
-      reason: '「工作目录」在展开的清单后面',
+      sectionY('TASK FIRST'),
+      lessThan(sectionY('WORK DIRECTORIES')),
+      reason: '上半区先回答「有什么在等我」，目录在它后面',
     );
+    expect(
+      find.text('SYSTEM TOOLS'),
+      findsNothing,
+      reason: '工具格收在「更多」里，没展开就不该在首屏',
+    );
+    await _expandMore(tester);
     expect(
       sectionY('WORK DIRECTORIES'),
       lessThan(sectionY('SYSTEM TOOLS')),
       reason: '工具格仍在最后',
     );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    client.close();
+  });
+
+  testWidgets('任务流：需要你处理 / 正在运行 / 最近使用，各自按更新时间倒序且不重复', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final opened = <String>[];
+    final client = _client(<String>[], tasks: _fiveTileTasks());
+
+    await tester.pumpWidget(
+      _console(
+        settings: settings,
+        client: client,
+        onOpenTask: (task) => opened.add(task.id),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder streamRow(String section, String id) =>
+        find.byKey(ValueKey('air-console-stream-$section-$id'));
+    double y(Finder finder) => tester.getTopLeft(finder).dy;
+
+    // 分区顺序：先要动手的，再在跑的，最后是其余的最近使用。
+    expect(
+      y(find.text('需要你处理')),
+      lessThan(y(find.text('正在运行'))),
+      reason: '要我动手的排在正在运行之前',
+    );
+    expect(
+      y(find.text('正在运行')),
+      lessThan(y(find.text('最近使用'))),
+      reason: '正在运行排在最近使用之前',
+    );
+
+    // 待办按 updatedAt 倒序：t2（出错）比 t1（等回答）新。
+    expect(streamRow('attention', 't2'), findsOneWidget);
+    expect(streamRow('attention', 't1'), findsOneWidget);
+    expect(
+      y(streamRow('attention', 't2')),
+      lessThan(y(streamRow('attention', 't1'))),
+    );
+
+    // 一条任务只落一个分区。
+    expect(streamRow('running', 'r1'), findsOneWidget);
+    expect(streamRow('recent', 'r1'), findsNothing);
+    expect(streamRow('recent', 't1'), findsNothing);
+
+    // 最近使用里也不放归档任务，并且按更新时间倒序。
+    expect(streamRow('recent', 'n1'), findsOneWidget);
+    expect(streamRow('recent', 't3'), findsOneWidget);
+    expect(streamRow('recent', 'n2'), findsOneWidget);
+    expect(streamRow('recent', 't4'), findsNothing, reason: '归档任务不凑热闹');
+    expect(
+      y(streamRow('recent', 'n1')),
+      lessThan(y(streamRow('recent', 't3'))),
+    );
+    expect(
+      y(streamRow('recent', 't3')),
+      lessThan(y(streamRow('recent', 'n2'))),
+    );
+
+    // 每行带所属目录名，点一下直达任务。
+    expect(
+      find.descendant(
+        of: streamRow('attention', 't1'),
+        matching: find.textContaining('工作目录 A'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(streamRow('attention', 't1'));
+    await tester.pumpAndSettle();
+    expect(opened, ['t1']);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     client.close();
@@ -725,6 +865,66 @@ void main() {
     client.close();
   });
 
+  testWidgets('目录长按拖拽排序：先乐观换位，再把完整顺序写到服务端 ui-layout', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final bodies = <String>[];
+    final client = _client(<String>[], uiLayoutBodies: bodies);
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+
+    double dirY(String id) =>
+        tester.getTopLeft(find.byKey(ValueKey('air-console-dir-$id'))).dy;
+    expect(dirY('d1'), lessThan(dirY('d2')), reason: '接口默认顺序 d1 在前');
+
+    // 把第一项拖到第二项之后。ReorderableListView 的 newIndex 是「移走前」的
+    // 插入位，所以向下拖一格是 (0, 2)，不是 (0, 1)。
+    final list = tester.widget<ReorderableListView>(
+      find.byType(ReorderableListView),
+    );
+    list.onReorder(0, 2);
+    await tester.pumpAndSettle();
+
+    expect(jsonDecode(bodies.single)['order'], [
+      'd2',
+      'd1',
+    ], reason: '保存的是整列顺序，不是只报被拖的那一个');
+    expect(dirY('d2'), lessThan(dirY('d1')), reason: '乐观更新立刻换位');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    client.close();
+  });
+
+  testWidgets('目录排序保存失败：顺序回滚到拖之前，并明确提示', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final bodies = <String>[];
+    final client = _client(
+      <String>[],
+      dirOrderFails: true,
+      uiLayoutBodies: bodies,
+    );
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+
+    double dirY(String id) =>
+        tester.getTopLeft(find.byKey(ValueKey('air-console-dir-$id'))).dy;
+    final list = tester.widget<ReorderableListView>(
+      find.byType(ReorderableListView),
+    );
+    list.onReorder(0, 2);
+    await tester.pumpAndSettle();
+
+    expect(bodies, hasLength(1), reason: '失败也要真的发过请求');
+    expect(dirY('d1'), lessThan(dirY('d2')), reason: '失败回滚到原顺序');
+    expect(find.textContaining('保存目录顺序失败'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    client.close();
+  });
+
   testWidgets('工具格五格各去各的地方，AI Assistant 走宿主给的那条', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
@@ -743,6 +943,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     await tester.tap(find.byKey(const ValueKey('air-console-ai-assistant')));
     await tester.pumpAndSettle();
@@ -787,6 +988,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     await tester.tap(find.byKey(const ValueKey('air-console-tool-schedules')));
     await tester.pumpAndSettle();
@@ -808,9 +1010,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // 读不到就说读不到，不拿 0 去充数 —— 0 条启用和「不知道有几条」是两件事。
+    await _expandMore(tester);
     expect(find.text('定时任务读取失败：请刷新 Air 页面后重试。'), findsOneWidget);
     expect(find.text('定时任务 0/0 条启用'), findsNothing);
     // 主体照常：任务和目录才是这一页的主体。
+    await _expandMore(tester);
     expect(_tileValue('waiting', '1'), findsOneWidget);
     await _openTile(tester, 'waiting');
     expect(_row('t1'), findsOneWidget);
@@ -866,6 +1070,7 @@ void main() {
 
     await tester.pumpWidget(_console(settings: settings, client: client));
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     expect(_tileValue('waiting', '0'), findsOneWidget);
     expect(find.text('当前没有要处理的事'), findsOneWidget);
@@ -930,6 +1135,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     // 两格加起来仍是 urgent 那个总数（7）；「等我回复」这一格只放等回答的三条，跑出
     // 错的四条归「异常」那一格。
@@ -1165,6 +1371,7 @@ void main() {
 
     await tester.pumpWidget(_console(settings: settings, client: client));
     await tester.pumpAndSettle();
+    await _expandMore(tester);
 
     final card = tester.getSize(_tile('all'));
     // 钉住「确实压扁了」，不钉死具体数值 —— 那会在下次微调时变成噪声。

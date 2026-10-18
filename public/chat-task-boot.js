@@ -98,6 +98,19 @@ function mountTaskAttribution() {
     // 手选多轮的排队行与归属建议同屏：关掉面板也还能找回来并取消。
     loadOperations: shellId => chatApi.json(withToken(
       `/api/task-shells/${encodeURIComponent(shellId)}/task-operations`)),
+    // 「这个任务更适合放在某目录」的目录名来自页面已有的目录清单，不另造数据源。
+    loadDirectories: () => chatApi.json(withToken('/api/directories')),
+    // 迁移成功后的落点：任务已经属于新目录，刷新历史后请外壳换到新目录
+    // （Air 里是父窗口的地址；独立聊天页直接落到 /air）。先让成功提示露个脸。
+    onRelocated: ({ dirId, taskId }) => {
+      void refreshShellHistory();
+      const url = `/air?dir=${encodeURIComponent(dirId)}&task=${encodeURIComponent(taskId)}`;
+      let target = null;
+      try { target = window.parent && window.parent !== window ? window.parent.location : null; } catch (_) { target = null; }
+      setTimeout(() => {
+        try { (target || window.location).replace(url); } catch (_) { window.location.href = url; }
+      }, 1200);
+    },
     makeId: () => newClientMsgId(),
     // 独立继续是写路径：确认后由服务端持有请求，页面只是发起者。
     confirmContinue: message => _chatConfirm(message, { okText: tt('taskAttributionContinue') }),

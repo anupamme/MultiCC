@@ -725,6 +725,16 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/task_directory_hint_prompt_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
+      "path": "app/test/task_directory_hint_test.dart",
+      "tier": "core",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/task_graph_screen_test.dart",
       "tier": "other",
       "lane": "flutter"
@@ -2015,6 +2025,15 @@
       "path": "tests/test-chat-stream.js",
       "tier": "other",
       "lane": "live"
+    },
+    {
+      "path": "tests/test-chat-task-attribution-directory-hint.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:task-shells"
+      ]
     },
     {
       "path": "tests/test-chat-task-attribution.js",
@@ -4787,6 +4806,15 @@
       "owner": "npm:test:contracts",
       "entrypoints": [
         "npm:test:contracts"
+      ]
+    },
+    {
+      "path": "tests/test-task-attribution-directory-hint.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:task-first"
       ]
     },
     {
