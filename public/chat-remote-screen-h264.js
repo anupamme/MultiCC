@@ -27,6 +27,7 @@
   };
   const MODIFIERS = [0xffe1, 0xffe3, 0xffe9, 0xffe7];
   const P2P_OPEN_TIMEOUT_MS = 10000;
+  const HOVER_MS = 33;
   const P2P_RETRY_MS = [5000, 15000, 60000];
 
   function keysymOf(ev) {
@@ -59,6 +60,9 @@
       this._lastXY = [0, 0];
       this._held = new Set();
       this._lastWheel = 0;
+      this._lastHover = 0;
+      this._hoverTimer = null;
+      this._hoverXY = null;
       this.stats = { frames: 0, bytes: 0, dropped: 0 };
       this.transport = 'relay';
       this._pc = null;
@@ -356,13 +360,37 @@
         this._canvas.focus({ preventScroll: true });
         try { this._canvas.setPointerCapture(ev.pointerId); } catch {}
       }
-      // 不按键的悬停移动 Agent 不处理，不发。
-      if (ev.type === 'pointermove' && !mask && !this._mask) return;
+      // 不按键的悬停移动：只有鼠标才有（触屏没有悬停），限频发给 Agent 带动真实光标，
+      // 画面里的光标才会跟手（视频里画的就是远端光标，本页不画本地光标）。
+      if (ev.type === 'pointermove' && !mask && !this._mask) {
+        if (ev.pointerType === 'mouse') this._hover(this._point(ev));
+        return;
+      }
       const [x, y] = this._point(ev);
       this._lastXY = [x, y];
       this._mask = ev.type === 'pointercancel' ? 0 : mask;
       this._pointer(this._mask, x, y);
       ev.preventDefault();
+    }
+
+    // 约 30 次/秒，末尾那次一定补发，光标停在鼠标真正停下的位置。
+    _hover(xy) {
+      this._hoverXY = xy;
+      if (this._hoverTimer) return;
+      const wait = HOVER_MS - (Date.now() - this._lastHover);
+      if (wait <= 0) { this._flushHover(); return; }
+      this._hoverTimer = setTimeout(() => this._flushHover(), wait);
+    }
+
+    _flushHover() {
+      clearTimeout(this._hoverTimer);
+      this._hoverTimer = null;
+      if (this._viewOnly || this._mask || !this._hoverXY) return;
+      this._lastHover = Date.now();
+      const [x, y] = this._hoverXY;
+      this._hoverXY = null;
+      this._lastXY = [x, y];
+      this._pointer(0, x, y);
     }
 
     _onWheel(ev) {

@@ -15,7 +15,8 @@
 //     0x4B 'K'                 request a key frame (after drops / decoder reset)
 //     4 + 7 bytes              RFB KeyEvent     ┐ coordinates are logical points;
 //     5 + 5 bytes              RFB PointerEvent ┘ routed through rfbKey/rfbPointer,
-//                                                 so every input guard applies.
+//                                                 so every input guard applies; no-button
+//                                                 motion moves the cursor (rfbHover).
 // Frames are produced only on change (SCStream idles on a still screen); a
 // still screen gets two delayed "refine" re-encodes of the last image so text
 // sharpens after motion, and a key request on a still screen re-encodes the
@@ -49,7 +50,7 @@ final class H264Client {
   private var pending = 0
   private var needKey = true
   private var closed = false
-  init(_ fd: Int32) { self.fd = fd; input = RfbClient(fd); input.div = 1 }
+  init(_ fd: Int32) { self.fd = fd; input = RfbClient(fd); input.div = 1; input.hoverMoves = true }
 
   var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return closed }
 
