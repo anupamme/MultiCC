@@ -181,3 +181,4 @@ service-routes.json
 # Local-only service and runtime data, not part of multicc
 services/openrouter-usage/
 /whisper_vocab.json
+/voice_hotwords.json

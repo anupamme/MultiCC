@@ -198,6 +198,11 @@ function mountVoiceRoutes(app, deps = {}) {
       appendVoiceExample({ raw, refined, userFinal, ts: new Date().toISOString() });
       const corrections = extractCorrections(raw, userFinal);
       if (corrections.length > 0) mergeWhisperVocab(corrections);
+      if (voice.autoHotwordsEnabled && voice.autoHotwords) {
+        try { voice.autoHotwords.learnFromExample({ raw, userFinal, ts: new Date().toISOString() }); } catch (e) {
+          log.error('[multicc/hotwords] learn failed:', e.message);
+        }
+      }
     }
     res.json({ ok: true });
   });
@@ -293,6 +298,19 @@ ${eventsStr}
   });
 
   app.get('/api/voice/vocab', (req, res) => res.json(loadWhisperVocab()));
+
+  // The learned hotword list: what is active, what still waits for a second
+  // sighting, and what was vetoed because the user writes that spelling.
+  app.get('/api/voice/hotwords', (req, res) => {
+    if (!voice.autoHotwords) return res.json({ enabled: false });
+    res.json({ enabled: !!voice.autoHotwordsEnabled, ...voice.autoHotwords.snapshot() });
+  });
+
+  app.post('/api/voice/hotwords/reject', (req, res) => {
+    const { term, alias } = req.body || {};
+    if (!voice.autoHotwords || !voice.autoHotwords.reject({ term, alias })) return res.status(400).json({ ok: false, error: 'term required' });
+    res.json({ ok: true });
+  });
 
   app.delete('/api/voice/vocab/:term', (req, res) => {
     const target = req.params.term.toLowerCase();

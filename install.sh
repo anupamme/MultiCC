@@ -555,7 +555,7 @@ legacy_data_items() {
     scheduled_tasks.json cron_fanout_migration.json docs_registry.json secrets.json \
     task_board.json task-runs.sqlite task-shells.sqlite search-index.sqlite \
     task-short-codes.json ui-layout.json air-pins.json \
-    orchestration.sqlite orchestration.json voice_examples.json whisper_vocab.json \
+    orchestration.sqlite orchestration.json voice_examples.json whisper_vocab.json voice_hotwords.json \
     memories
 }
 

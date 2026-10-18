@@ -124,13 +124,14 @@ function toSyllables(zh) {
 // A recogniser may split a word ("multi cc") but a space the term itself has
 // between words must stay one: "Claude Code" must not swallow the identifier
 // `claudecode` in a path. For the same reason a match never starts or ends next
-// to `_ / \ -` (MULTICC_BASE_URL, code/claudecode/x) or a leading dot.
+// to `_ / \ -` (MULTICC_BASE_URL, code/claudecode/x), a leading dot, or a
+// trailing `=` (pid=123 is a key, not prose).
 function asciiRegex(form) {
   const words = form.trim().split(/\s+/);
   if (words.join('').length < 3) return null;
   const esc = c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = words.map(w => w.split('').map(esc).join('[ ]?')).join('[ ]+');
-  return new RegExp(`(?<![A-Za-z0-9_./\\\\-])${pattern}(?![A-Za-z0-9_/\\\\-])`, 'gi');
+  return new RegExp(`(?<![A-Za-z0-9_./\\\\-])${pattern}(?![A-Za-z0-9_/\\\\=-])`, 'gi');
 }
 
 // ── Matcher ──
@@ -208,4 +209,5 @@ module.exports = {
   createMatcher,
   correctWithHotwords,
   nearSyllable,
+  toSyllables,
 };

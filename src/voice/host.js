@@ -165,6 +165,11 @@ function createVoiceHost({
   // re-checks every gate (ASR_LOCAL off, ASR_LOCAL_AUTO_DOWNLOAD off, files
   // already present), so this line only expresses intent, never a promise to
   // hit the network.
+  // The same opt-in gates hotword learning: it reads the real chat history and
+  // writes voice_hotwords.json in the background (src/voice/hotword-learner.js).
+  if (autoDownloadAsrModels && voice.autoHotwordsEnabled && voice.autoHotwords) {
+    try { voice.autoHotwords.start(); } catch (e) { log.error('[multicc/hotwords] start failed:', e.message); }
+  }
   if (autoDownloadAsrModels) {
     const timer = setTimeout(() => {
       try { asrModelInstaller.maybeAutoDownload(); } catch (_) {}

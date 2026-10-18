@@ -110,12 +110,14 @@ test('mounts the complete legacy voice REST surface', () => {
   assert.deepEqual([...app.routes.keys()].sort(), [
     'DELETE /api/voice/vocab/:term',
     'GET /api/settings/voice',
+    'GET /api/voice/hotwords',
     'GET /api/voice/test-sse',
     'GET /api/voice/vocab',
     'POST /api/settings/voice',
     'POST /api/settings/voice/asr-model',
     'POST /api/voice/confirm',
     'POST /api/voice/feedback',
+    'POST /api/voice/hotwords/reject',
     'POST /api/voice/progress-summary',
     'POST /api/voice/refine',
     'POST /api/voice/stt',
@@ -146,6 +148,31 @@ test('feedback persists changed examples and vocabulary corrections only', async
 
   await invoke(app, 'POST', '/api/voice/feedback', { body: { raw: 'same', refined: 'same', userFinal: 'same' } });
   assert.equal(calls.examples.length, 1);
+});
+
+test('feedback teaches the hotword learner and the learned list is readable and vetoable', async () => {
+  const learned = [];
+  const rejected = [];
+  const { app, voice } = createHarness();
+  voice.autoHotwordsEnabled = true;
+  voice.autoHotwords = {
+    learnFromExample: e => learned.push(e),
+    snapshot: () => ({ list: 'STT', active: [{ term: 'STT', aliases: [] }], pending: [], vetoed: [] }),
+    reject: r => { if (!r.term) return false; rejected.push(r); return true; },
+  };
+  await invoke(app, 'POST', '/api/voice/feedback', { body: { raw: 's t t', refined: '', userFinal: 'STT' } });
+  assert.equal(learned.length, 1);
+  assert.equal(learned[0].raw, 's t t');
+  assert.equal(learned[0].userFinal, 'STT');
+
+  let res = await invoke(app, 'GET', '/api/voice/hotwords');
+  assert.equal(res.body.enabled, true);
+  assert.equal(res.body.list, 'STT');
+  res = await invoke(app, 'POST', '/api/voice/hotwords/reject', { body: { term: 'STT' } });
+  assert.deepEqual(res.body, { ok: true });
+  res = await invoke(app, 'POST', '/api/voice/hotwords/reject', { body: {} });
+  assert.equal(res.statusCode, 400);
+  assert.deepEqual(rejected, [{ term: 'STT', alias: undefined }]);
 });
 
 test('confirmation and progress routes preserve validation and parsed DTOs', async () => {
