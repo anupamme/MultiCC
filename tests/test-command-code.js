@@ -63,7 +63,9 @@ test('原生 JSON 接入携带默认或显式模型与恢复 ID，认证失败�
 
 test('网页配置给出 DeepSeek 原生模型，不混入 Claude 候选', () => {
   const ai = require('../public/chat-ai-config');
-  assert.deepEqual(ai.buildModelChoices('', { cli: 'commandcode', providers: [] }), ['', 'deepseek/deepseek-flash', '__custom__']);
+  // Cold cache = the offline fallback: DeepSeek models only, led by the BYOK id the adapter defaults to.
+  const cold = ai.buildModelChoices('', { cli: 'commandcode', providers: [] });
+  assert.deepEqual(cold, ['', 'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4.1-flash', 'deepseek/deepseek-flash', '__custom__']);
   assert.deepEqual(ai.effortOptions('commandcode'), []);
 });
 

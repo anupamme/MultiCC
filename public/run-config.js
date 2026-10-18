@@ -994,7 +994,14 @@
     const modelCustom = el(doc, 'input', 'rc-model-custom');
     modelCustom.maxLength = 100;
     modelCustom.placeholder = tt('runConfigModelPlaceholder', '自定义模型…');
-    modelField.append(modelSelect, modelCustom);
+    // 目录很长（Command Code 94 个）时才出现的过滤框：只过滤下拉里的选项，
+    // 不碰当前选中的值。
+    const modelSearch = el(doc, 'input', 'rc-model-search');
+    modelSearch.type = 'search';
+    modelSearch.hidden = true;
+    modelSearch.placeholder = tt('runConfigModelSearch', '搜索模型…');
+    modelSearch.setAttribute('aria-label', tt('runConfigModelSearch', '搜索模型…'));
+    modelField.append(modelSearch, modelSelect, modelCustom);
     lineRow.append(lineField, modelField);
     const accountField = el(doc, 'div', 'rc-field rc-account-field');
     accountField.append(el(doc, 'span', null, tt('runConfigAccountLabel', '账户')));
@@ -1303,13 +1310,45 @@
       lineNote.textContent = '';
     }
 
+    // 下拉里的选项：厂商目录自带分组的（Command Code 的 Open Source / Anthropic /
+    // OpenAI …）按原分组画 <optgroup>，没有分组信息的照旧平铺。filter 非空时只
+    // 留标签或 id 含关键字的；默认项、自定义项和当前选中的值始终保留。
+    const MODEL_SEARCH_MIN = 12;
+    function paintModelOptions(select, choices, value, state, filter, keep) {
+      const needle = String(filter || '').trim().toLowerCase();
+      const children = [];
+      let group = null;
+      let groupName = null;
+      for (const choice of choices) {
+        const label = choice === '__custom__' ? tt('runConfigModelCustom', '自定义…') : aiApi.modelChoiceLabel(choice, value, state);
+        const special = choice === '' || choice === '__custom__' || choice === keep;
+        if (needle && !special && !`${label} ${choice}`.toLowerCase().includes(needle)) continue;
+        const name = (typeof aiApi.modelChoiceGroup === 'function' && aiApi.modelChoiceGroup(choice, state)) || '';
+        if (!name) { group = null; groupName = null; children.push(option(doc, choice, label)); continue; }
+        if (!group || groupName !== name) {
+          group = doc.createElement('optgroup');
+          group.label = name;
+          groupName = name;
+          children.push(group);
+        }
+        group.append(option(doc, choice, label));
+      }
+      select.replaceChildren(...children);
+    }
+
     function fillModel(select, custom, value, cli, preferred) {
       const state = modelState(cli);
       let choices = aiApi.buildModelChoices(value, state);
       if (!Array.isArray(choices) || !choices.length) choices = ['', '__custom__'];
       choices = [...new Set(choices)];
-      select.replaceChildren(...choices.map(choice => option(doc, choice,
-        choice === '__custom__' ? tt('runConfigModelCustom', '自定义…') : aiApi.modelChoiceLabel(choice, value, state))));
+      modelSearch.value = '';
+      modelSearch.hidden = choices.filter(choice => choice && choice !== '__custom__').length <= MODEL_SEARCH_MIN;
+      modelSearch.oninput = () => {
+        const keep = select.value;
+        paintModelOptions(select, choices, value, state, modelSearch.value, keep);
+        select.value = keep;
+      };
+      paintModelOptions(select, choices, value, state, '', '');
       let selected = aiApi.normalizeModel(value, preferred || '', state);
       if (!selected) selected = aiApi.defaultModelChoice(value, state) || '';
       const known = choices.includes(selected);
@@ -2095,6 +2134,8 @@
         if (!aiApi.openCodeNativeProviders().length) aiApi.refreshOpenCodeModels(rebuild);
       } else if (cli === 'qoder') aiApi.refreshQoderModels(rebuild);
       else if (cli === 'codebuddy') aiApi.refreshCodebuddyModels(rebuild);
+      else if (cli === 'commandcode') aiApi.refreshCommandcodeModels(rebuild);
+      else if (cli === 'grok') aiApi.refreshGrokModels(rebuild);
     }
 
     function selectCli(cli) {

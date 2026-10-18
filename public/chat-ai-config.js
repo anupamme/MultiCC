@@ -71,7 +71,10 @@
   // Gemini CLI / Grok Build model ids are free text; these are the current
   // headline ids as suggestions only (the picker always offers 自定义/__custom__).
   const GEMINI_MODEL_OPTIONS = Object.freeze(['', 'gemini-2.5-pro', 'gemini-2.5-flash']);
-  const GROK_MODEL_OPTIONS = Object.freeze(['', 'grok-code-fast-1', 'grok-4']);
+  // Offline fallback only: the live list comes from /api/grok/models.
+  const GROK_MODEL_OPTIONS = Object.freeze(['', 'grok-4.6', 'grok-4.5']);
+  // Offline fallback only: the live list comes from /api/commandcode/models.
+  const COMMANDCODE_MODEL_OPTIONS = Object.freeze(['', 'deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4.1-flash', 'deepseek/deepseek-flash']);
   // Provider-less ZCode follows its native config/Coding Plan. Do not hardcode
   // a vendor/model pair here: the native provider may be Z.ai, BigModel, Start
   // Plan, Team Plan, or a user-defined provider.
@@ -340,8 +343,16 @@
     }
     if (state && state.cli === 'dsh') return [...DSH_MODEL_OPTIONS, '__custom__'];
     if (state && state.cli === 'gemini') return [...GEMINI_MODEL_OPTIONS, '__custom__'];
-    if (state && state.cli === 'commandcode') return ['', 'deepseek/deepseek-flash', '__custom__'];
-    if (state && state.cli === 'grok') return [...GROK_MODEL_OPTIONS, '__custom__'];
+    if (state && state.cli === 'commandcode') {
+      // Live `commandcode --list-models` catalog (1-hour cache, grouped by the
+      // vendor's own sections — see modelChoiceGroup); static list until it lands.
+      const cached = readModelCacheSync('multicc.commandcode.models.v1', 60 * 60 * 1000);
+      return cached.length ? ['', ...cached.map(m => m.model), '__custom__'] : [...COMMANDCODE_MODEL_OPTIONS, '__custom__'];
+    }
+    if (state && state.cli === 'grok') {
+      const cached = readModelCacheSync('multicc.grok.models.v1', 60 * 60 * 1000);
+      return cached.length ? ['', ...cached.map(m => m.model), '__custom__'] : [...GROK_MODEL_OPTIONS, '__custom__'];
+    }
     if (state && state.cli === 'zcode') return [...ZCODE_MODEL_OPTIONS, '__custom__'];
     if (state && state.cli === 'opencode') {
       // No multicc-managed provider chosen: list the local opencode CLI's
@@ -470,6 +481,31 @@
         try { rebuildCallback(); } catch (_) { /* noop */ }
       }
     } catch (_) { /* swallow — picker keeps the fallback snapshot */ }
+  }
+
+  // Same contract as refreshCodebuddyModels, for Command Code / Grok.
+  function liveCatalogRefresher(loaderName, cacheKey) {
+    return async function refresh(rebuildCallback) {
+      try {
+        const loader = root && root[loaderName];
+        if (typeof loader !== 'function') return;
+        const had = readModelCacheSync(cacheKey, 60 * 60 * 1000).length > 0;
+        await loader();
+        if (typeof rebuildCallback === 'function' && !had) {
+          try { rebuildCallback(); } catch (_) { /* noop */ }
+        }
+      } catch (_) { /* swallow — picker keeps the static fallback */ }
+    };
+  }
+  const refreshCommandcodeModels = liveCatalogRefresher('loadCommandcodeModels', 'multicc.commandcode.models.v1');
+  const refreshGrokModels = liveCatalogRefresher('loadGrokModels', 'multicc.grok.models.v1');
+
+  // The vendor's own section for a model (Command Code groups its catalog as
+  // Open Source / Anthropic / OpenAI / Google / xAI / ...). '' = ungrouped.
+  function modelChoiceGroup(value, state) {
+    if (!state || state.cli !== 'commandcode' || !value || value === '__custom__') return '';
+    const hit = readModelCacheSync('multicc.commandcode.models.v1', 60 * 60 * 1000).find(m => m && m.model === value);
+    return hit && hit.group ? String(hit.group) : '';
   }
 
   function stripModelSuffix(model) {
@@ -1241,6 +1277,9 @@
     refreshOpenCodeModels,
     refreshQoderModels,
     refreshCodebuddyModels,
+    refreshCommandcodeModels,
+    refreshGrokModels,
+    modelChoiceGroup,
     refreshClaudeModels,
     routingKeyApi,
   };

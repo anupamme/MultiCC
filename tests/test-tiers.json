@@ -535,6 +535,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/model_menu_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/notification_foreground_test.dart",
       "tier": "core",
       "lane": "flutter"
@@ -2647,6 +2652,15 @@
       ]
     },
     {
+      "path": "tests/test-commandcode-grok-models-route.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-commander-migration-isolated.js",
       "tier": "flow",
       "lane": "isolated",
@@ -4177,6 +4191,15 @@
     },
     {
       "path": "tests/test-run-config-accounts-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
+      ]
+    },
+    {
+      "path": "tests/test-run-config-model-search-cdp.js",
       "tier": "flow",
       "lane": "cdp",
       "owner": "npm:test:cdp",

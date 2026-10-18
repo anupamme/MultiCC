@@ -755,17 +755,23 @@ const kGeminiModelOptions = <MapEntry<String, String>>[
   MapEntry('gemini-2.5-flash', 'gemini-2.5-flash'),
 ];
 
-/// Grok Build model suggestions (free text in the CLI); mirrors
-/// GROK_MODEL_OPTIONS in public/chat-ai-config.js.
+/// Grok Build offline fallback; the live list is `grok models`
+/// (GrokModelsService, GET /api/grok/models). Mirrors GROK_MODEL_OPTIONS in
+/// public/chat-ai-config.js.
+/// Offline fallback only — the live list is `commandcode --list-models`
+/// (CommandCodeModelsService, GET /api/commandcode/models).
 const kCommandCodeModelOptions = <MapEntry<String, String>>[
   MapEntry('', '默认（DeepSeek Flash）'),
-  MapEntry('deepseek/deepseek-flash', 'DeepSeek Flash'),
+  MapEntry('deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-flash'),
+  MapEntry('deepseek/deepseek-v4-pro', 'deepseek/deepseek-v4-pro'),
+  MapEntry('deepseek/deepseek-v4.1-flash', 'deepseek/deepseek-v4.1-flash'),
+  MapEntry('deepseek/deepseek-flash', 'deepseek/deepseek-flash'),
 ];
 
 const kGrokModelOptions = <MapEntry<String, String>>[
   MapEntry('', '默认（跟随 Grok 配置）'),
-  MapEntry('grok-code-fast-1', 'grok-code-fast-1'),
-  MapEntry('grok-4', 'grok-4'),
+  MapEntry('grok-4.6', 'grok-4.6'),
+  MapEntry('grok-4.5', 'grok-4.5'),
 ];
 
 String claudeModelShortName(String? model) {

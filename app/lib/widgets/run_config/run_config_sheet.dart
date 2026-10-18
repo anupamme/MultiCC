@@ -17,6 +17,7 @@ import '../../models/provider_limit_label.dart';
 import '../../providers/session_manager.dart';
 import '../../services/auto_provider_routing.dart';
 import '../../services/codebuddy_models_service.dart';
+import '../../services/commandcode_grok_models_service.dart';
 import '../../services/codex_models_service.dart';
 import '../../services/opencode_models_service.dart';
 import '../../services/qoder_models_service.dart';
@@ -26,6 +27,7 @@ import '../../theme.dart';
 import '../../utils/cli_display.dart';
 import '../../utils/session_status_helpers.dart';
 import '../ai_config_sheet.dart' show prepareAIConfigInputs;
+import '../model_menu.dart';
 import '../provider_option.dart';
 import 'run_config_lanes.dart';
 import 'run_config_models.dart';
@@ -102,6 +104,7 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
   late String _model;
   late String _effort;
   bool _customModel = false;
+  String _modelFilter = '';
   late final TextEditingController _customCtrl;
   String _subProvider = '';
   String _subModel = '';
@@ -433,6 +436,10 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
         await QoderModelsService(settings: settings).load();
       } else if (cli == SessionCli.codebuddy) {
         await CodebuddyModelsService(settings: settings).load();
+      } else if (cli == SessionCli.commandcode) {
+        await CommandCodeModelsService(settings: settings).load();
+      } else if (cli == SessionCli.grok) {
+        await GrokModelsService(settings: settings).load();
       } else {
         return;
       }
@@ -997,6 +1004,7 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
 
   Widget _modelPicker() {
     final choices = _choicesFor(_provider);
+    final showSearch = choices.length > kModelSearchMin;
     // 选中的那个值必须是候选里真有的，否则 DropdownButton 直接断言失败。
     final fallback = choices.contains('')
         ? ''
@@ -1012,6 +1020,16 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
           style: TextStyle(color: AppColors.faint, fontSize: 12),
         ),
         const SizedBox(height: 5),
+        if (showSearch) ...[
+          modelSearchField(
+            onChanged: (v) => setState(() => _modelFilter = v),
+            decoration: runConfigInputDecoration(),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium!.copyWith(color: AppColors.text, fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+        ],
         DropdownButtonFormField<String>(
           value: value,
           isExpanded: true,
@@ -1020,19 +1038,24 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: AppColors.text, fontSize: 13),
-          items: [
-            ...choices.map(
-              (m) => DropdownMenuItem(
-                value: m,
-                child: Text(
-                  runModelOptionLabel(_cli, _provider, m, _providers),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+          items: modelMenuItems(
+            keys: [...choices, '__custom__'],
+            labelOf: (m) => m == '__custom__'
+                ? '自定义…'
+                : runModelOptionLabel(_cli, _provider, m, _providers),
+            groupOf: (m) => runModelGroup(_cli, m),
+            style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+              color: AppColors.text,
+              fontSize: 13,
             ),
-            const DropdownMenuItem(value: '__custom__', child: Text('自定义…')),
-          ],
+            headerStyle: const TextStyle(
+              color: AppColors.faint,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+            filter: showSearch ? _modelFilter : '',
+            keep: value,
+          ),
           onChanged: (v) => setState(() {
             _customModel = v == '__custom__';
             if (!_customModel) _model = v ?? '';
