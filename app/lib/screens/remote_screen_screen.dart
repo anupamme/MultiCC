@@ -282,13 +282,15 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     }
     _lastFrameAt = now;
     if (_decoding) return; // 上一帧还在解码，跳过；下个 update 会再触发
-    _decoding = true;
     final w = source.width, h = source.height;
-    // BGRA → RGBA：32bit 上 R/B 互换，A/G 原位。
+    // BGRA → RGBA：32bit 上 R/B 互换，A/G 原位。按 32 位整读要求 4 字节对齐，
+    // 来源没对齐就先拷一份 —— 否则 view 抛异常，而且 _decoding 会永远卡住，
+    // 页面停在「已连上、画面全黑」。
+    final aligned = fb.offsetInBytes % 4 == 0 ? fb : Uint8List.fromList(fb);
     final src = Uint32List.view(
-      fb.buffer,
-      fb.offsetInBytes,
-      fb.lengthInBytes ~/ 4,
+      aligned.buffer,
+      aligned.offsetInBytes,
+      aligned.lengthInBytes ~/ 4,
     );
     final rgba = Uint8List(src.length * 4);
     final dst = Uint32List.view(rgba.buffer, 0, src.length);
@@ -296,6 +298,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       final v = src[i];
       dst[i] = (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16);
     }
+    _decoding = true;
     ui.decodeImageFromPixels(rgba, w, h, ui.PixelFormat.rgba8888, (img) {
       _decoding = false;
       if (!mounted) {

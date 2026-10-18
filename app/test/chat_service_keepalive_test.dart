@@ -493,4 +493,77 @@ void main() {
       service.dispose();
     });
   });
+
+  // 任务在任务板上被删后，壳的 chat 范围一直回 409 source_session_missing；
+  // 以前当临时故障按退避无限重连，App 永远停在「连接中」。
+  test('deleted source session stops reconnecting instead of spinning', () async {
+    await setupSettings();
+    fakeAsync((async) {
+      var scopeCalls = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'POST') return http.Response('{"id":"shell-one"}', 200);
+        scopeCalls++;
+        return http.Response(
+          '{"ok":false,"code":"source_session_missing","message":"source_session_missing"}',
+          409,
+        );
+      });
+      final (service, channels) = makeService(httpClient: client);
+      final events = <ChatEvent>[];
+      service.events.listen(events.add);
+      service.connect();
+      async.flushMicrotasks();
+      expect(service.sessionGone, isTrue);
+      expect(events.map((e) => e.type), contains('session_gone'));
+      expect(events.map((e) => e.type), isNot(contains('reconnecting')));
+      async.elapse(const Duration(minutes: 2));
+      service.ensureAlive();
+      async.flushMicrotasks();
+      expect(scopeCalls, 1);
+      expect(channels, isEmpty);
+      service.dispose();
+    });
+  });
+
+  test('server "session does not exist" on the socket stops reconnecting', () async {
+    await setupSettings();
+    fakeAsync((async) {
+      final (service, channels) = makeService();
+      final events = <ChatEvent>[];
+      service.events.listen(events.add);
+      service.connect();
+      async.flushMicrotasks();
+      expect(channels, hasLength(1));
+      channels.single.incoming.add(jsonEncode({
+        'type': 'error',
+        'error': 'Chat session "chat one" does not exist. Create it via the dashboard first.',
+      }));
+      channels.single.incoming.close();
+      async.flushMicrotasks();
+      async.elapse(const Duration(minutes: 2));
+      expect(service.sessionGone, isTrue);
+      expect(channels, hasLength(1));
+      expect(events.where((e) => e.type == 'error'), isEmpty);
+      service.dispose();
+    });
+  });
+
+  test('a transient shell scope failure still reconnects', () async {
+    await setupSettings();
+    fakeAsync((async) {
+      var scopeCalls = 0;
+      final client = MockClient((request) async {
+        if (request.method == 'POST') return http.Response('{"id":"shell-one"}', 200);
+        scopeCalls++;
+        return http.Response('{"ok":false,"code":"busy"}', 503);
+      });
+      final (service, _) = makeService(httpClient: client);
+      service.connect();
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 4));
+      expect(service.sessionGone, isFalse);
+      expect(scopeCalls, greaterThan(1));
+      service.dispose();
+    });
+  });
 }

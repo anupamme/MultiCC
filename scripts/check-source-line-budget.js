@@ -396,8 +396,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +5 键（airTodo*）：任务列表「待办」筛选与手动标记待办，实测 9254/585697。
     // +4 键（livenessRequesting 等）：进展条按回合阶段显示请求中/思考中/工具执行中，实测 9262/586055。
     // +3 键（rsStreamHd/rsStreamRfb/rsStreamTitle）：🖥 屏幕「高清 / 流畅」切换按钮，与上一格合并后实测 9268/586408。
-    maxLines: 9268,
-    maxBytes: 586408,
+    // +2 键（chatSessionGone*）：App 聊天页「任务已删除」提示条。
+    maxLines: 9272,
+    maxBytes: 586644,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

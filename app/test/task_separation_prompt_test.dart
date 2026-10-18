@@ -131,4 +131,39 @@ void main() {
     await events.close();
     client.close();
   });
+  // 广播控制器的 `.stream` 每次 get 都是新包装对象：以前按 identical 比，
+  // 每次重建都重订阅并立刻请求一次，页面反复重绘时成了每秒几十次请求。
+  testWidgets('rebuilding with the same broadcast stream does not refetch', (
+    tester,
+  ) async {
+    final events = StreamController<ChatEvent>.broadcast();
+    var gets = 0;
+    final client = MockClient((_) async {
+      gets++;
+      return http.Response(jsonEncode({'ok': true, 'suggestion': null}), 200);
+    });
+    Widget build() => MaterialApp(
+      home: TaskSeparationPrompt(
+        events: events.stream,
+        sessionId: 's1',
+        settings: settings,
+        httpClient: client,
+        child: const Scaffold(),
+      ),
+    );
+    await tester.pumpWidget(build());
+    await tester.pumpAndSettle();
+    expect(gets, 1);
+    for (var i = 0; i < 5; i++) {
+      await tester.pumpWidget(build());
+      await tester.pumpAndSettle();
+    }
+    expect(gets, 1);
+    events.add(ChatEvent('task_state', {}));
+    await tester.pumpAndSettle();
+    expect(gets, 2);
+    await tester.pumpWidget(const SizedBox());
+    await events.close();
+    client.close();
+  });
 }

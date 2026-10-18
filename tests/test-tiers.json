@@ -570,6 +570,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/platform_h264_decoder_test.dart",
+      "tier": "other",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/provider_label_test.dart",
       "tier": "other",
       "lane": "flutter"

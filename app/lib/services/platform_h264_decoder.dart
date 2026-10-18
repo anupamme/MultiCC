@@ -82,7 +82,12 @@ class PlatformH264Decoder implements H264Decoder {
       if (bytes is Uint8List && w > 0 && h > 0) {
         _frames.add(
           H264Frame(
-            bytes: bytes,
+            // StandardMessageCodec 解出的 Uint8List 是消息缓冲区里的视图，起点
+            // 随原生端字典的键序（Swift 每次进程启动随机）落在任意字节上；
+            // 页面要按 32 位整读做 BGRA→RGBA，不是 4 字节对齐就先拷一份。
+            bytes: bytes.offsetInBytes % 4 == 0
+                ? bytes
+                : Uint8List.fromList(bytes),
             width: w,
             height: h,
             key: args['key'] == true,
