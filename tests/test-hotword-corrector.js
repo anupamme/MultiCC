@@ -68,6 +68,20 @@ test('ASCII terms ignore case and inner spaces but respect word boundaries', () 
   assert.strictEqual(fix('reactive', 'React'), 'reactive');
 });
 
+test('a multi-word term keeps its space and never rewrites paths or identifiers', () => {
+  assert.strictEqual(fix('用claude code写', 'Claude Code'), '用Claude Code写');
+  assert.strictEqual(fix('打开 /code/claudecode/webcc 目录', 'Claude Code'), '打开 /code/claudecode/webcc 目录');
+  assert.strictEqual(fix('claudecode 是目录名', 'Claude Code'), 'claudecode 是目录名');
+  assert.strictEqual(fix('读 MULTICC_BASE_URL 和 multicc-base', 'MultiCC'), '读 MULTICC_BASE_URL 和 multicc-base');
+  assert.strictEqual(fix('看 .multicc 目录', 'MultiCC'), '看 .multicc 目录');
+  assert.strictEqual(fix('这是multicc。', 'MultiCC'), '这是MultiCC。');
+});
+
+test('an ASCII alias is rewritten to the canonical spelling', () => {
+  assert.strictEqual(fix('像OpenCloud一样', 'OpenClaw=OpenCloud'), '像OpenClaw一样');
+  assert.strictEqual(fix('有cloud code agent', 'Claude Code=Cloud Code'), '有Claude Code agent');
+});
+
 test('empty input and empty list are no-ops', () => {
   assert.strictEqual(fix('', '权限'), '');
   assert.strictEqual(fix('权线', ''), '权线');
