@@ -107,7 +107,8 @@
   text-overflow: ellipsis;
 }
 .task-attribution-suggestion-accept, .task-attribution-suggestion-dismiss,
-.task-attribution-suggestion-defer, .task-attribution-suggestion-cancel {
+.task-attribution-suggestion-defer, .task-attribution-suggestion-cancel,
+.task-attribution-suggestion-relocate {
   padding: 2px 8px;
   border: 1px solid var(--chat-line);
   border-radius: 7px;
@@ -116,7 +117,7 @@
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-suggestion-accept:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
+.task-attribution-suggestion-accept:hover, .task-attribution-suggestion-relocate:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
 .task-attribution-suggestion-dismiss:hover { color: var(--chat-muted); }
 .task-attribution-suggestion-defer:hover { color: var(--chat-muted); }
 .task-attribution-suggestion-cancel:hover { color: var(--chat-warning); border-color: var(--chat-warning); }
@@ -145,7 +146,7 @@
   text-overflow: ellipsis;
 }
 .task-attribution-inline-accept, .task-attribution-inline-dismiss,
-.task-attribution-inline-defer {
+.task-attribution-inline-defer, .task-attribution-inline-relocate {
   flex: 0 0 auto;
   padding: 2px 8px;
   border: 1px solid var(--chat-line);
@@ -155,7 +156,7 @@
   font: inherit;
   cursor: pointer;
 }
-.task-attribution-inline-accept:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
+.task-attribution-inline-accept:hover, .task-attribution-inline-relocate:hover { color: var(--chat-blue); border-color: var(--chat-blue); }
 .task-attribution-inline-dismiss:hover, .task-attribution-inline-defer:hover { color: var(--chat-muted); }
 
 /* A suggestion is worth noticing without opening the mode. */

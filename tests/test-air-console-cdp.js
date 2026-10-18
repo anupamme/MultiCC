@@ -151,6 +151,18 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
   for (const dir of ['d1', 'd2', 'd3']) routes['POST /api/task-shells'] = () => json({ id: 'shell-a' });
   // 常用设置里的「关盖运行」开关打的就是这两条：GET 决定这一行出不出现、开关在
   // 哪一边，POST 是点一下之后的落点（把这个 body 断言出来，才算断到真的在写）。
+  // 目录首页的拖排走与 App 共享的 ui-layout（PUT /api/ui-layout/dir-order），
+  // 不是目录切换浮层那条 /api/directories/order。两条链路各存一份，别混。
+  let layoutOrder = [];
+  let rejectLayoutPut = false;
+  const layoutPuts = [];
+  routes['/api/ui-layout'] = () => json({ ok: true, layout: { dirOrder: layoutOrder, sessionOrder: {} } });
+  routes['PUT /api/ui-layout/dir-order'] = req => {
+    if (rejectLayoutPut) return { status: 500, body: JSON.stringify({ ok: false, error: 'disk full' }), headers: { 'content-type': 'application/json' } };
+    layoutOrder = JSON.parse(req.body).order;
+    layoutPuts.push(layoutOrder);
+    return json({ ok: true, layout: { dirOrder: layoutOrder, sessionOrder: {} } });
+  };
   const powerPosts = [];
   let powerEnabled = false;
   routes['/api/settings/power'] = () => json({ available: true, enabled: powerEnabled, unlockPassword: { available: true, set: true, enabled: powerEnabled } });
@@ -252,11 +264,69 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // 点「等我回复」：清单在过滤项和工作目录之间长出来。
     await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="waiting"]').click()`);
     assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false);
-    assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row').innerText.includes('结算页')`), '等待回答的排在最前');
+    // 任务清单收在「更多」details 里，默认不渲染 —— innerText 会回空串，读 textContent。
+    assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row').textContent.includes('结算页')`), '等待回答的排在最前');
     assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row .mc-status-label').textContent==='等待回答'`), '待办行自报状态');
     assert.equal(await page.evaluate(`document.getElementById('console-task-search').closest('.admin-task-controls').hidden`), true, '只有「全部」才带搜索筛选');
+    // 控制台现在是一张目录首页：顶栏、待办流、目录网格、底部「更多」。
     assert.deepEqual(await page.evaluate(`[...document.getElementById('console-content').children].map(el => el.className)`),
-      ['console-priority', 'admin-panel console-running', 'admin-stats console-filter-tabs', 'admin-panel console-filter-panel']);
+      ['console-home']);
+    assert.deepEqual(await page.evaluate(`[...document.querySelector('.console-home').children].map(el => el.className)`),
+      ['console-home-top', 'console-flow', 'console-mobile-slot', 'admin-panel console-directories', 'console-more']);
+    assert.equal(await page.evaluate(`document.querySelector('.console-home-top #console-home-search') !== null`), true,
+      '顶栏带全局搜索');
+    assert.equal(await page.evaluate(`document.getElementById('console-more').contains(document.querySelector('.console-filter-tabs'))`), true,
+      '统计格和任务清单收在「更多」里，功能没丢');
+    assert.equal(await page.evaluate(`document.getElementById('console-more').open`), false, '「更多」默认收着，不占首屏');
+    assert.equal(await page.evaluate(`document.querySelectorAll('#console-more .admin-stat').length`), 5, '五格读数仍在（含「今日完成」）');
+    // 下半区：全部目录平铺成网格，卡片形状与目录库一致，且可拖排序。
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card strong')].map(el=>el.textContent)`),
+      ['▣ MultiCC 主仓', '▣ North · 商城', '▣ Gapasea'], '二三十个目录直接平铺，不分页');
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card')].every(card => card.draggable)`), true,
+      '目录卡默认可拖');
+    // 顶栏搜索同时过滤任务与目录：目录名命中的任务留在待办流里，别的目录隐去。
+    await page.evaluate(`(() => { const input = document.getElementById('console-home-search'); input.value = 'Gapasea'; input.dispatchEvent(new Event('input')); })()`);
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card strong')].map(el=>el.textContent)`),
+      ['▣ Gapasea'], '搜索目录名只留命中的目录卡');
+    assert.equal(await page.evaluate(`document.querySelectorAll('.console-priority-grid .console-priority-card').length`), 0,
+      '没命中的待办卡不留在上面');
+    assert.ok(await page.evaluate(`[...document.querySelectorAll('.console-running-list .admin-recent-row')].some(row => row.textContent.includes('登录页空状态文案'))`),
+      '按目录名也能搜到在跑的任务');
+    assert.ok(await page.evaluate(`document.querySelector('.console-recent-list').textContent.includes('导出失败重试')`),
+      '最近使用也按目录名过滤');
+    await page.evaluate(`(() => { const input = document.getElementById('console-home-search'); input.value = ''; input.dispatchEvent(new Event('input')); })()`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('#console-directory-grid .directory-card').length`), 3, '清空搜索恢复全部目录');
+    // 拖排：第三张（Gapasea）拖到第一张上半截 → d3,d1,d2，落盘走 ui-layout（App
+    // 也读同一份），不是目录切换浮层那条 /api/directories/order。
+    await page.evaluate(`(() => {
+      const grid = document.getElementById('console-directory-grid');
+      const cards = [...grid.querySelectorAll('.directory-card')];
+      const dt = new DataTransfer();
+      cards[2].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      const box = cards[0].getBoundingClientRect();
+      cards[0].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: box.left + 10, clientY: box.top + 2 }));
+      cards[0].dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+      cards[2].dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    })()`);
+    await page.evaluate(`new Promise(done => setTimeout(done, 250))`);
+    assert.deepEqual(layoutPuts, [['d3', 'd1', 'd2']], '控制台拖排写的是 ui-layout（与 App 共享同一条语义）');
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card')].map(c=>c.dataset.dirId).join()`), 'd3,d1,d2',
+      '写成功后界面保持新顺序');
+    // 保存失败时乐观顺序要回滚：读回服务端那份再重画，不能留一个刷新就消失的顺序。
+    rejectLayoutPut = true;
+    await page.evaluate(`(() => {
+      const grid = document.getElementById('console-directory-grid');
+      const cards = [...grid.querySelectorAll('.directory-card')];
+      const dt = new DataTransfer();
+      cards[1].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+      const box = cards[0].getBoundingClientRect();
+      cards[0].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: box.left + 10, clientY: box.top + 2 }));
+      cards[1].dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+    })()`);
+    await page.evaluate(`new Promise(done => setTimeout(done, 500))`);
+    assert.equal(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card')].map(c=>c.dataset.dirId).join()`), 'd3,d1,d2',
+      '保存失败回滚到服务端顺序');
+    rejectLayoutPut = false;
     await page.screenshot('01-console-open');
 
     // Escape 关不掉一页：它本来就没有「关掉」这回事，页面的退路是地址（后退 / 侧栏
@@ -316,6 +386,9 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '收口 Air 的控制台', '登录页空状态文案', '结算页金额四舍五入错误'], '全部记录把已完成也算上');
     await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='d3'; s.dispatchEvent(new Event('change')); })()`);
     assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '登录页空状态文案'], '按目录收窄');
+    // 任务抽屉现在收在「更多」里：先展开，里面的搜索框才是可聚焦的（闭合的
+    // details 不渲染后代，focus() 不生效）。
+    await page.evaluate(`document.getElementById('console-more').open = true`);
     // 先聚焦再打字：这样后面那条断言才是在问「打字会不会把焦点打掉」，而不是
     // 「一个从没被聚焦过的输入框有没有焦点」。
     await page.evaluate(`(() => { const i=document.getElementById('console-task-search'); i.focus(); i.value='空状态'; i.dispatchEvent(new Event('input')); })()`);
@@ -329,7 +402,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // ── 彩虹圈：运行中的任务，和任务对应的目录 ───────────────────────────
     // 圈只有一份定义（status-presentation.js 只给 running 设了 spinner），所以它
     // 在哪儿出现、在哪儿不出现，永远同步；等待中和出错的任务绝不闪。
-    const ringed = await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row.ring-running')].map(el=>el.innerText.replace(/\\s+/g,''))`);
+    const ringed = await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row.ring-running')].map(el=>el.textContent.replace(/\\s+/g,''))`);
     assert.equal(ringed.length, 1, JSON.stringify(ringed));
     assert.ok(ringed[0].includes('登录页空状态文案'), '在跑的那条任务带圈');
     await page.screenshot('02-console-all-tasks');
@@ -349,7 +422,7 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // 才带圈，不跟着任务跳目录。
     await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='all'; s.dispatchEvent(new Event('change')); })()`);
     await page.evaluate(`(() => { const i=document.getElementById('console-task-search'); i.value=''; i.dispatchEvent(new Event('input')); })()`);
-    await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row')].find(r=>r.innerText.includes('登录页空状态文案')).click()`);
+    await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row')].find(r=>r.textContent.includes('登录页空状态文案')).click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='登录页空状态文案'`));
     assert.ok(await consoleHidden(page), '点走一条就离开控制台那一页');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), null, '落回任务页，地址里不再有 view');
@@ -746,7 +819,7 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     await page.evaluate(`document.getElementById('page-back').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`), '「返回控制台」回到控制台那一页');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview', '回去的这一页地址就是它自己的地址');
-    assert.ok(await page.evaluate(`document.getElementById('console-content').innerText.includes('等我回复')`), '回到的是控制台那一页，不是任务页');
+    assert.ok(await page.evaluate(`document.getElementById('console-content').textContent.includes('等我回复')`), '回到的是控制台那一页，不是任务页');
 
     // ── ⑤ 数据变了，数字和清单跟着变 ─────────────────────────────────────
     routes['/api/air'] = () => json({ ok: true, directories, clis: ['codex'], migration: { errors: [] },

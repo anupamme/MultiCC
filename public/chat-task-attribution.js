@@ -36,6 +36,10 @@
     const loadSuggestions = typeof options.loadSuggestions === 'function' ? options.loadSuggestions : null;
     // 手选多轮的排队行与归属建议共用这张列表（同一个「排队中」状态）。
     const loadOperations = typeof options.loadOperations === 'function' ? options.loadOperations : null;
+    // 目录名来自页面现有的目录清单（chat 页用 /api/directories），不另造数据源。
+    const loadDirectories = typeof options.loadDirectories === 'function' ? options.loadDirectories : null;
+    // 迁移成功后由页面决定怎么落到新目录（Air 外壳是换地址，独立聊天页也是）。
+    const onRelocated = typeof options.onRelocated === 'function' ? options.onRelocated : null;
     const onApplied = typeof options.onApplied === 'function' ? options.onApplied : null;
     const onExternalApply = typeof options.onExternalApply === 'function' ? options.onExternalApply : null;
     const confirmContinue = typeof options.confirmContinue === 'function' ? options.confirmContinue : null;
@@ -51,6 +55,13 @@
     let targetId = '';
     let tasks = [];
     let suggestions = [];
+    let directories = [];
+    let directoriesLoaded = false;
+    let directoriesFlight = null;
+    // identity 行的 accept 被排到轮次结束后，真正的迁移还没发生：裁决行会变成
+    // applied 并从队列里消失。这张本地备忘让「稍后重试」的提示继续留在屏幕上，
+    // 直到用户迁移或忽略。
+    const pendingMoves = new Map();  // decision id → item snapshot
     let toast = null;
     let toastTimer = null;
     // Decisions made on this page are already reflected locally; the broadcast
@@ -165,10 +176,91 @@
       return [title, text(item?.toTaskId).slice(-4).toUpperCase()].filter(Boolean).join(' · ');
     }
 
+    function directoryName(dirId) {
+      const found = directories.find(entry => text(entry?.id) === text(dirId));
+      return text(found?.name).trim() || text(found?.path).trim() || text(dirId);
+    }
+
+    // 目录清单是页面本来就有的数据（/api/directories）；只读一次，等它回来再重画，
+    // 目录名因此不会以裸 id 的样子留在卡片上。
+    function ensureDirectories() {
+      if (!loadDirectories || directoriesLoaded) return Promise.resolve(directories);
+      if (directoriesFlight) return directoriesFlight;
+      directoriesFlight = Promise.resolve()
+        .then(() => loadDirectories())
+        .then(data => {
+          const rows = Array.isArray(data) ? data : Array.isArray(data?.directories) ? data.directories : [];
+          directories = rows.filter(entry => entry && text(entry.id));
+          directoriesLoaded = true;
+          renderSuggestions();
+          return directories;
+        })
+        .catch(() => directories)
+        .finally(() => { directoriesFlight = null; });
+      return directoriesFlight;
+    }
+
+    // A directory hint rides on the verdict, but it is a suggestion of its own:
+    // nothing here moves the task until the user says so.
+    function hintOf(item) {
+      const hint = item?.directoryHint;
+      return hint && text(hint.dirId).trim() ? hint : null;
+    }
+
+    function hintLabel(item) {
+      const hint = hintOf(item);
+      if (!hint) return '';
+      return t('taskAttributionDirHint')
+        .replace('{dir}', directoryName(hint.dirId))
+        .replace('{reason}', text(hint.reason));
+    }
+
+    function errorCodeOf(error) {
+      return text(error?.code || error?.details?.error || error?.error).trim();
+    }
+
+    function relocateErrorLabel(error) {
+      const code = errorCodeOf(error);
+      // 复用 Air 任务面板同一批错误文案：同一个错误码，两个入口不该说两种话。
+      if (code === 'task_busy') return t('airErrTaskBusy');
+      if (code === 'task_archived') return t('airErrTaskArchived');
+      if (code === 'task_shell_shared') return t('airErrShellShared');
+      const detail = text(error?.message || code || error);
+      return detail ? `${t('airErrActionFailed')} · ${detail}` : t('airErrActionFailed');
+    }
+
     // Everything the user has not decided yet, including what they postponed.
     function unresolved() {
       return suggestions.filter(item => item?.state === 'pending' || item?.state === 'unclassified'
         || item?.state === 'deferred' || item?.state === 'queued');
+    }
+
+    function hintActions(item) {
+      return [['taskAttributionDirMove', 'relocate'], ['taskAttributionDismiss', 'dismiss']];
+    }
+
+    // The hint is the same card in the bar and next to the turn; only the class
+    // prefix differs. It never offers "accept": the attribution verdict, when
+    // there is one, is applied as the first half of the move the user confirms.
+    function hintRow(item, hint) {
+      const row = doc.createElement('div');
+      row.className = 'task-attribution-suggestion task-attribution-hint';
+      row.dataset.state = text(item?.state);
+      row.dataset.decision = text(item?.id);
+      row.dataset.dirId = text(hint.dirId);
+      const label = doc.createElement('span');
+      label.className = 'task-attribution-suggestion-label';
+      label.textContent = hintLabel(item);
+      row.append(label);
+      for (const [key, action] of hintActions(item)) {
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.className = `task-attribution-suggestion-${action}`;
+        button.textContent = t(key);
+        button.onclick = () => { void decideHint(item, action, button); };
+        row.append(button);
+      }
+      return row;
     }
 
     function renderSuggestions() {
@@ -183,7 +275,10 @@
       const queued = suggestions.filter(item => item?.state === 'queued');
       const listed = enabled ? [...open, ...queued, ...deferred] : [...open, ...queued];
       proposals.hidden = listed.length === 0;
+      if (listed.some(item => hintOf(item))) void ensureDirectories();
       proposals.replaceChildren(...listed.map(item => {
+        const hint = hintOf(item);
+        if (hint) return hintRow(item, hint);
         const row = doc.createElement('div');
         row.className = 'task-attribution-suggestion';
         row.dataset.state = text(item?.state);
@@ -236,22 +331,28 @@
     }
 
     function inlineSignature(item) {
-      return [item.id, item.fromTaskId, item.toTaskId, item.toTaskTitle || item.taskName || ''].join('|');
+      const hint = hintOf(item);
+      return [item.id, item.fromTaskId, item.toTaskId, item.toTaskTitle || item.taskName || '',
+        hint ? `${hint.dirId}|${hint.reason}|${directoryName(hint.dirId)}` : ''].join('|');
     }
 
     function fillInlineCard(card, item) {
       card.replaceChildren();
       const label = doc.createElement('span');
       label.className = 'task-attribution-inline-label';
-      label.textContent = t('taskAttributionInline').replace('{task}', suggestionTaskLabel(item));
+      const hint = hintOf(item);
+      label.textContent = hint ? hintLabel(item)
+        : t('taskAttributionInline').replace('{task}', suggestionTaskLabel(item));
       card.append(label);
-      for (const [key, action] of [['taskAttributionAccept', 'accept'],
-        ['taskAttributionDismiss', 'dismiss'], ['taskAttributionLater', 'defer']]) {
+      const actions = hint ? hintActions(item)
+        : [['taskAttributionAccept', 'accept'],
+          ['taskAttributionDismiss', 'dismiss'], ['taskAttributionLater', 'defer']];
+      for (const [key, action] of actions) {
         const button = doc.createElement('button');
         button.type = 'button';
         button.className = `task-attribution-inline-${action}`;
         button.textContent = t(key);
-        button.onclick = () => { void decideSuggestion(item, action, button); };
+        button.onclick = () => { void (hint ? decideHint(item, action, button) : decideSuggestion(item, action, button)); };
         card.append(button);
       }
     }
@@ -340,6 +441,99 @@
       }
     }
 
+    // A directory hint is a two-step move at most: when the same verdict also
+    // says which task this turn belongs to, accepting that verdict comes first
+    // (it is what creates/keeps the task address), and only then does the
+    // existing relocate route run. A hint-only row has no address to accept and
+    // goes straight to relocate. Nothing here ever moves a task by itself.
+    async function decideHint(item, action, button) {
+      if (busy || !scope || !request) return null;
+      const hint = hintOf(item);
+      if (!hint) return null;
+      if (action === 'dismiss') {
+        // An identity row whose accept was queued has already been resolved on
+        // the server; there is nothing left to dismiss there. It was only kept
+        // locally so the move could still be retried.
+        if (item.accepted === true || pendingMoves.has(text(item.id))) {
+          pendingMoves.delete(text(item.id));
+          suggestions = suggestions.filter(entry => entry.id !== item.id);
+          closeToast();
+          showToast(t('taskAttributionDismissed'));
+          renderSuggestions();
+          return null;
+        }
+        await decideSuggestion(item, 'dismiss', button);
+        return null;
+      }
+      const taskId = text(item.toTaskId || item.fromTaskId).trim();
+      if (!taskId) {
+        setSummary(relocateErrorLabel({ error: 'task_not_found' }), 'error');
+        return null;
+      }
+      busy = true;
+      if (button) button.disabled = true;
+      renderBar();
+      try {
+        const { shellId } = await scope();
+        if (item.path === 'identity' && item.toTaskId && item.accepted !== true) {
+          const base = `/api/task-shells/${encodeURIComponent(shellId)}/attribution-decisions/${encodeURIComponent(item.id)}`;
+          const accepted = await request('POST', `${base}/accept`, { clientMsgId: makeId() });
+          if (accepted?.state === 'queued') {
+            // The turn is still running. Keep the move pending locally: the row
+            // will turn `applied` shortly, but the relocate still has not run.
+            pendingMoves.set(item.id, { ...item, accepted: true, state: 'pending' });
+            closeToast();
+            setSummary(t('airErrTaskBusy'), 'warn');
+            showToast(t('airErrTaskBusy'));
+            return accepted;
+          }
+        }
+        const result = await request('POST',
+          `/api/task-board/tasks/${encodeURIComponent(taskId)}/relocate`, { dirId: hint.dirId });
+        if (result && result.ok === false) {
+          throw Object.assign(new Error(text(result.error || 'relocate_failed')), { code: text(result.error).trim() });
+        }
+        pendingMoves.delete(item.id);
+        resolvedHere.add(item.id);
+        suggestions = suggestions.filter(entry => entry.id !== item.id);
+        closeToast();
+        // 与 Air 任务面板同一个成功句式；迁移不携带文件时 {carried} 为空。
+        showToast(t('airMoveDone').replace('{dir}', directoryName(hint.dirId)).replace('{carried}', ''));
+        // 纯 hint 行还没有写入任何归属，成功后把裁决行标记为 dismissed；identity
+        // 行已经在 accept 里 resolved，服务端会拒绝再次 dismiss —— 那不是迁移失败。
+        try {
+          await request('POST',
+            `/api/task-shells/${encodeURIComponent(shellId)}/attribution-decisions/${encodeURIComponent(item.id)}/dismiss`, {});
+        } catch (error) {
+          const code = errorCodeOf(error);
+          if (!/attribution_decision_(resolved|not_found)/.test(code)) report(error);
+        }
+        onApplied?.(result, { undone: false, relocated: true });
+        onRelocated?.({ dirId: hint.dirId, taskId, result });
+        return result;
+      } catch (error) {
+        const code = errorCodeOf(error);
+        if (code === 'task_busy') {
+          // 任务运行中不能迁移：提示必须留在原地，用户结束本轮后可以再点一次。
+          if (item.path === 'identity' && item.toTaskId) {
+            pendingMoves.set(item.id, { ...item, accepted: true, state: 'pending' });
+          }
+          setSummary(t('airErrTaskBusy'), 'warn');
+          showToast(t('airErrTaskBusy'));
+        } else {
+          const message = relocateErrorLabel(error);
+          setSummary(message, 'error');
+          showToast(message);
+        }
+        report(error);
+        return null;
+      } finally {
+        busy = false;
+        renderBar();
+        await refreshSuggestions();
+      }
+    }
+
     async function refreshSuggestions() {
       if (!loadSuggestions || !scope) { suggestions = []; renderSuggestions(); return []; }
       try {
@@ -351,18 +545,33 @@
         // Unclassified rows are the verdicts the host could not read. They are
         // shown so the turn is never silently treated as a permanent "same".
         // Postponed rows stay in the queue too — "later" is not a decision.
+        const seen = new Set();
         const decisions = (Array.isArray(data?.decisions) ? data.decisions : [])
           .filter(item => item?.state === 'pending' || item?.state === 'unclassified'
-            || item?.state === 'deferred' || item?.state === 'queued');
+            || item?.state === 'deferred' || item?.state === 'queued')
+          // 同一裁决只出现一次：一次广播、一次补读、一次 WS 重放都不该叠出第二张卡。
+          .filter(item => {
+            const id = text(item?.id);
+            if (!id || seen.has(id)) return false;
+            seen.add(id);
+            return true;
+          });
         // 手选多轮的归属调整也在同一张队列里排队：它同样是「已经接受、还没生效」，
         // 所以并排显示、同样能取消，而不是关掉面板就再也看不见。
         const operations = (Array.isArray(pending?.operations) ? pending.operations : [])
           .filter(row => row?.status === 'queued')
           .map(row => ({ id: row.id, source: 'operation', state: 'queued', toTaskId: row.targetTaskId,
             turns: Array.isArray(row.turns) ? row.turns : [] }));
+        // identity 行的 accept 可能已经在服务端 applied（轮次结束后），裁决行因此
+        // 不再出现在列表里；但迁移还没发生，本地备忘把它补回来，直到用户处理完。
+        const known = new Set([...decisions, ...operations].map(entry => text(entry?.id)));
+        for (const [id, item] of pendingMoves) {
+          if (!known.has(id)) decisions.push({ ...item, accepted: true, state: 'pending' });
+        }
         suggestions = [...decisions, ...operations];
       } catch (_) {
-        suggestions = [];
+        // 补读失败时不要把「稍后重试」的迁移提示一起清掉。
+        suggestions = [...pendingMoves.values()].map(item => ({ ...item, accepted: true, state: 'pending' }));
       }
       renderSuggestions();
       return suggestions;

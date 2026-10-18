@@ -9,7 +9,9 @@ import '../../services/air_service.dart';
 import '../../services/manage_service.dart';
 import '../../services/session_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/ui_layout_service.dart';
 import '../../theme.dart';
+import '../../utils/manual_order.dart';
 import '../workspace_navigation_drawer.dart';
 import 'air_attention_screen.dart';
 import 'air_directory_search.dart';
@@ -113,11 +115,27 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     settings: widget.settings,
     httpClient: widget.httpClient,
   );
+
+  /// 目录顺序与 Web 共用服务端 ui-layout.json，这一层只读/写，不自己发明格式。
+  late final UiLayoutService _layoutService = UiLayoutService(
+    settings: widget.settings,
+    httpClient: widget.httpClient,
+  );
   final _searchController = TextEditingController();
   final _drawerKey = GlobalKey();
   AirLocalStore? _localStore;
+
+  /// 拖拽中的乐观顺序；空 = 还没拖过，沿用快照自己的顺序。
+  final ManualOrderDraft _dirOrder = ManualOrderDraft();
+
+  /// 每次拖动 +1。读盘回来时如果版本变了，说明用户已经动过手，不能用旧顺序
+  /// 覆盖屏幕上刚排好的那一列。
+  int _dirOrderVersion = 0;
   AirDirectoryTaskSort _taskSort = AirDirectoryTaskSort.message;
   int _taskPage = 1;
+
+  /// 统计格与工具格收进底部的「更多」：控制台第一屏是任务和目录，不是读数墙。
+  bool _showMore = false;
 
   /// 全文检索（同 Web 控制台挂的 `MultiCCTaskSearch`）。本地按标题筛是即时反馈，
   /// 也是服务端结果拿不到时的退路：断网、老服务没有这条路由、接口报错，都只表现
@@ -163,6 +181,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     super.initState();
     _search.addListener(_onSearchChanged);
     unawaited(_loadLocalStore());
+    unawaited(_loadDirectoryOrder());
     _load();
   }
 
@@ -172,6 +191,86 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
       if (mounted) setState(() => _localStore = store);
     } catch (_) {
       // 本机访问记录不可读时仍可按消息排序，控制台不因此失败。
+    }
+  }
+
+  /// 目录顺序住在服务端（与 Web 共用 ui-layout.json），读不到就按默认顺序。
+  /// 用户已经拖过（版本变了）时不要拿读盘结果覆盖刚排好的那一列。
+  Future<void> _loadDirectoryOrder() async {
+    final version = _dirOrderVersion;
+    try {
+      await _layoutService.ensureLoaded();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || version != _dirOrderVersion) return;
+    setState(() => _dirOrder.replace(_layoutService.dirOrder));
+  }
+
+  /// 下拉刷新时重读一次排布：在网页或另一台设备上排过的顺序应该跟着回来。
+  Future<void> _reloadDirectoryOrder() async {
+    final version = _dirOrderVersion;
+    try {
+      await _layoutService.reload();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || version != _dirOrderVersion) return;
+    setState(() => _dirOrder.replace(_layoutService.dirOrder));
+  }
+
+  Future<void> _refresh() async {
+    await Future.wait([_load(), _reloadDirectoryOrder()]);
+  }
+
+  /// 拖完一次：先把新顺序留在屏幕上，再发保存请求。失败回滚到拖之前并提示；
+  /// 成功则认服务端剔完 id 的定稿。
+  void _reorderDirectories(
+    List<AirDirectory> directories,
+    int oldIndex,
+    int newIndex,
+  ) {
+    final ids = [for (final directory in directories) directory.id];
+    final snapshot = _dirOrder.drop(ids, oldIndex, newIndex);
+    if (snapshot == null) return;
+    // 捕获这一次的顺序：下一次拖拽会改掉 _dirOrder，不能让先发的请求带上后一次
+    // 的顺序。
+    final order = _dirOrder.order;
+    _dirOrderVersion++;
+    setState(() {});
+    unawaited(_saveDirectoryOrder(snapshot, order, _dirOrderVersion));
+  }
+
+  /// [version] 是这次拖拽发出时的版本号。用户连着拖第二次时，第一次的应答
+  /// 已经过期：既不能用它的服务端定稿覆盖屏幕，也不该拿它的失败回滚掉第二次。
+  Future<void> _saveDirectoryOrder(
+    List<String> snapshot,
+    List<String> order,
+    int version,
+  ) async {
+    final saved = await _layoutService.saveDirOrder(order);
+    if (!mounted) return;
+    if (!saved) {
+      if (version != _dirOrderVersion) return;
+      setState(() {
+        _dirOrder.rollback(snapshot);
+        _dirOrderVersion++;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            t('airDirReorderFailed', {'error': t('airAdminRefreshPageRetry')}),
+          ),
+        ),
+      );
+      return;
+    }
+    final server = _layoutService.dirOrder;
+    // 服务端应答里没有 layout（老服务的空响应）时保留本地顺序，别把用户刚拖的
+    // 结果换成默认顺序。
+    if (server.isNotEmpty && version == _dirOrderVersion) {
+      _dirOrderVersion++;
+      setState(() => _dirOrder.replace(server));
     }
   }
 
@@ -318,6 +417,9 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
   String _directoryName(String dirId) =>
       _data?.directoryOf(dirId)?.name ?? dirId;
 
+  List<AirTask> _byUpdatedDesc(Iterable<AirTask> rows) =>
+      rows.toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
   Future<void> _deleteTask(AirTask task) async {
     final deleted = await deleteAirTaskWithConfirmation(
       context: context,
@@ -433,9 +535,35 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
         .skip((page - 1) * _taskPageSize)
         .take(_taskPageSize)
         .toList();
+    // 上半区的跨目录任务流。一条任务只出现在一个分区里（需要你处理的不会再在
+    // 「正在运行」里出现一次），顺序统一按 updatedAt 倒序 —— 同一套排序键，
+    // 三个分区加起来就是「最近动过的东西」的完整视图。
+    final attention = _byUpdatedDesc(tasks.where(airTaskTodo));
+    final attentionIds = {for (final task in attention) task.id};
+    final runningTasks = _byUpdatedDesc(
+      tasks.where(
+        (task) => airTaskRunning(task) && !attentionIds.contains(task.id),
+      ),
+    );
+    final runningIds = {for (final task in runningTasks) task.id};
+    final recent = _byUpdatedDesc(
+      tasks.where(
+        (task) =>
+            task.status != 'archived' &&
+            !attentionIds.contains(task.id) &&
+            !runningIds.contains(task.id),
+      ),
+    );
+    // 目录表跟着服务端 ui-layout.json 的手动顺序走；没排过的项按接口顺序缀在后面
+    // （applyManualOrder 的语义见 utils/manual_order.dart，与 Web 一字不差）。
+    final directories = applyManualOrder(
+      data?.directories ?? const <AirDirectory>[],
+      _dirOrder.order,
+      (directory) => directory.id,
+    );
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: _refresh,
       child: ListView(
         key: const ValueKey('air-console'),
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
@@ -467,77 +595,17 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
               ),
               const SizedBox(height: 14),
             ],
-            _Tiles(
-              running: executing.length,
-              runningDirectories: running.length,
-              waiting: waitingMe.length,
-              failed: failed.length,
-              today: finished.length,
-              all: active.length,
-              total: tasks.length,
-              selected: _tile,
-              onSelect: (tile) =>
-                  setState(() => _tile = _tile == tile ? null : tile),
+            // 控制台先回答「现在有什么在等我 / 在跑 / 刚动过」，再回答「我有哪些
+            // 目录」。统计与工具不再占首屏 —— 它们收进底部的「更多」。
+            _TaskStream(
+              attention: attention,
+              running: runningTasks,
+              recent: recent,
+              directoryName: _directoryName,
+              onOpenTask: widget.onOpenTask,
+              onToggleTodo: _toggleTodo,
             ),
-            const SizedBox(height: 8),
-            _MetaLine(
-              directories: data?.directories.length ?? 0,
-              enabledSchedules: enabledSchedules,
-              totalSchedules: _schedules?.length,
-              schedulesFailed: _cronFailed,
-              onOpenLibrary: widget.onOpenLibrary,
-              onOpenSchedules: _openSchedules,
-            ),
-            if (_tile != null) ...[
-              const SizedBox(height: 10),
-              KeyedSubtree(
-                key: _drawerKey,
-                child: _TileDrawer(
-                  tile: _tile!,
-                  executing: executing,
-                  waitingMe: waitingMe,
-                  failed: failed,
-                  finished: finished,
-                  rows: rows,
-                  shown: shown,
-                  page: page,
-                  pageCount: pageCount,
-                  sort: _taskSort,
-                  sortAt: _taskSortAt,
-                  searchController: _searchController,
-                  status: _status,
-                  dir: _dir,
-                  fullText: _fullText,
-                  directories: data?.directories ?? const [],
-                  directoryName: _directoryName,
-                  onQuery: _onQueryChanged,
-                  onStatus: (value) => setState(() {
-                    _status = value;
-                    _taskPage = 1;
-                  }),
-                  onScope: _onScopeChanged,
-                  onDir: (value) => setState(() {
-                    _dir = value;
-                    _taskPage = 1;
-                  }),
-                  onSort: (value) => setState(() {
-                    _taskSort = value;
-                    _taskPage = 1;
-                  }),
-                  onPage: _changePage,
-                  onOpenTask: widget.onOpenTask,
-                  onDeleteTask: _deleteTask,
-                  onToggleTodo: _toggleTodo,
-                  unread: urgent.length,
-                  onOpenAttention: () => _openAttention(urgent),
-                  onClose: () => setState(() => _tile = null),
-                ),
-              ),
-            ],
             const SizedBox(height: 15),
-            // 控制台要回答的是两件「一眼扫完」的事：谁在等我，以及我有哪些目录。
-            // 顺序照 Web `renderOverview`：统计带 → 小字 → 展开的清单 → 工作目录 →
-            // AI Assistant → 工具格。
             _Panel(
               eyebrow: 'WORK DIRECTORIES',
               title: t('airAdminWorkDirectories'),
@@ -547,36 +615,180 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                 onTap: widget.onOpenLibrary,
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final directory
-                      in data?.directories ?? const <AirDirectory>[])
-                    _DirectoryRow(
-                      directory: directory,
-                      tasks: tasks
-                          .where((task) => task.dirId == directory.id)
-                          .toList(),
-                      running: running.contains(directory.id),
-                      onTap: () => widget.onSelectDirectory(directory.id),
+                  if (directories.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.drag_indicator_rounded,
+                            size: 14,
+                            color: AppColors.faint,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              t('airDirDragHint'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.faint,
+                                fontSize: 10.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  if ((data?.directories ?? const []).isEmpty)
-                    _Empty(t('airAdminNoDirectories')),
+                  if (directories.isEmpty)
+                    _Empty(t('airAdminNoDirectories'))
+                  else
+                    ReorderableListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: EdgeInsets.zero,
+                      buildDefaultDragHandles: false,
+                      itemCount: directories.length,
+                      onReorder: (oldIndex, newIndex) =>
+                          _reorderDirectories(directories, oldIndex, newIndex),
+                      proxyDecorator: (child, index, animation) => Material(
+                        color: AppColors.panel,
+                        elevation: 3,
+                        borderRadius: BorderRadius.circular(
+                          AppColors.radiusChip,
+                        ),
+                        child: child,
+                      ),
+                      itemBuilder: (context, index) {
+                        final directory = directories[index];
+                        return KeyedSubtree(
+                          key: ValueKey('air-console-dir-item-${directory.id}'),
+                          child: _DirectoryRow(
+                            directory: directory,
+                            tasks: tasks
+                                .where((task) => task.dirId == directory.id)
+                                .toList(),
+                            running: running.contains(directory.id),
+                            onTap: () => widget.onSelectDirectory(directory.id),
+                            // 只有手柄接长按拖拽：行本身仍负责点击，外层
+                            // ListView 仍收得到纵向滑动 —— 三件事不抢同一个手势。
+                            dragHandle: ReorderableDelayedDragStartListener(
+                              key: ValueKey(
+                                'air-console-dir-handle-${directory.id}',
+                              ),
+                              index: index,
+                              child: Tooltip(
+                                message: t('airDirDragHint'),
+                                child: const Padding(
+                                  padding: EdgeInsets.only(left: 4),
+                                  child: Icon(
+                                    Icons.drag_indicator_rounded,
+                                    size: 18,
+                                    color: AppColors.faint,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
             const SizedBox(height: 15),
             _AssistantCard(onTap: () => unawaited(_openAiAssistant())),
             const SizedBox(height: 15),
-            _Panel(
-              eyebrow: 'SYSTEM TOOLS',
-              title: t('airAdminServicesAndSettings'),
-              child: _ToolGrid(
-                onOpenDocs: () =>
-                    widget.onOpenDestination(WorkspaceDestination.docs),
-                onOpenMemory: widget.onOpenMemory,
-                onOpenTaskgraph: widget.onOpenTaskgraph,
-                onOpenSettings: () =>
-                    widget.onOpenDestination(WorkspaceDestination.global),
-                onOpenSchedules: _openSchedules,
+            _MorePanel(
+              expanded: _showMore,
+              onToggle: () => setState(() => _showMore = !_showMore),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _Tiles(
+                    running: executing.length,
+                    runningDirectories: running.length,
+                    waiting: waitingMe.length,
+                    failed: failed.length,
+                    today: finished.length,
+                    all: active.length,
+                    total: tasks.length,
+                    selected: _tile,
+                    onSelect: (tile) =>
+                        setState(() => _tile = _tile == tile ? null : tile),
+                  ),
+                  const SizedBox(height: 8),
+                  _MetaLine(
+                    directories: data?.directories.length ?? 0,
+                    enabledSchedules: enabledSchedules,
+                    totalSchedules: _schedules?.length,
+                    schedulesFailed: _cronFailed,
+                    onOpenLibrary: widget.onOpenLibrary,
+                    onOpenSchedules: _openSchedules,
+                  ),
+                  if (_tile != null) ...[
+                    const SizedBox(height: 10),
+                    KeyedSubtree(
+                      key: _drawerKey,
+                      child: _TileDrawer(
+                        tile: _tile!,
+                        executing: executing,
+                        waitingMe: waitingMe,
+                        failed: failed,
+                        finished: finished,
+                        rows: rows,
+                        shown: shown,
+                        page: page,
+                        pageCount: pageCount,
+                        sort: _taskSort,
+                        sortAt: _taskSortAt,
+                        searchController: _searchController,
+                        status: _status,
+                        dir: _dir,
+                        fullText: _fullText,
+                        directories: data?.directories ?? const [],
+                        directoryName: _directoryName,
+                        onQuery: _onQueryChanged,
+                        onStatus: (value) => setState(() {
+                          _status = value;
+                          _taskPage = 1;
+                        }),
+                        onScope: _onScopeChanged,
+                        onDir: (value) => setState(() {
+                          _dir = value;
+                          _taskPage = 1;
+                        }),
+                        onSort: (value) => setState(() {
+                          _taskSort = value;
+                          _taskPage = 1;
+                        }),
+                        onPage: _changePage,
+                        onOpenTask: widget.onOpenTask,
+                        onDeleteTask: _deleteTask,
+                        onToggleTodo: _toggleTodo,
+                        unread: urgent.length,
+                        onOpenAttention: () => _openAttention(urgent),
+                        onClose: () => setState(() => _tile = null),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 15),
+                  _Panel(
+                    eyebrow: 'SYSTEM TOOLS',
+                    title: t('airAdminServicesAndSettings'),
+                    child: _ToolGrid(
+                      onOpenDocs: () =>
+                          widget.onOpenDestination(WorkspaceDestination.docs),
+                      onOpenMemory: widget.onOpenMemory,
+                      onOpenTaskgraph: widget.onOpenTaskgraph,
+                      onOpenSettings: () =>
+                          widget.onOpenDestination(WorkspaceDestination.global),
+                      onOpenSchedules: _openSchedules,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -951,6 +1163,292 @@ class _AssistantCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 上半区：跨目录的任务流。
+///
+/// 控制台先回答「现在有什么在等我 / 在跑 / 刚动过」，再回答「我有哪些目录」。
+/// 三个分区共用同一套判定（`air_task_status.dart`）和同一个排序键（`updatedAt`
+/// 倒序），一条任务只会落在一个分区里，因此这里数出来的东西和侧栏、目录首页
+/// 说的是同一件事。
+class _TaskStream extends StatelessWidget {
+  const _TaskStream({
+    required this.attention,
+    required this.running,
+    required this.recent,
+    required this.directoryName,
+    required this.onOpenTask,
+    required this.onToggleTodo,
+  });
+
+  /// 每个分区最多铺几条。控制台是「扫一眼」的地方，不是任务列表；更长的清单在
+  /// 对应格子的抽屉和目录首页里。
+  static const int limit = 4;
+
+  final List<AirTask> attention;
+  final List<AirTask> running;
+  final List<AirTask> recent;
+  final String Function(String) directoryName;
+  final ValueChanged<AirTask> onOpenTask;
+  final ValueChanged<AirTask> onToggleTodo;
+
+  @override
+  Widget build(BuildContext context) {
+    final sections = <Widget>[
+      // 「需要你处理」常驻：空的时候给一句话，而不是让整个分区消失 —— 用户要
+      // 确认的不是「有没有分区」，而是「现在确实没有我要做的事」。
+      _section(
+        'attention',
+        t('airNeedsYou'),
+        attention,
+        empty: t('airNothingNeedsYou'),
+      ),
+      if (running.isNotEmpty)
+        _section('running', t('airStreamRunningNow'), running),
+      if (recent.isNotEmpty) _section('recent', t('airStreamRecent'), recent),
+    ];
+    return _Panel(
+      eyebrow: 'TASK FIRST',
+      title: t('airRecentTasks'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < sections.length; i++) ...[
+            if (i > 0) const SizedBox(height: 12),
+            sections[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _section(
+    String id,
+    String title,
+    List<AirTask> rows, {
+    String? empty,
+  }) {
+    final shown = rows.take(limit).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: AppColors.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
+            if (rows.length > limit)
+              Text(
+                t('airAdminTaskCountLimited', {
+                  'total': '${rows.length}',
+                  'shown': '${shown.length}',
+                }),
+                style: const TextStyle(color: AppColors.faint, fontSize: 9.5),
+              ),
+          ],
+        ),
+        if (empty != null && shown.isEmpty)
+          _Empty(empty)
+        else
+          for (final task in shown)
+            _StreamTaskRow(
+              section: id,
+              task: task,
+              directoryName: directoryName(task.dirId),
+              onTap: () => onOpenTask(task),
+              onLongPress: () => onToggleTodo(task),
+            ),
+      ],
+    );
+  }
+}
+
+/// 任务流里的一条：状态点 + 任务名 + 所属目录 + 箭头，点一下直达任务。
+class _StreamTaskRow extends StatelessWidget {
+  const _StreamTaskRow({
+    required this.section,
+    required this.task,
+    required this.directoryName,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final String section;
+  final AirTask task;
+  final String directoryName;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    final spec = airTaskSpec(task);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: ValueKey('air-console-stream-$section-${task.id}'),
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(AppColors.radiusChip),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(2, 7, 2, 7),
+          child: Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                margin: const EdgeInsets.only(right: 7),
+                decoration: BoxDecoration(
+                  color: spec.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      task.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.text,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '$directoryName · ${spec.airLabel}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.faint,
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                size: 16,
+                color: AppColors.faint,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 底部「更多」：统计带、背景信息小字、展开的清单和系统工具都收在这里。
+///
+/// 它们仍然有用，但不该占首屏 —— 首屏留给任务流和目录。收起时只留一行标题，
+/// 展开后内容与从前完全一致（没有丢功能，只是换了位置）。
+class _MorePanel extends StatelessWidget {
+  const _MorePanel({
+    required this.expanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.panel,
+        borderRadius: BorderRadius.circular(AppColors.radiusPanel),
+        border: Border.all(color: AppColors.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: const ValueKey('air-console-more'),
+              onTap: onToggle,
+              borderRadius: BorderRadius.circular(AppColors.radiusPanel),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(13, 12, 13, 12),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.tune_rounded,
+                      size: 18,
+                      color: AppColors.muted,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            t('airMore'),
+                            style: const TextStyle(
+                              color: AppColors.text,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            t('airAdminServicesAndSettings'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.faint,
+                              fontSize: 10.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      expanded ? t('airAdminCollapse') : t('airExpand'),
+                      style: const TextStyle(
+                        color: AppColors.accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 18,
+                      color: AppColors.faint,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded)
+            KeyedSubtree(
+              key: const ValueKey('air-console-more-body'),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(13, 0, 13, 13),
+                child: child,
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -1637,12 +2135,16 @@ class _DirectoryRow extends StatelessWidget {
     required this.tasks,
     required this.running,
     required this.onTap,
+    this.dragHandle,
   });
 
   final AirDirectory directory;
   final List<AirTask> tasks;
   final bool running;
   final VoidCallback onTap;
+
+  /// 拖拽手柄。只有控制台的目录表传它；其它地方（如果有）沿旧样子渲染。
+  final Widget? dragHandle;
 
   @override
   Widget build(BuildContext context) {
@@ -1726,6 +2228,7 @@ class _DirectoryRow extends StatelessWidget {
                   ),
                 ],
               ),
+              if (dragHandle != null) dragHandle!,
               const Icon(
                 Icons.chevron_right_rounded,
                 size: 16,

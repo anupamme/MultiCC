@@ -34,6 +34,10 @@ function createAttributionDecisions(deps) {
       toTaskId: record.toTaskId, toTaskTitle: deps.taskTitle?.(record.toTaskId) || record.taskName || null,
       taskName: record.taskName || null, relation: record.relation, mode: record.mode, action: record.action,
       path: record.path, state: record.state, hidden: record.hidden === true, reason: record.reason,
+      // A migrate suggestion travels with the verdict it was judged with, but it
+      // is never the verdict: nothing in this module acts on it. Clients read it
+      // and call the existing relocate route only after the user confirms.
+      directoryHint: record.directoryHint || null,
       createdAt: record.createdAt, updatedAt: record.updatedAt || null, revisions: Number(record.revisions) || 0,
       resolvedAt: record.resolvedAt || null, deferredAt: record.deferredAt || null,
       queuedAt: record.queuedAt || null, queueAttempts: Number(record.queueAttempts) || 0,
@@ -59,6 +63,30 @@ function createAttributionDecisions(deps) {
       || row.state === 'deferred' || row.state === 'queued';
   }
 
+  // A directory hint is only a suggestion. It is validated again here (the
+  // parse layer already dropped unknown/current ids) because this is the write
+  // that becomes durable and broadcast: a task already living in the target
+  // directory, or a hint without a reason, is not actionable and is dropped.
+  function normalizeDirectoryHint(value, source) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const dirId = String(value.dirId || '').trim();
+    const reason = String(value.reason || '').trim().slice(0, 240);
+    const current = String(source?.dirId || '').trim();
+    if (!dirId || !reason || (current && dirId === current)) return null;
+    return { dirId, reason };
+  }
+
+  // The same task must not be asked to move to the same directory twice: an
+  // open row is still waiting for an answer, and a dismissed row is the user
+  // having answered "no". Shadow rows are excluded because the user never saw
+  // them, so they cannot count as a previous prompt.
+  function directoryHintAlreadyTold(sourceTaskId, dirId, selfId) {
+    return store.list('attr-decision').some(row => row.id !== selfId
+      && row.fromTaskId === sourceTaskId && row.hidden !== true
+      && row.directoryHint?.dirId === dirId
+      && ['pending', 'deferred', 'queued', 'dismissed'].includes(row.state));
+  }
+
   // Recording is idempotent per (conversation, turn): re-running the same Aux
   // verdict must not pile up rows or apply itself twice. A *pending* row is the
   // one exception: a fresh verdict for the same turn refreshes it in place, so a
@@ -72,6 +100,9 @@ function createAttributionDecisions(deps) {
       targetTaskId: input.taskId || null, currentTaskId: input.currentTaskId || source.id });
     const id = idOf(receipt.shellId, receiptId, input.turnId);
     const existing = store.get('attr-decision', id);
+    const requestedHint = normalizeDirectoryHint(input.directoryHint, source);
+    const directoryHint = requestedHint && !directoryHintAlreadyTold(source.id, requestedHint.dirId, id)
+      ? requestedHint : null;
     // An unusable verdict (no JSON, model unavailable, unreadable target) is
     // still a fact about the turn. It is recorded as `unclassified` — visible
     // and dismissible, but never a silent permanent "same" and never an applied
@@ -90,7 +121,33 @@ function createAttributionDecisions(deps) {
       notify(sessionId, { decisionId: row.id, state: row.state, kind: 'recorded' });
       return { action: 'none', decision: publicDecision(row) };
     }
-    if (plan.action === 'none') return { action: 'none', decision: null };
+    // A first-turn verdict can be "same" (there is no prior task to name) and
+    // still carry the only useful part of the judgement: this conversation
+    // belongs in another directory. That case needs its own suggestion row,
+    // with no attribution address to apply — the hint is all it offers.
+    if (plan.action === 'none') {
+      if (!directoryHint || plan.mode === 'off') return { action: 'none', decision: null };
+      if (existing && existing.state !== 'failed' && existing.state !== 'pending') {
+        return { action: existing.action, decision: publicDecision(existing) };
+      }
+      const hintAction = plan.mode === 'shadow' ? 'record' : 'suggest';
+      const hintRow = {
+        id, shellId: receipt.shellId, sessionId, receiptId, turnId: input.turnId || null,
+        fromTaskId: source.id, toTaskId: null, taskName: input.taskName || null, relatedTaskId: null,
+        relation: input.relation === 'new' ? 'new' : 'same', path: 'none',
+        mode: plan.mode, action: hintAction, reason: 'directory_hint',
+        hidden: hintAction === 'record', state: 'pending', directoryHint,
+        createdAt: existing?.createdAt || now(), updatedAt: now(),
+        revisions: existing ? (Number(existing.revisions) || 0) + 1 : 0,
+        runId: input.runId || null, anchorMessageId: input.anchorMessageId || null,
+      };
+      store.set('attr-decision', id, hintRow);
+      if (hintAction !== 'record') {
+        notify(sessionId, { decisionId: hintRow.id, state: hintRow.state, kind: 'recorded',
+          directoryHint: hintRow.directoryHint });
+      }
+      return { action: hintAction, decision: publicDecision(hintRow) };
+    }
     if (existing && existing.state !== 'failed' && existing.state !== 'pending') {
       return { action: existing.action, decision: publicDecision(existing) };
     }
@@ -100,7 +157,7 @@ function createAttributionDecisions(deps) {
       // A new identity is created through the shell cursor; naming an existing
       // task only re-attributes this turn.
       path: input.relation === 'new' ? 'identity' : 'overlay',
-      mode: plan.mode, action: plan.action, reason: plan.reason,
+      mode: plan.mode, action: plan.action, reason: plan.reason, directoryHint,
       hidden: plan.action === 'record', state: 'pending', createdAt: now(), runId: input.runId || null,
       anchorMessageId: input.anchorMessageId || null };
     const row = existing
@@ -109,7 +166,8 @@ function createAttributionDecisions(deps) {
       : next;
     store.set('attr-decision', id, row);
     if (row.action !== 'apply') {
-      notify(sessionId, { decisionId: row.id, state: row.state, kind: 'recorded' });
+      notify(sessionId, { decisionId: row.id, state: row.state, kind: 'recorded',
+        ...(row.directoryHint ? { directoryHint: row.directoryHint } : {}) });
       return { action: row.action, decision: publicDecision(row) };
     }
     // `auto` applies here, inside the runtime that owns the write, so the caller
@@ -131,7 +189,8 @@ function createAttributionDecisions(deps) {
           return store.get('attr-decision', row.id);
         });
         notify(row.sessionId, { decisionId: settled.id, state: settled.state, kind: 'applied',
-          toTaskId: settled.toTaskId, fromTaskId: settled.fromTaskId });
+          toTaskId: settled.toTaskId, fromTaskId: settled.fromTaskId,
+          ...(settled.directoryHint ? { directoryHint: settled.directoryHint } : {}) });
         return settled;
       }
       const scope = deps.scopeOf?.(row.shellId);
@@ -144,7 +203,8 @@ function createAttributionDecisions(deps) {
         return store.get('attr-decision', row.id);
       });
       notify(row.sessionId, { decisionId: settled.id, state: settled.state, kind: 'applied',
-        toTaskId: settled.toTaskId, fromTaskId: settled.fromTaskId });
+        toTaskId: settled.toTaskId, fromTaskId: settled.fromTaskId,
+        ...(settled.directoryHint ? { directoryHint: settled.directoryHint } : {}) });
       return settled;
     } catch (error) {
       store.set('attr-decision', row.id, { ...row, state: 'failed', lastError: String(error.message).slice(0, 200) });

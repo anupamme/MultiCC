@@ -45,7 +45,11 @@ class UiLayout {
 /// [ensureLoaded] 幂等，谁都能 await，只有第一个真的发请求。
 class UiLayoutService {
   final SettingsService settings;
-  UiLayoutService({required this.settings});
+
+  /// 与别处一样可注入，测试里因此不会真去连 localhost。
+  final http.Client? httpClient;
+
+  UiLayoutService({required this.settings, this.httpClient});
 
   /// 迁移用的旧键：目录顺序从前存在这里（老首页的目录列表）。
   static const String legacyDirOrderKey = 'directory_order';
@@ -73,11 +77,19 @@ class UiLayoutService {
     return _loading!;
   }
 
+  Future<http.Response> _get(Uri url) =>
+      httpClient?.get(url, headers: _headers) ??
+      http.get(url, headers: _headers);
+
+  Future<http.Response> _putRequest(Uri url, String body) =>
+      httpClient?.put(url, headers: _headers, body: body) ??
+      http.put(url, headers: _headers, body: body);
+
   Future<void> _load() async {
     try {
-      final res = await http
-          .get(Uri.parse(settings.buildHttpUrl('/api/ui-layout')), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await _get(
+        Uri.parse(settings.buildHttpUrl('/api/ui-layout')),
+      ).timeout(const Duration(seconds: 10));
       if (res.statusCode >= 400) return;
       final j = jsonDecode(utf8.decode(res.bodyBytes)) as Map;
       _layout = UiLayout.fromJson((j['layout'] as Map?)?.cast<String, dynamic>());
@@ -105,30 +117,40 @@ class UiLayoutService {
 
   /// 乐观写：先更新内存里的排布让 UI 立刻跟手，请求在后面落地。服务端的应答
   /// （已经剔掉不存在的 id）回来后覆盖内存值。
-  Future<void> _put(String path, List<String> order, void Function() apply) async {
+  ///
+  /// 返回请求是否真的落地。调用方（控制台的拖拽）据此决定回滚并提示；不关心结果
+  /// 的调用方照旧可以忽略返回值。失败时**不**动内存里的排布 —— 谁乐观写完谁负责
+  /// 回滚，避免这里替调用方猜测它想回到哪一版。
+  Future<bool> _put(
+    String path,
+    List<String> order,
+    void Function() apply,
+  ) async {
     apply();
     try {
-      final res = await http
-          .put(
-            Uri.parse(settings.buildHttpUrl(path)),
-            headers: _headers,
-            body: jsonEncode({'order': order}),
-          )
-          .timeout(const Duration(seconds: 10));
-      if (res.statusCode >= 400) return;
+      final res = await _putRequest(
+        Uri.parse(settings.buildHttpUrl(path)),
+        jsonEncode({'order': order}),
+      ).timeout(const Duration(seconds: 10));
+      if (res.statusCode >= 400) return false;
       final j = jsonDecode(utf8.decode(res.bodyBytes)) as Map;
-      _layout = UiLayout.fromJson((j['layout'] as Map?)?.cast<String, dynamic>());
-    } catch (_) {}
+      _layout = UiLayout.fromJson(
+        (j['layout'] as Map?)?.cast<String, dynamic>(),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
-  Future<void> saveDirOrder(List<String> order) {
+  Future<bool> saveDirOrder(List<String> order) {
     final next = List<String>.from(order);
     return _put('/api/ui-layout/dir-order', next, () {
       _layout = UiLayout(dirOrder: next, sessionOrder: _layout.sessionOrder);
     });
   }
 
-  Future<void> saveSessionOrder(String dirId, List<String> order) {
+  Future<bool> saveSessionOrder(String dirId, List<String> order) {
     final next = List<String>.from(order);
     return _put(
       '/api/ui-layout/session-order/${Uri.encodeComponent(dirId)}',

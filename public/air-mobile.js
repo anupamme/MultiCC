@@ -140,17 +140,25 @@
     panel.append(head, tabs, ...rows.slice(0, consoleView === 'recent' ? 3 : 5).map(task => taskRow(task, ctx)));
     if (!rows.length) panel.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
     content.querySelector('.mobile-console-recent')?.remove();
-    const priority = content.querySelector('.console-priority-grid');
-    if (priority) priority.after(panel); else content.prepend(panel);
+    // 控制台现在是一张目录首页，air-admin.js 留了一个空槽给手机面板；直接挂进去，
+    // 不再依赖「待办卡网格」这个桌面结构（它已经换了位置和语义）。资料入口也一起
+    // 放进槽里，跟着手机面板走。
+    let resources = content.querySelector('.mobile-resources');
+    if (!resources) {
+      resources = make('details', null, 'mobile-resources'); resources.append(make('summary', root.t('airMaterials')));
+      for (const [mode, key] of [['docs', 'airDocs'], ['memory', 'airMemoryGraph'], ['taskgraph', 'airTaskGraph']]) resources.append(button(root.t(key), () => ctx.setMode(mode)));
+    }
+    const slot = document.getElementById('console-mobile-slot');
+    if (slot) slot.replaceChildren(panel, resources);
+    else {
+      // 旧结构兜底（air-admin.js 还没重画时）：尽量挂在待办卡下面。
+      const priority = content.querySelector('.console-priority-grid');
+      if (priority) priority.after(panel); else content.prepend(panel);
+      content.append(resources);
+    }
     // 选中的那格挪进可见区（只横向，不带动页面纵向滚动）。
     const picked = tabs.querySelector('[aria-pressed="true"]');
     if (picked && picked.offsetLeft + picked.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = picked.offsetLeft - 14;
-    // 资料入口折叠起来，配置只保留右上角设置。
-    if (!content.querySelector('.mobile-resources')) {
-      const resources = make('details', null, 'mobile-resources'); resources.append(make('summary', root.t('airMaterials')));
-      for (const [mode, key] of [['docs', 'airDocs'], ['memory', 'airMemoryGraph'], ['taskgraph', 'airTaskGraph']]) resources.append(button(root.t(key), () => ctx.setMode(mode)));
-      content.append(resources);
-    }
   }
   function renderSettingsHeader() {
     if (!mobile.matches || ctx.mode !== 'settings') return;

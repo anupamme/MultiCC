@@ -28,6 +28,7 @@ import '../widgets/ai_config_sheet.dart';
 import '../widgets/air/air_task_actions.dart';
 import '../widgets/aux_classify_bar.dart';
 import '../widgets/task_separation_prompt.dart';
+import '../widgets/task_directory_hint_prompt.dart';
 import '../widgets/background_tasks_dock.dart';
 import '../widgets/floating_dock.dart';
 import '../widgets/chat_composer_fold.dart';
@@ -853,13 +854,22 @@ class _ChatViewState extends State<ChatView> {
         events: provider.chatEvents,
         sessionId: provider.executionSessionName,
         settings: widget.settings,
-        child: _buildScaffold(
-          context,
-          provider,
-          mergeReady,
-          autoCommit,
-          dispatchExpanded,
-          artifactsLabel,
+        child: TaskDirectoryHintPrompt(
+          events: provider.chatEvents,
+          shellId: provider.shellId,
+          settings: widget.settings,
+          onRelocated: () async {
+            if (!mounted) return;
+            await context.read<SessionManager>().loadDashboard();
+          },
+          child: _buildScaffold(
+            context,
+            provider,
+            mergeReady,
+            autoCommit,
+            dispatchExpanded,
+            artifactsLabel,
+          ),
         ),
       ),
     );

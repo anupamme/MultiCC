@@ -115,6 +115,9 @@ function createClassifyStateMachine(rawDeps) {
     // P4 turn 级蒸馏：把归因 aux 一并产出的 memory_candidate 写进任务级记忆。
     // 可选依赖——缺失或失败只少一段记忆，绝不影响归属判定本身。
     writeTaskMemoryCandidate = null,
+    // 「这个任务是否更适合另一个目录」的目录清单。可选：没有它时提示词不带
+    // 目录段，解析层也会丢掉任何 directoryHint——判定本身不受影响。
+    getDirectories = null,
   } = deps;
 
   if (!persistedSessions || typeof persistedSessions.get !== 'function') {
@@ -854,8 +857,11 @@ function createClassifyStateMachine(rawDeps) {
         userText: lastUserText(history), replyText: reply, sessionId: sid,
         excludeTaskIds: recentTasks.map(task => task.taskId),
       });
+      const directoryContext = attributionDirectoryContext(sid, taskId);
+      const firstTurn = isFirstUserTurn(history);
       const systemPrompt = buildTaskAttributionSystemPrompt({
         recentTasks, relatedTasks, currentTaskId: taskId, provisionalTaskId,
+        directories: directoryContext.directories, currentDirId: directoryContext.currentDirId, firstTurn,
       });
       const prompt = buildClassifyConversation(sid, reply);
       const anchorMessageId = classifyAnchorMessageId(sid);
@@ -877,6 +883,9 @@ function createClassifyStateMachine(rawDeps) {
           fallbackTaskId: taskId,
           // 内容相关候选和最近任务一样是「模型见过的既有 ID」，同样是合法答案。
           allowedTaskIds: [...recentTasks, ...relatedTasks].map(task => task.taskId),
+          allowedDirIds: directoryContext.allowedDirIds,
+          currentDirId: directoryContext.currentDirId,
+          firstTurn,
         });
         const boundTaskId = persistedSessions.get(sid)?.taskBoundTaskId || null;
         const resolvedTaskId = boundTaskId || (res.relation === 'same'
@@ -928,6 +937,42 @@ function createClassifyStateMachine(rawDeps) {
       return message.content;
     }
     return '';
+  }
+
+  // 目录建议的输入：只在提示词里放 id/名称/路径末段（见 task-attribution 的
+  // 截断），当前目录由任务板（或会话记录）决定，解析层据此拒绝「指向当前目录」。
+  // 整个函数 best-effort：目录表读不到就退化成「没有清单」，判定照常进行。
+  function attributionDirectoryContext(sessionName, currentTaskId) {
+    let directories = [];
+    try {
+      const raw = typeof getDirectories === 'function' ? getDirectories() : [];
+      directories = Array.isArray(raw) ? raw
+        : raw && typeof raw.values === 'function' ? [...raw.values()] : [];
+    } catch (error) {
+      logger.warn?.('directory_list_failed', { sessionId: sessionName, error: error.message });
+    }
+    let currentDirId = persistedSessions.get(sessionName)?.dirId || null;
+    if (currentTaskId) {
+      try {
+        const board = getTaskBoardRuntime().getBoard();
+        currentDirId = board?.tasks?.[currentTaskId]?.dirId || currentDirId;
+      } catch (_) { /* the session record's directory is still a valid answer */ }
+    }
+    const allowedDirIds = directories.map(dir => String(dir?.id || '')).filter(Boolean);
+    return { directories, currentDirId, allowedDirIds };
+  }
+
+  // 「首轮」= 这条会话此前没有真实用户消息。目录建议只在首轮或 relation=new
+  // 时产出，进行中的任务续作不该被「要不要搬目录」打断。
+  function isFirstUserTurn(history) {
+    let users = 0;
+    for (const message of Array.isArray(history) ? history : []) {
+      if (message?.role !== 'user' || message.displayOnly
+          || typeof message.content !== 'string' || !message.content.trim()) continue;
+      users += 1;
+      if (users > 1) return false;
+    }
+    return users === 1;
   }
 
   // Message-level hits for one turn: the same bounded query, asked of the whole
@@ -1056,6 +1101,8 @@ function createClassifyStateMachine(rawDeps) {
       userText: userMsg, replyText: reply, sessionId,
       excludeTaskIds: recentTasks.map(task => task.taskId),
     });
+    const directoryContext = attributionDirectoryContext(sessionName, currentTaskId);
+    const firstTurn = isFirstUserTurn(history);
     const identityState = getTaskState(persistedSessions.get(sessionName));
     const provisionalTaskId = !shellOwned && identityState.taskIdentityPending === true
       ? currentTaskId : null;
@@ -1065,6 +1112,7 @@ function createClassifyStateMachine(rawDeps) {
     const runSource = source || (manual ? 'manual' : 'turn-end');
     const systemPrompt = buildTaskAttributionSystemPrompt({
       recentTasks, relatedTasks, currentTaskId, provisionalTaskId, identityLocked,
+      directories: directoryContext.directories, currentDirId: directoryContext.currentDirId, firstTurn,
     });
     const prompt = buildClassifyConversation(sessionName, reply);
     const anchorMessageId = classifyAnchorMessageId(sessionName);
@@ -1106,6 +1154,9 @@ function createClassifyStateMachine(rawDeps) {
         fallbackTaskId: currentTaskId,
         // 内容相关候选和最近任务一样是「模型见过的既有 ID」，同样是合法答案。
         allowedTaskIds: [...recentTasks, ...relatedTasks].map(task => task.taskId),
+        allowedDirIds: directoryContext.allowedDirIds,
+        currentDirId: directoryContext.currentDirId,
+        firstTurn,
       });
       // Explicit task-card/#CODE continuations are stronger than a probabilistic
       // model answer. A malformed `new` verdict must not split or group that
@@ -1115,6 +1166,8 @@ function createClassifyStateMachine(rawDeps) {
         relation: 'same',
         taskId: currentTaskId,
         relatedTaskId: null,
+        // 锁定的明确任务只在首轮仍可给目录建议；续作不该被迁移提示打断。
+        directoryHint: firstTurn ? parsedAttribution.directoryHint : null,
       } : parsedAttribution;
       const boundTaskId = shellOwned ? null : persistedSessions.get(sessionName)?.taskBoundTaskId || null;
       // `new` promotes the admission's provisional id; it must never mint a
@@ -1168,6 +1221,9 @@ function createClassifyStateMachine(rawDeps) {
               taskId: res.relation === 'new' ? resolvedTaskId
                 : (res.taskId && res.taskId !== currentTaskId ? res.taskId : null),
               taskName: res.taskName, relatedTaskId: res.relatedTaskId,
+              // 目录建议随判定一起落地，但它只是建议：attribution-decisions
+              // 只把它记在行上并广播，绝不调用任何迁移入口。
+              directoryHint: res.directoryHint || null,
               turnId, anchorMessageId, runId, currentTaskId,
             });
             decisionAction = decision?.action || 'none';

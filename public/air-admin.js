@@ -74,6 +74,13 @@
   // 待处理」，搜索另有一份 searchFilter()（见下）。
   // view 是顶上展开了哪一格过滤项（running/waiting/error/today/all），null = 都收着。
   const consoleFilter = { query: '', status: 'open', dir: 'all', fullText: true, view: 'all', page: 1, sort: 'message' };
+  // 目录首页（控制台）自己的全局搜索词与「更多」展开态。和 consoleFilter 一样
+  // 存在模块上：外壳每次快照都会整块重画这一页，输入框不能跟着丢字、丢焦点，
+  // 底部「更多」也不该每次快照刷新都自己合上。
+  let consoleHomeQuery = '';
+  let consoleMoreOpen = false;
+  // 「最近使用」一段的条数上限：目录首页读的是「现在该看什么」，不是一份完整清单。
+  const HOME_RECENT_LIMIT = 8;
   const TASK_PAGE_SIZE = 20;
   // 其余四个统计格仍是短清单；「全部任务」单独按每页 20 条翻页。
   const TASK_LIST_LIMIT = 60;
@@ -459,6 +466,9 @@
     setActions();
 
     const content = panel || el('admin-content');
+    // 快照刷新时整页会重建：先把顶栏搜索框的焦点/光标记住，重建完再放回去。
+    const homeSearchFocus = document.activeElement?.id === 'console-home-search';
+    const homeSearchCaret = homeSearchFocus ? document.activeElement.selectionStart : null;
     // Compact filters accompany the complete task list below the attention cards.
     const stats = make('div', null, 'admin-stats console-filter-tabs');
     const tiles = [
@@ -665,27 +675,204 @@
     dirPick.onchange = () => { consoleFilter.dir = dirPick.value; consoleFilter.page = 1; paintTaskList(); };
     paintDrawer();
 
+    // ── 目录首页：顶栏 / 待办流 / 目录网格 / 更多 ───────────────────────
+    // 这一页现在是「所有目录的目录首页」：顶栏是全局搜索与新建，上面是跨目录的
+    // 待办流（需要你处理 → 正在运行 → 最近使用），下面是全部目录卡片。原来的
+    // 统计格与完整任务列表收进底部「更多」——功能一件不少，但不再占首屏。
+    const top = make('div', null, 'console-home-top');
+    const homeSearch = make('input');
+    homeSearch.type = 'search';
+    homeSearch.id = 'console-home-search';
+    homeSearch.placeholder = t('airAdminSearchPlaceholder');
+    homeSearch.setAttribute('aria-label', t('airAdminSearchTasksLabel'));
+    homeSearch.value = consoleHomeQuery;
+    const homeActions = make('div', null, 'console-home-actions');
+    // 两个动作都复用现有入口：#create 打开新建任务弹窗，#add-directory 打开
+    // 添加目录对话框（它在 overview 页是 hidden 的，但 click 照旧走同一条链路）。
+    const newTask = action(t('airNewTask'), () => el('create').click(), 'primary console-home-create');
+    newTask.id = 'console-home-new-task';
+    const newDirectory = action(t('airAddDirectory'), () => el('add-directory').click(), 'console-home-add-directory');
+    newDirectory.id = 'console-home-new-directory';
+    homeActions.append(newTask, newDirectory);
+    top.append(homeSearch, homeActions);
+
+    const flow = make('section', null, 'console-flow');
     const attention = make('section', null, 'console-priority');
     const attentionHead = make('div', null, 'admin-panel-head');
     attentionHead.append(make('h2', t('airNeedsYou')), action(t('airRecentAll'), () => setMode('attention')));
     const cards = make('div', null, 'console-priority-grid');
-    for (const task of urgent.slice(0, PRIORITY_CARD_MAX)) {
-      const error = taskStatus(task) === 'error';
-      const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
-      card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
-        make('p', t(error ? 'airFailureHint' : 'airWaitingHint')),
-        make('small', context.directoryName(task.dirId)),
-        action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)));
-      cards.append(card);
-    }
-    if (!urgent.length) cards.append(make('p', t('airNothingNeedsYou'), 'admin-empty'));
     attention.append(attentionHead, cards);
-    watchPriorityFit(cards);
+
     const runningPanel = make('section', null, 'admin-panel console-running');
-    runningPanel.append(make('h3', t('airAdminTileRunning')));
-    for (const task of executing.slice(0, 5)) runningPanel.append(openRow(task));
-    if (!executing.length) runningPanel.append(make('p', t('airAdminNoRunningTasks'), 'admin-empty'));
-    content.replaceChildren(attention, runningPanel, stats, drawer);
+    const runningHead = make('div', null, 'admin-panel-head');
+    runningHead.append(make('h3', t('airAdminTileRunning')));
+    const runningList = make('div', null, 'admin-recent-list console-running-list');
+    runningPanel.append(runningHead, runningList);
+
+    const recentPanel = make('section', null, 'admin-panel console-recent');
+    const recentHead = make('div', null, 'admin-panel-head');
+    recentHead.append(make('h3', t('airRecentTasks')));
+    const recentList = make('div', null, 'admin-recent-list console-recent-list');
+    recentPanel.append(recentHead, recentList);
+    flow.append(attention, runningPanel, recentPanel);
+
+    // 目录卡网格：二三十个目录直接平铺，不分页。卡片与 air.js 的目录库同一种
+    // （.directory-card：按钮 + 备忘入口），排序用与 App 共享的 ui-layout 语义。
+    const directoryPanel = make('section', null, 'admin-panel console-directories');
+    const directoryHead = make('div', null, 'admin-panel-head');
+    const directoryTitle = make('h3', t('airWorkspace'));
+    const directoryNote = make('span', '', 'admin-panel-note');
+    directoryNote.id = 'console-directory-note';
+    directoryHead.append(directoryTitle, directoryNote);
+    const directoryGrid = make('div', null, 'directory-grid console-directory-grid');
+    directoryGrid.id = 'console-directory-grid';
+    directoryPanel.append(directoryHead, directoryGrid);
+
+    // 原控制台的统计格与完整任务清单收进底部「更多」：首屏留给待办流和目录。
+    const more = make('details', null, 'console-more');
+    more.id = 'console-more';
+    more.append(make('summary', t('more')));
+    const moreBody = make('div', null, 'console-more-body');
+    moreBody.append(stats, drawer);
+    more.append(moreBody);
+    more.open = consoleMoreOpen;
+    more.addEventListener('toggle', () => { consoleMoreOpen = more.open; });
+
+    // 手机那张「最近任务 + 筛选」卡挂在这里（air-mobile.js 的 paintConsole）。
+    const mobileSlot = make('div', null, 'console-mobile-slot');
+    mobileSlot.id = 'console-mobile-slot';
+
+    const home = make('section', null, 'console-home');
+    home.append(top, flow, mobileSlot, directoryPanel, more);
+    content.replaceChildren(home);
+
+    // 「最近使用」按最后一次更新时间倒序；已经出现在上面两段的（要你处理 /
+    // 正在运行）不在这里重复 —— 首屏同一件事只说一次。
+    const seenAbove = new Set([...urgent, ...executing].map(task => task.id));
+    const recentTasks = tasks
+      .filter(task => task.status !== 'archived' && !seenAbove.has(task.id))
+      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+
+    const layout = root.MultiCCUiLayout;
+    const needleNow = () => consoleHomeQuery.trim().toLowerCase();
+    const matchesTask = (task, needle) => !needle
+      || `${task.title || ''} ${context.directoryName(task.dirId)}`.toLowerCase().includes(needle);
+    const matchesDirectory = (directory, needle) => !needle
+      || `${directory.name || ''} ${directory.path || ''}`.toLowerCase().includes(needle);
+    const empty = key => make('p', t(key), 'admin-empty');
+
+    function directoryCard(directory) {
+      const button = make('button');
+      button.type = 'button';
+      applyRing(button, running.has(directory.id), directory.id);
+      const dirTasks = tasks.filter(task => task.dirId === directory.id);
+      const activeCount = dirTasks.filter(isRunning).length;
+      button.append(make('strong', '▣ ' + (directory.name || directory.id)),
+        make('small', directory.path || ''),
+        make('small', activeCount
+          ? t('airDirTaskCountActive', { total: dirTasks.length, active: activeCount })
+          : t('airDirTaskCount', { total: dirTasks.length })),
+        // 与目录库同一份 worktree 口径（air-worktrees.js 的 summary）。
+        make('small', root.MultiCCAirWorktrees?.summary?.(directory)
+          || t('airDirWorktreeCount', { n: directory.worktreeCount || 0 })));
+      button.onclick = () => navigate(directory.id);
+      const card = make('article', null, 'directory-card');
+      card.dataset.dirId = directory.id;
+      const memo = make('a', t('memoTitle'), 'directory-memo');
+      memo.href = `/memo.html?dirId=${encodeURIComponent(directory.id)}`;
+      memo.target = '_blank';
+      memo.rel = 'noopener';
+      memo.setAttribute('aria-label', `${directory.name} · ${t('memoTitle')}`);
+      card.append(button, memo);
+      return card;
+    }
+
+    function orderedDirectories() {
+      const order = layout?.dirOrder?.() || [];
+      return layout?.applyOrder
+        ? layout.applyOrder(directories, order, directory => directory.id)
+        : directories;
+    }
+
+    function paintFlow() {
+      const needle = needleNow();
+      const loud = urgent.filter(task => matchesTask(task, needle));
+      cards.replaceChildren(...loud.slice(0, PRIORITY_CARD_MAX).map(task => {
+        const error = taskStatus(task) === 'error';
+        const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
+        card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
+          make('p', t(error ? 'airFailureHint' : 'airWaitingHint')),
+          make('small', context.directoryName(task.dirId)),
+          action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)));
+        return card;
+      }));
+      if (!loud.length) cards.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airNothingNeedsYou'));
+      // 卡片张数仍按可用高度裁（fitPriorityCards）：卡片多了只显示前几行，
+      // 不让「需要你处理」把目录和「更多」顶出首屏。
+      requestAnimationFrame(() => { if (cards.isConnected) fitPriorityCards(cards); });
+
+      const runningNow = executing.filter(task => matchesTask(task, needle));
+      runningList.replaceChildren(...runningNow.slice(0, 5).map(task => openRow(task)));
+      if (!runningNow.length) runningList.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airAdminNoRunningTasks'));
+
+      const recentNow = recentTasks.filter(task => matchesTask(task, needle));
+      recentList.replaceChildren(...recentNow.slice(0, HOME_RECENT_LIMIT).map(task => openRow(task)));
+      if (!recentNow.length) recentList.append(empty('airAdminNoMatchingTasks'));
+    }
+
+    // 目录顺序：服务端 ui-layout 的手动顺序在前，没排过的保持快照顺序缀在后面
+    // （applyOrder 的语义与 App 的 manual_order.dart 一字不差）。拖完先乐观重画，
+    // 失败再重读服务端排布回滚。
+    function paintDirectories() {
+      const needle = needleNow();
+      const shown = orderedDirectories().filter(directory => matchesDirectory(directory, needle));
+      directoryGrid.replaceChildren(...shown.map(directoryCard));
+      if (!shown.length) directoryGrid.append(empty(needle ? 'airDirNoMatch' : 'airDirNoneYet'));
+      directoryNote.textContent = t('airDirDragHint');
+      bindDirectoryDrag();
+    }
+
+    function bindDirectoryDrag() {
+      const sortable = root.MultiCCAirDirectoryNav?.sortable;
+      if (!sortable) return;
+      // 搜索时只显示一个子集：这时拖动会把没显示的目录挤到列表尾部，所以先禁拖。
+      const filtering = !!needleNow();
+      for (const card of directoryGrid.querySelectorAll('.directory-card')) {
+        card.draggable = !filtering;
+        if (filtering) card.removeAttribute('title');
+      }
+      if (filtering) return;
+      sortable(directoryGrid, context, '.directory-card', {
+        commit: async ids => {
+          if (!layout?.saveDirOrder) return;
+          const saved = await layout.saveDirOrder(ids);
+          if (saved) { paintDirectories(); return; }
+          // 失败回滚：重读服务端的排布，再按它重画，用户看到的是真实存下来的顺序。
+          await layout.load();
+          paintDirectories();
+          // put() 只回布尔，失败原因由同一模块记着；空字符串就是真的没有详情，
+          // 别让提示永远停在「保存目录顺序失败：」。
+          context.notice?.(t('airDirReorderFailed', { error: layout.lastError?.() || '' }));
+        },
+      });
+    }
+
+    homeSearch.oninput = () => {
+      consoleHomeQuery = homeSearch.value;
+      // 只重画三个清单和目录网格，输入框原地不动 —— 每敲一个字都换掉整页，
+      // 输入框会在第一个键之后失去焦点。
+      paintFlow();
+      paintDirectories();
+    };
+    paintFlow();
+    paintDirectories();
+    watchPriorityFit(cards);
+    // 目录排布在服务端 ui-layout.json 里；首帧先按默认顺序画出来，拿到排布再覆盖。
+    if (layout?.ready) layout.ready().then(() => { if (directoryGrid.isConnected) paintDirectories(); });
+
+    if (homeSearchFocus) {
+      try { homeSearch.focus(); homeSearch.setSelectionRange?.(homeSearchCaret, homeSearchCaret); } catch (_) { /* noop */ }
+    }
     root.MultiCCAirMobile?.decorateConsole(context);
 
   }

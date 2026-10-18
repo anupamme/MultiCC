@@ -542,6 +542,13 @@ class ChatService {
         _emit('task_separation_updated', msg);
         break;
 
+      // 任务归集裁决的广播：recorded/applied detail 在有目录建议时携带
+      // `directoryHint`。目录建议卡据此重读裁决清单；归属变更本身不在这里
+      // 应用（服务端已经落了），客户端只刷新提示。
+      case 'task_attribution_updated':
+        _emit('task_attribution_updated', msg);
+        break;
+
       case 'task_state':
         // aux classify result: what the assistant thinks this session's
         // goal/phase is. Carries {goal, phase, classifyState}. Rendered into the
