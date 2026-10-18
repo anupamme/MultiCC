@@ -52,6 +52,11 @@ class ChatService {
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
   bool _disposed = false;
+  // The source session was deleted (its task removed from the board). Retrying
+  // can never succeed, so every reconnect path stops here instead of spinning
+  // on "Connecting…" forever; the screen shows a "task deleted" notice.
+  bool _gone = false;
+  bool get sessionGone => _gone;
   bool isStreaming = false;
   // Cancel requested while WS was disconnected — resend on reconnect, matching
   // the web client's _pendingCancel. Without this, a cancel tapped during a
@@ -132,7 +137,7 @@ class ChatService {
   }
 
   void connect() {
-    if (_disposed) return;
+    if (_disposed || _gone) return;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _heartbeatTimer?.cancel();
@@ -171,6 +176,9 @@ class ChatService {
         ticketEndpoint: Uri.parse(settings.buildHttpUrl('/api/auth/ws-ticket')),
         accessToken: settings.token,
       );
+    } on ChatSessionGoneException catch (e) {
+      if (!_disposed && generation == _connectGeneration) _markGone(e.code);
+      return;
     } catch (_) {
       // Web 的 `ticket exchange failed — retry scheduled`。
       dbg('ws', 'ticket exchange failed — retry scheduled');
@@ -287,7 +295,7 @@ class ChatService {
   ///    cadence. A truly-dead socket yields no pong and the heartbeat reconnects
   ///    within one cycle; a live one keeps serving with zero interruption.
   void ensureAlive() {
-    if (_disposed) return;
+    if (_disposed || _gone) return;
     // Already mid-handshake — let it finish rather than restarting it.
     if (_state == ChatConnectionState.connecting) return;
     if (_state == ChatConnectionState.disconnected) {
@@ -459,6 +467,10 @@ class ChatService {
         break;
 
       case 'error':
+        if (_isSessionMissingError(msg)) {
+          _markGone(msg['code']?.toString() ?? 'session_not_found');
+          break;
+        }
         if (msg['notDelivered'] == true &&
             msg['clientMsgId'] == _pendingShellInput?['clientMsgId']) {
           _pendingShellInput = null;
@@ -787,8 +799,37 @@ class ChatService {
     }
   }
 
+  // 服务端在会话已删时的 WS 回答：新版带 code，旧版只有这句英文提示。
+  static final _missingSessionText = RegExp(r'^Chat session ".*" does not exist');
+  static bool _isSessionMissingError(Map<String, dynamic> msg) =>
+      msg['code'] == 'session_not_found' ||
+      _missingSessionText.hasMatch(msg['error']?.toString() ?? '');
+
+  void _markGone(String code) {
+    if (_disposed || _gone) return;
+    _gone = true;
+    dbg('ws', 'session gone ($code) — reconnect stopped');
+    _connectGeneration++;
+    _wsAuth.invalidate();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _probeTimer?.cancel();
+    _probeTimer = null;
+    _sub?.cancel();
+    _sub = null;
+    final channel = _channel;
+    _channel = null;
+    if (channel != null) unawaited(channel.sink.close());
+    isStreaming = false;
+    _state = ChatConnectionState.disconnected;
+    _emit('state_change', _state);
+    _emit('session_gone', code);
+  }
+
   void _scheduleReconnect() {
-    if (_disposed) return;
+    if (_disposed || _gone) return;
     _wsAuth.invalidate();
     _connectGeneration++;
     _heartbeatTimer?.cancel();

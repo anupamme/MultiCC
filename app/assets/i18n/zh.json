@@ -3700,6 +3700,8 @@
   "rsLiveModeH264": "高清流畅模式",
   "rsViaP2P": "直连",
   "rsViaRelay": "中继",
+  "chatSessionGone": "这个任务已被删除，对话无法继续",
+  "chatSessionGoneClose": "关闭",
   "rsStreamHd": "高清",
   "rsStreamRfb": "流畅",
   "rsStreamTitle": "切换画面模式：高清（H.264，省流量更清晰）/ 流畅（兼容模式，本地画光标）",

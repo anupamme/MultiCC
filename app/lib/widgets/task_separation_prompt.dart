@@ -53,7 +53,10 @@ class _TaskSeparationPromptState extends State<TaskSeparationPrompt> {
 
   void _subscribe() {
     final stream = widget.events;
-    if (identical(stream, _stream)) return;
+    // 广播控制器的 `.stream` 每次 get 都是新包装对象（== 按控制器比较，
+    // identical 永远不等）——用 identical 会让每次重建都重订阅并立刻请求一次，
+    // 页面一直重绘时（比如反复重连）就成了每秒几十次的 task-separation 请求。
+    if (stream == _stream) return;
     _events?.cancel();
     _stream = stream;
     _events = stream.listen((event) {

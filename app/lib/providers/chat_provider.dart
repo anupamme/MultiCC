@@ -346,6 +346,9 @@ class ChatProvider extends ChangeNotifier {
 
   ChatConnectionState _connectionState = ChatConnectionState.disconnected;
   ChatConnectionState get connectionState => _connectionState;
+  // 源会话已被删除（任务从任务板删掉）：不再重连，聊天页改为提示并给出关闭入口。
+  bool _sessionGone = false;
+  bool get sessionGone => _sessionGone;
 
   bool get isStreaming => _service.isStreaming;
 
@@ -1047,6 +1050,11 @@ class ChatProvider extends ChangeNotifier {
           _reconnectAttempt = 0;
           _statusText = 'Connected';
         }
+        notifyListeners();
+        break;
+
+      case 'session_gone':
+        _sessionGone = true;
         notifyListeners();
         break;
 
