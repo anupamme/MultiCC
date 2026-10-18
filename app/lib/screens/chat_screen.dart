@@ -48,6 +48,7 @@ import '../widgets/merge_hint_dock.dart';
 import '../widgets/thinking_indicator.dart';
 import '../widgets/tour_overlay.dart';
 import '../widgets/worktree_status.dart';
+import '../widgets/chat_session_gone_banner.dart';
 import 'chat_width_dialog.dart';
 import 'memo_screen.dart';
 import 'memory_screen.dart';
@@ -133,6 +134,15 @@ class _ChatViewState extends State<ChatView> {
       service.close();
     }
     if (!deleted || !mounted) return;
+    widget.onCollapse?.call();
+    await Future<void>.delayed(const Duration(milliseconds: 320));
+    manager.closeSession(provider.sessionName);
+    await manager.loadDashboard();
+  }
+
+  // 任务在别处被删掉后，这个对话再也连不上了：收起并关掉它，回到列表。
+  Future<void> _closeGoneSession(ChatProvider provider) async {
+    final manager = context.read<SessionManager>();
     widget.onCollapse?.call();
     await Future<void>.delayed(const Duration(milliseconds: 320));
     manager.closeSession(provider.sessionName);
@@ -616,7 +626,13 @@ class _ChatViewState extends State<ChatView> {
     // 拿到就换过去（web 的 `setScope` 也是外部推进来的）。
     _panels.sync(provider.shellId);
     final session = provider.executionSessionName;
-    _syncScheduledSend(session);
+    // 会话已删：别再每几秒轮询 merge-status / liveness / 定时消息去拿 404。
+    _syncScheduledSend(provider.sessionGone ? '' : session);
+    if (provider.sessionGone) {
+      _mergeTimer?.cancel();
+      _livenessTimer?.cancel();
+      return;
+    }
     if (session == _polledSession) return;
     _polledSession = session;
     _lastWarnedBehind = 0; // reset warning state when switching sessions
@@ -979,6 +995,10 @@ class _ChatViewState extends State<ChatView> {
                       ChatNoticeScroller(
                         keyboardVisible: keyboardVisible,
                         children: [
+                              if (provider.sessionGone)
+                                ChatSessionGoneBanner(
+                                  onClose: () => _closeGoneSession(provider),
+                                ),
                               // Liveness pill: only working (🟢) and stalled (🔴) earn a
                               // dedicated line — they say "a turn is running / stuck".
                               // idle (🟡) and unknown (⚪) are the resting states; a

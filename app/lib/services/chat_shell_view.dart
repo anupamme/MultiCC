@@ -1,6 +1,15 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+/// The conversation's source session is gone (its task was deleted on the
+/// board or elsewhere). Unlike a network failure, retrying can never succeed.
+class ChatSessionGoneException implements Exception {
+  const ChatSessionGoneException(this.code);
+  final String code;
+  @override
+  String toString() => 'ChatSessionGoneException($code)';
+}
+
 /// Keeps the visible conversation stable while its execution cursor moves.
 class ChatShellView {
   ChatShellView(this.sourceSessionId);
@@ -19,11 +28,12 @@ class ChatShellView {
           '/api/task-shells',
           jsonEncode({'sessionId': sourceSessionId}),
         );
-        final data = jsonDecode(response.body) as Map;
+        final data = _decode(response);
         if (data['code'] == 'unsupported_source') {
           unsupported = true;
           return null;
         }
+        _throwIfGone(response, data);
         if (response.statusCode != 200 || data['id'] is! String) {
           throw StateError('shell open failed: ${response.statusCode}');
         }
@@ -40,11 +50,35 @@ class ChatShellView {
       '/api/task-shells/${Uri.encodeComponent(shellId!)}/chat',
       null,
     );
-    final data = jsonDecode(response.body) as Map;
+    final data = _decode(response);
+    _throwIfGone(response, data);
     if (response.statusCode != 200 || data['activeSessionId'] is! String) {
       throw StateError('shell scope failed: ${response.statusCode}');
     }
     return data['activeSessionId'] as String;
+  }
+
+  static Map _decode(http.Response response) {
+    try {
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      return data is Map ? data : const {};
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  // 只认服务端明确说「源会话没了」的两种回答：409 source_session_missing
+  // （任务壳还在、会话已删）和 404 session_not_found / Session not found
+  // （连壳都开不出来）。其余失败照旧当临时故障重连。
+  static void _throwIfGone(http.Response response, Map data) {
+    final code = data['code']?.toString();
+    if (response.statusCode == 409 && code == 'source_session_missing') {
+      throw ChatSessionGoneException(code!);
+    }
+    if (response.statusCode == 404 &&
+        (code == 'session_not_found' || data['error'] == 'Session not found')) {
+      throw ChatSessionGoneException(code ?? 'session_not_found');
+    }
   }
 
   String historyPath(String executionSessionId) => shellId == null

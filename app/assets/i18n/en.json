@@ -3700,6 +3700,8 @@
   "rsLiveModeH264": "HD live stream",
   "rsViaP2P": "direct",
   "rsViaRelay": "relay",
+  "chatSessionGone": "This task was deleted; the conversation can no longer continue",
+  "chatSessionGoneClose": "Close",
   "rsStreamHd": "HD",
   "rsStreamRfb": "Smooth",
   "rsStreamTitle": "Switch stream: HD (H.264, sharper and lighter) / Smooth (compatibility mode, local cursor)",

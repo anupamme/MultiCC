@@ -2671,7 +2671,7 @@ function createChatTurnEngine(deps) {
     }
     const persisted = persistedSessions.get(sessionName);
     if (!persisted || isInternalExecutionSlot(persisted)) {
-      sendWs(ws, { type: 'error', error:
+      sendWs(ws, { type: 'error', code: 'session_not_found', error:
         `Chat session "${sessionName}" does not exist. Create it via the dashboard first.` });
       ws.close();
       return;
