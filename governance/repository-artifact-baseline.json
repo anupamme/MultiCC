@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedAt": "2026-07-18",
+  "reviewedAt": "2026-10-18",
   "policy": {
     "largeBinaryBytes": 1048576,
     "note": "Existing findings are migration debt, not examples. New findings are rejected."
@@ -8,9 +8,7 @@
   "accepted": {
     "tracked-apk": [],
     "backup": [],
-    "runtime-state": [
-      "whisper_vocab.json"
-    ],
+    "runtime-state": [],
     "raw-audit-dump": [
       "classify-test-cases.json"
     ],
