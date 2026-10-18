@@ -144,6 +144,19 @@
       ]
     },
     {
+      "id": "provider-grok-homes",
+      "classification": "migration-required",
+      "owner": "provider routing",
+      "rationale": "Per-session GROK_HOME roots isolate provider-bound Grok Build sessions from the user's native ~/.grok login; the generated config.toml points one [model.*] entry at the provider and must stay stable across restarts.",
+      "migrationStrategy": "Version the generated-home layout, preserve restrictive permissions, and add a per-session copy-forward/rollback operation before changing its root.",
+      "sources": [
+        {
+          "file": "src/providers/core.js",
+          "anchor": "const GROK_HOMES_DIR = path.join(os.homedir(), '.multicc', 'grok-homes');"
+        }
+      ]
+    },
+    {
       "id": "qoder-quota-cookie-cache",
       "classification": "migration-required",
       "owner": "Qoder quota adapter",
