@@ -12,6 +12,7 @@ import '../services/codex_models_service.dart';
 import '../services/manage_service.dart';
 import '../services/opencode_models_service.dart';
 import '../services/qoder_models_service.dart';
+import '../services/codebuddy_models_service.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
 import 'agent_preset_picker_sheet.dart';
@@ -29,6 +30,10 @@ Future<List<Map<String, dynamic>>> prepareAIConfigInputs(
   if (cli == SessionCli.qoder) {
     try {
       await QoderModelsService(settings: settings).load();
+    } catch (_) {}
+  } else if (cli == SessionCli.codebuddy) {
+    try {
+      await CodebuddyModelsService(settings: settings).load();
     } catch (_) {}
   } else if (cli.isClaudeFamily) {
     try {

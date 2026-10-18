@@ -17,6 +17,7 @@ import '../services/settings_service.dart';
 import '../services/manage_service.dart';
 import '../services/session_service.dart';
 import '../services/claude_models_service.dart';
+import '../services/codebuddy_models_service.dart';
 import '../services/codex_models_service.dart';
 import '../services/opencode_models_service.dart';
 import '../services/qoder_models_service.dart';
@@ -225,6 +226,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     _pickedEffort = _defaultEffort;
     _loadPresets();
     if (_isQoder) _loadQoderModels();
+    if (_pickedCli == SessionCli.codebuddy) _loadCodebuddyModels();
     if (_isClaude) _loadClaudeModels();
     if (_isCodex) _loadCodexModels();
     final opts = _currentModelOptions;
@@ -308,6 +310,26 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     });
   }
 
+  /// WorkBuddy twin of [_loadQoderModels]: pull the host CLI's live catalog and
+  /// re-seed the model field once it lands.
+  Future<void> _loadCodebuddyModels() async {
+    final before = CodebuddyModelsService.cached.length;
+    try {
+      await CodebuddyModelsService(settings: widget.settings).load();
+    } catch (_) {}
+    if (!mounted ||
+        _pickedCli != SessionCli.codebuddy ||
+        CodebuddyModelsService.cached.length == before) {
+      return;
+    }
+    setState(() {
+      final opts = _currentModelOptions;
+      final current = _customModel ? null : _pickedModel;
+      if (current != null && opts.any((e) => e.key == current)) return;
+      _pickedModel = opts.isNotEmpty ? opts.first.key : null;
+    });
+  }
+
   /// Pull the CLI-bundle model list and re-seed the model field once it lands.
   /// No-op when the list is already warm or unavailable — the dropdown just
   /// keeps the built-in table.
@@ -358,7 +380,9 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     // Live Qoder catalog once _loadQoderModels() lands; routing tiers until then.
     if (_isQoder) return QoderModelsService.options();
     // Vendor-auth CLIs with a static catalog (no provider pool, no fetch API).
-    if (_pickedCli == SessionCli.codebuddy) return kCodebuddyModelOptions;
+    if (_pickedCli == SessionCli.codebuddy) {
+      return CodebuddyModelsService.options();
+    }
     if (_pickedCli == SessionCli.dsh) return kDshModelOptions;
     if (_pickedCli == SessionCli.gemini) return kGeminiModelOptions;
     if (_pickedCli == SessionCli.commandcode) return kCommandCodeModelOptions;
@@ -599,6 +623,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
         _pickedModel = opts.isNotEmpty ? opts.first.key : null;
       });
       if (cli == SessionCli.qoder) _loadQoderModels();
+      if (cli == SessionCli.codebuddy) _loadCodebuddyModels();
       return;
     }
     // Claude has a provider pool, but Claude Official exposes no modelOptions —

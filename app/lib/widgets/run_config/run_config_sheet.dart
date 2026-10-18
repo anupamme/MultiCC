@@ -16,8 +16,10 @@ import '../../models/message.dart';
 import '../../models/provider_limit_label.dart';
 import '../../providers/session_manager.dart';
 import '../../services/auto_provider_routing.dart';
+import '../../services/codebuddy_models_service.dart';
 import '../../services/codex_models_service.dart';
 import '../../services/opencode_models_service.dart';
+import '../../services/qoder_models_service.dart';
 import '../../services/run_pool_service.dart';
 import '../../services/settings_service.dart';
 import '../../theme.dart';
@@ -400,7 +402,13 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
       _customSubModel = false;
       _subCustomCtrl.text = '';
     });
-    if (!cli.supportsProvider) return;
+    if (!cli.supportsProvider) {
+      // 自持账号车道没有线路池，但模型目录是活的（Qoder / WorkBuddy 各自的
+      // 宿主 CLI 目录）：开面板时只暖了入口那条车道，面板里切过来要在这里补暖，
+      // 否则下拉只剩内置档位。
+      await _warmOwnCatalog(cli);
+      return;
+    }
     var providers = _pool.cached(cli.name);
     if (providers == null) {
       setState(() => _countingLanes.add(cli.name));
@@ -415,6 +423,22 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
       _provider = _seedProviderFor(cli, providers);
       _model = _defaultModelFor(_provider);
     });
+  }
+
+  Future<void> _warmOwnCatalog(SessionCli cli) async {
+    final settings = widget.settings;
+    if (settings == null) return;
+    try {
+      if (cli == SessionCli.qoder) {
+        await QoderModelsService(settings: settings).load();
+      } else if (cli == SessionCli.codebuddy) {
+        await CodebuddyModelsService(settings: settings).load();
+      } else {
+        return;
+      }
+    } catch (_) {}
+    if (!mounted || _cli != cli) return;
+    setState(() {});
   }
 
   /// 换到一条新车道时的默认线路：官方那条，找不到就用第一条。
