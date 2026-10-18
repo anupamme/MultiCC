@@ -364,3 +364,12 @@ test('working verdict carries the model stage only while a turn is in flight', (
   cs.isStreaming = false;
   assert.equal(rt.verdict('s').stage, null);
 });
+
+test('verdict exposes silentMs (the field the web/App pill reads) equal to heartbeatSilentMs', () => {
+  const now = clockFrom(100_000);
+  const cs = { cli: 'claude', isStreaming: true, turnStartedAt: 90_000, lastStreamAt: 94_000 };
+  const rt = make({ now, sessions: { s: { cli: 'claude' } }, chat: { s: cs } });
+  const v = rt.verdict('s');
+  assert.equal(v.heartbeatSilentMs, 6000);
+  assert.equal(v.silentMs, 6000);
+});
