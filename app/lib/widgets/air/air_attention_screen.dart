@@ -17,6 +17,7 @@ class AirAttentionScreen extends StatelessWidget {
     required this.tasks,
     required this.directoryName,
     required this.onOpenTask,
+    this.onToggleTodo,
   });
 
   /// 已经按最近更新排好的完整清单（`airUrgentTasks` 的返回值）。
@@ -27,6 +28,9 @@ class AirAttentionScreen extends StatelessWidget {
 
   /// 点开一条任务。这一页只是清单，点走之后由宿主持平后面那层控制台。
   final ValueChanged<AirTask> onOpenTask;
+
+  /// 长按任务行：切换「手动待办」（同其余任务列表）。
+  final ValueChanged<AirTask>? onToggleTodo;
 
   @override
   Widget build(BuildContext context) {
@@ -111,6 +115,9 @@ class AirAttentionScreen extends StatelessWidget {
                       directoryName: directoryName(task.dirId),
                       showTime: true,
                       onTap: () => onOpenTask(task),
+                      onLongPress: onToggleTodo == null
+                          ? null
+                          : () => onToggleTodo!(task),
                     ),
                   ),
                 if (tasks.isEmpty) const _Empty('没有正在等我的任务。'),

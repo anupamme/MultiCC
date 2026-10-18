@@ -338,7 +338,8 @@ class AirTaskTile extends StatelessWidget {
   final AirTask task;
   final VoidCallback onTap;
 
-  /// 长按：目录任务行拿它切换「手动待办」。其余列表不传。
+  /// 长按：切换「手动待办」。每个任务列表（目录、手机工作台、控制台、需关注、
+  /// 正在执行）都接这一处，手机上长按哪一行都一样。
   final VoidCallback? onLongPress;
 
   /// 跨目录的列表（控制台、侧栏）要把「它在哪个目录」写在行上；当前目录的

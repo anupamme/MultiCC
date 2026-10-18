@@ -30,6 +30,7 @@ MockClient _client(
   bool Function()? auxConfigured,
   Map<String, dynamic>? cliAvailability,
   bool installSpecsFail = false,
+  List<String>? todos,
 }) => MockClient((request) async {
   const headers = {'content-type': 'application/json; charset=utf-8'};
   final path = request.url.path;
@@ -78,6 +79,17 @@ MockClient _client(
       headers: headers,
     );
   }
+  // 手动待办：toggle 改的是同一份清单，下一次快照就带着它（同服务端 todos.js）。
+  if (path == '/api/air/todos/toggle') {
+    final id = '${(jsonDecode(request.body) as Map)['taskId']}';
+    final list = todos ?? <String>[];
+    list.contains(id) ? list.remove(id) : list.add(id);
+    return http.Response(
+      jsonEncode({'ok': true, 'taskIds': list}),
+      200,
+      headers: headers,
+    );
+  }
   // 远端工作区是快照自带的一趟，跟目录一起铺进列表。
   if (path == '/api/external-fleets') {
     return http.Response(
@@ -114,6 +126,7 @@ MockClient _client(
           {'id': 'd$i', 'name': '工作目录 ${i == 1 ? 'A' : 'B'}', 'path': '/p/$i'},
       ],
       'tasks': tasks ?? _baseTasks,
+      'taskTodos': todos ?? const <String>[],
     }),
     200,
     headers: headers,
@@ -445,6 +458,34 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     client.close();
+  });
+
+  testWidgets('控制台的任务行长按也能标记 / 取消待办，行上的 🚩 跟着服务端走', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final requests = <String>[];
+    final todos = <String>[];
+    final client = _client(requests, todos: todos);
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+    await _openTile(tester, 'all');
+    final flag = find.byKey(const ValueKey('air-task-todo-mark-t3'));
+    expect(flag, findsNothing);
+
+    await tester.longPress(_row('t3'));
+    await tester.pumpAndSettle();
+    expect(requests, contains('/api/air/todos/toggle'));
+    expect(todos, ['t3']);
+    expect(find.text('已标记为待办「整理文档」'), findsOneWidget);
+    expect(flag, findsOneWidget);
+
+    await tester.longPress(_row('t3'));
+    await tester.pumpAndSettle();
+    expect(todos, isEmpty);
+    expect(find.text('已取消待办「整理文档」'), findsOneWidget);
+    expect(flag, findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('全部任务的筛选：默认只看没结束的，搜索、状态、目录各收窄一层', (tester) async {

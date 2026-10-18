@@ -494,4 +494,75 @@ void main() {
       3,
     );
   });
+
+  testWidgets('手机首页长按任务行就能标记 / 取消待办，不必先进目录', (tester) async {
+    final config = await settings();
+    final todos = <String>[];
+    final toggles = <Object?>[];
+    final transport = MockClient((req) async {
+      dynamic body = <String, dynamic>{};
+      if (req.url.path == '/api/air/todos/toggle') {
+        final id = (jsonDecode(req.body) as Map)['taskId'] as String;
+        toggles.add(id);
+        todos.contains(id) ? todos.remove(id) : todos.add(id);
+        body = {'ok': true, 'taskIds': todos};
+      } else if (req.url.path == '/api/air') {
+        body = {
+          'ok': true,
+          'clis': ['codex'],
+          'directories': [
+            {'id': 'one', 'name': '项目一', 'path': '/projects/one'},
+          ],
+          'taskTodos': todos,
+          'tasks': [
+            {
+              'id': 't1',
+              'dirId': 'one',
+              'title': '首页改版',
+              'status': 'active',
+              'runState': 'idle',
+            },
+          ],
+          'sessions': [],
+        };
+      } else if (req.url.path == '/api/settings/power') {
+        body = {'ok': true, 'available': false};
+      } else if (req.url.path == '/api/cron' ||
+          req.url.path == '/api/docs-registry') {
+        body = [];
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: transport),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey('air-task-t1'));
+    final flag = find.byKey(const ValueKey('air-task-todo-mark-t1'));
+    await tester.ensureVisible(row);
+    expect(flag, findsNothing);
+
+    await tester.longPress(row);
+    await tester.pumpAndSettle();
+    expect(toggles, ['t1']);
+    expect(find.text('已标记为待办「首页改版」'), findsOneWidget);
+    expect(flag, findsOneWidget);
+
+    await tester.longPress(row);
+    await tester.pumpAndSettle();
+    expect(toggles, ['t1', 't1']);
+    expect(find.text('已取消待办「首页改版」'), findsOneWidget);
+    expect(flag, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

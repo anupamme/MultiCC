@@ -432,6 +432,7 @@ class _AirTasksViewState extends State<AirTasksView>
                             Navigator.of(sheetContext).pop();
                             unawaited(_open(task));
                           },
+                          onLongPress: () => unawaited(_toggleTodo(task)),
                         ),
                       ),
                   ],
@@ -2387,35 +2388,13 @@ class _AirTasksViewState extends State<AirTasksView>
     }
   }
 
-  /// 标记 / 取消手动待办。清单在服务端（`air-todos.json`），Web 读的是同一份。
-  Future<bool> _toggleTodo(AirTask task) async {
-    final wasTodo = _data?.isTodo(task.id) ?? false;
-    try {
-      await _service.toggleTaskTodo(task.id);
-      if (!mounted) return true;
-      await _refresh();
-      if (!mounted) return true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            t(wasTodo ? 'airTodoUnmarked' : 'airTodoMarked', {
-              'title': task.title,
-            }),
-          ),
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      return true;
-    } catch (error) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(error.toString().replaceFirst('Exception: ', '')),
-        ),
-      );
-      return false;
-    }
-  }
+  /// 标记 / 取消手动待办（见 [toggleAirTaskTodo]）。
+  Future<bool> _toggleTodo(AirTask task) => toggleAirTaskTodo(
+    context: context,
+    service: _service,
+    task: task,
+    onChanged: _refresh,
+  );
 
   Future<void> _deleteTaskFromList(AirTask task) async {
     final deleted = await deleteAirTaskWithConfirmation(
