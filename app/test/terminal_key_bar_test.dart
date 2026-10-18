@@ -5,6 +5,7 @@ import 'package:xterm/xterm.dart';
 
 import 'package:multicc_app/screens/terminal_screen.dart';
 import 'package:multicc_app/services/settings_service.dart';
+import 'package:multicc_app/widgets/voice_composer.dart';
 
 // 手机上「终端能不能用」的底线是键盘条里有没有回车和退格：软键盘的退格靠
 // TerminalView 的 deleteDetection（terminal_screen 里已开），回车键则依输入法
@@ -229,5 +230,27 @@ void main() {
     expect(
         TerminalMacro.fromJson({'label': 'a', 'text': 'b'})?.sendEnter, isTrue,
         reason: 'missing enter flag defaults to true');
+  });
+
+  testWidgets('TerminalKeyBar shows the mic key only when a voice controller is passed',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final settings = await SettingsService.getInstance();
+    final voice = VoiceComposerController(
+      settings: settings,
+      target: TextEditingController(),
+    );
+    addTearDown(voice.dispose);
+    final terminal = Terminal();
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: TerminalKeyBar(terminal: terminal)),
+    ));
+    expect(find.byIcon(Icons.mic_rounded), findsNothing);
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: TerminalKeyBar(terminal: terminal, voice: voice)),
+    ));
+    expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
   });
 }
