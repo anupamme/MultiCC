@@ -76,8 +76,7 @@ body.air-chat {
    stays mounted for its menu DOM but is never shown. */
 .air-chat #header-more-wrap { display: none; }
 /* Duplicated by the task header's AI 配置 / 角色 controls; hidden in Air. */
-.air-chat #model-btn, .air-chat #effort-btn, .air-chat #provider-btn,
-.air-chat #role-btn, .air-chat #cli-btn { display: none !important; }
+.air-chat #model-btn, .air-chat #role-btn, .air-chat #cli-btn { display: none !important; }
 /* One refresh, not two: the task header's ↻ reloads this frame from the host
    (air.js → reloadConversation), which is what this button used to do alone. */
 .air-chat #reconnect-btn { display: none !important; }

@@ -1,6 +1,8 @@
 'use strict';
 
-// Browser-level coverage for CLI-specific controls in one logical chat.
+// Browser-level coverage for the in-chat CLI switch and the missing-CLI guard.
+// The per-CLI model/effort/agent controls moved to the Air run-config sheet
+// (public/run-config.js); the old #model-btn dialog is gone.
 // No model turns are sent; fake executable paths make availability deterministic.
 
 const { spawn } = require('child_process');
@@ -56,27 +58,6 @@ async function clickElement(page, selector) {
   if (!clicked) throw new Error(`missing clickable element: ${selector}`);
 }
 
-async function openConfig(page, expectedCli) {
-  await page.waitForFunction(cli => document.querySelector('#cli-btn')?.textContent.includes(cli),
-    { polling: 100, timeout: 10000 }, expectedCli);
-  await clickElement(page, '#model-btn');
-  await page.waitForSelector('#ai-agent-section', { timeout: 10000 });
-  return page.evaluate(() => ({
-    effortLabel: document.querySelector('#ai-effort-label')?.textContent.trim(),
-    effortVisible: getComputedStyle(document.querySelector('#ai-effort-section')).display !== 'none',
-    effortValues: [...document.querySelectorAll('#ai-effort option')].map(option => option.value),
-    providerVisible: getComputedStyle(document.querySelector('#ai-provider-section')).display !== 'none',
-    modelValues: [...document.querySelectorAll('#ai-model option')].map(option => option.value),
-    agentVisible: getComputedStyle(document.querySelector('#ai-agent-section')).display !== 'none',
-    subagentVisible: getComputedStyle(document.querySelector('#ai-sub-section')).display !== 'none',
-  }));
-}
-
-async function closeConfig(page) {
-  await clickElement(page, '#ai-cancel');
-  await page.waitForFunction(() => !document.querySelector('#ai-cancel'), { polling: 100 });
-}
-
 async function stopServer() {
   if (!server) return;
   const exited = new Promise(resolve => server.once('exit', resolve));
@@ -124,17 +105,15 @@ async function cleanup() {
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
   const page = await browser.newPage();
-  const chatUrl = `${BASE}/chat.html?session=${encodeURIComponent(session.id)}&token=${encodeURIComponent(TOKEN)}`;
+  // Bare /chat.html is the task-entry placeholder (src/routes/static-assets.js);
+  // the real chat document only renders with air=1 plus a task or session.
+  const chatUrl = `${BASE}/chat.html?air=1&session=${encodeURIComponent(session.id)}&token=${encodeURIComponent(TOKEN)}`;
   await page.goto(chatUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-  console.log('  checking OpenCode controls');
-  let ui = await openConfig(page, 'OpenCode');
-  if (!ui.agentVisible || ui.subagentVisible
-      || ui.effortLabel !== 'Variant' || !ui.effortValues.includes('minimal')) {
-    throw new Error(`OpenCode controls mismatch: ${JSON.stringify(ui)}`);
-  }
-  await closeConfig(page);
+  await page.waitForFunction(() => document.querySelector('#cli-btn')?.textContent.includes('OpenCode'),
+    { polling: 100, timeout: 10000 });
 
+  console.log('  checking missing CLI guard');
   await clickElement(page, '#cli-btn');
   await page.waitForFunction(() => [...document.querySelectorAll('option')].some(option => option.value === 'zcode'),
     { polling: 100 });
@@ -149,38 +128,7 @@ async function cleanup() {
   }
   await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '取消')?.click());
 
-  console.log('  checking Claude controls');
-  await api('POST', `/api/sessions/${session.id}/switch-cli`, { cli: 'claude' });
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
-  ui = await openConfig(page, 'Claude');
-  if (!ui.agentVisible || !ui.subagentVisible || ui.effortLabel !== 'Effort') {
-    throw new Error(`Claude controls mismatch: ${JSON.stringify(ui)}`);
-  }
-  await closeConfig(page);
-
-  console.log('  checking Codex controls');
-  await api('POST', `/api/sessions/${session.id}/switch-cli`, { cli: 'codex' });
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
-  // cli 'codex' 是兜底的 `codex exec` 车道。扶正之后两条 codex 车道的大字都是家族名
-  // Codex（小字才是 codex exec / Codex App Server），所以按钮名认不出是哪一条 ——
-  // 真正的区分在下面那组控件：兜底车道没有 agent、只有 subagent + Reasoning Level。
-  ui = await openConfig(page, 'Codex');
-  if (ui.agentVisible || !ui.subagentVisible || ui.effortLabel !== 'Reasoning Level') {
-    throw new Error(`Codex controls mismatch: ${JSON.stringify(ui)}`);
-  }
-  await closeConfig(page);
-
-  console.log('  checking Qoder CN controls');
-  await api('POST', `/api/sessions/${session.id}/switch-cli`, { cli: 'qoder' });
-  await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
-  ui = await openConfig(page, 'Qoder CN');
-  if (ui.providerVisible || !ui.agentVisible || ui.subagentVisible
-      || ui.effortLabel !== 'Reasoning Effort' || !ui.effortValues.includes('xhigh')
-      || !ui.modelValues.includes('auto') || !ui.modelValues.includes('performance')) {
-    throw new Error(`Qoder CN controls mismatch: ${JSON.stringify(ui)}`);
-  }
-
-  console.log('CLI-specific UI controls and missing-CLI guard passed');
+  console.log('CLI switch UI and missing-CLI guard passed');
   await cleanup();
 })().catch(async error => {
   console.error(error);

@@ -1517,7 +1517,6 @@ const modelBtn = document.getElementById('model-btn');
 // CLAUDE_MODEL_OPTIONS + modelShortName live in shared/models.js (loaded before chat.js).
 let _sessionModel = '';        // raw per-session override (null/'' = follow default)
 let _sessionEffectiveModel = ''; // model actually used at spawn time (for display)
-const effortBtn = document.getElementById('effort-btn');
 let _sessionEffort = '';
 let _sessionEffectiveEffort = '';
 
@@ -1591,22 +1590,6 @@ function modelDisplayName(model, providerId) {
   return window.MultiCCChatAiConfig.modelDisplayName(model, providerId, chatAiConfigState());
 }
 
-function showEffortPicker(current) {
-  return window.MultiCCChatAiConfig.showEffortPicker(current, {
-    cli: _sessionCli,
-    document,
-  });
-}
-
-function showAIConfigPicker(config) {
-  return window.MultiCCChatAiConfig.showAIConfigPicker(config, chatAiConfigState());
-}
-
-function updateEffortBtn() {
-  if (!effortBtn) return;
-  effortBtn.style.display = 'none';
-}
-
 async function loadSessionModel() {
   if (!_sessionName) return;
   let info;
@@ -1634,10 +1617,9 @@ async function loadSessionModel() {
   _sessionProviderDisplayName = '';
   _sessionAgent = info.agent || '';
   await safe('provider-list', async () => { if (_sessionProvider && !PROVIDERLESS_CLIS.has(_sessionCli)) await ensureProviderList(_sessionCli); });
-  safe('provider-btn', updateProviderBtn);
+  safe('provider-quota', updateProviderBtn);
   _sessionModel = info.model || ''; _sessionEffectiveModel = info.effectiveModel || info.model || '';
   _sessionEffort = info.effort || ''; _sessionEffectiveEffort = info.effectiveEffort || _sessionEffort || defaultEffortForCurrentCli();
-  safe('effort-btn', updateEffortBtn);
   _sessionAutoCommit = info.autoCommit !== false; // 缺字段 = 开，和 create-record 同一口径
   safe('auto-commit-btn', updateAutoCommitBtn);
   void window.MultiCCChatAiConfig.maybePromptZcodeSetup({
@@ -1651,22 +1633,7 @@ modelBtn?.addEventListener('click', () => {
   try { window.parent?.__multiccAirRunConfig?.(); } catch (_) { /* 宿主没起来 */ }
 });
 
-effortBtn?.addEventListener('click', async () => {
-  const picked = await showEffortPicker(_sessionEffectiveEffort || _sessionEffort || defaultEffortForCurrentCli());
-  if (picked === null) return;
-  try {
-    const data = await window.MultiCCChatAiConfig.saveSession(_sessionName, { effort: picked });
-    _sessionEffort = data.effort || '';
-    _sessionEffectiveEffort = data.effectiveEffort || _sessionEffort || defaultEffortForCurrentCli();
-    updateEffortBtn();
-    addSystemMsg(`✓ 努力程度已切换为 ${effortShortName(_sessionEffectiveEffort)}，下一轮对话生效`);
-  } catch (e) {
-    addSystemMsg('努力程度切换失败：' + chatApi.errorText(e));
-  }
-});
-
 /* ── Per-session provider switch (cc-switch) ── */
-const providerBtn = document.getElementById('provider-btn');
 let _sessionProvider = '';       // provider id ('' = default login)
 let _sessionProviderBaseUrl = '';
 let _sessionProviderSelection = null; // additive Auto pool; provider remains the concrete manual fallback
@@ -1713,8 +1680,6 @@ function providerShortName(id) {
 }
 
 function updateProviderBtn() {
-  if (!providerBtn) return;
-  providerBtn.style.display = 'none';
   const quotaProviderId = _sessionProviderSelection?.mode === 'auto'
     ? _activeProviderId : effectiveProviderIdForChoices(_sessionProvider);
   const quotaProvider = _providerList.find((x) => x && x.id === quotaProviderId) || null;
@@ -1743,34 +1708,6 @@ async function ensureProviderList(cli, opts) {
     if (closeLoading) closeLoading();
   }
 }
-function showProviderPicker(current, list) {
-  return window.MultiCCChatAiConfig.showProviderPicker(current, list, {
-    document,
-    translate: tt,
-  });
-}
-
-providerBtn?.addEventListener('click', async () => {
-  const list = await ensureProviderList(_sessionCli, { loading: true });
-  const picked = await showProviderPicker(_sessionProvider, list);
-  if (picked === null) return;
-  try {
-    const data = await window.MultiCCChatAiConfig.saveSession(_sessionName, {
-      provider: picked.value, providerSelection: null,
-    });
-    _sessionProvider = data.provider || '';
-    _sessionProviderSelection = null;
-    _sessionModel = data.model || '';
-    _sessionEffectiveModel = data.effectiveModel || data.model || '';
-    _sessionEffort = data.effort || '';
-    _sessionEffectiveEffort = data.effectiveEffort || _sessionEffort || defaultEffortForCurrentCli();
-    updateProviderBtn();
-    addSystemMsg(`✓ Provider 已切换为 ${providerShortName(_sessionProvider)}，下一轮对话生效`);
-  } catch (e) {
-    addSystemMsg('Provider 切换失败：' + chatApi.errorText(e));
-  }
-});
-
 /* ── Per-session role prompt (all CLIs) ── */
 const roleBtn = document.getElementById('role-btn');
 let _sessionRole = '';
@@ -2422,7 +2359,6 @@ chatEventController = window.MultiCCChatEventController.createEventController({
     addAuthActionMsg: (text, action) => chatAuthAction.render(text, action),
     offerDoctor: el => chatDoctor.offer(el),
     addAgentNotes,
-    updateEffortBtn,
     updateProviderBtn,
     transportSend: hostTransportSend,
     startTitleAnimation,
