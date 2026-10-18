@@ -173,6 +173,8 @@ function createLivenessRuntime(deps = {}) {
       stageAgeMs: stage ? stage.ageMs : null,
       stagePrecise: stage ? stage.precise : null,
       lastStreamAt, turnStartedAt, heartbeatSilentMs,
+      // Alias the web/App pill reads (`verdict.silentMs`) for the "· 12s" suffix.
+      silentMs: heartbeatSilentMs,
       proxyPhase: proxy ? proxy.phase : null,
       proxyAgeMs,
       phase: heartbeat && heartbeat.phase
