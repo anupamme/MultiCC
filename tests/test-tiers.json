@@ -810,6 +810,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/voice_setup_panel_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/workspace_navigation_drawer_test.dart",
       "tier": "other",
       "lane": "flutter"
@@ -3191,6 +3196,15 @@
       ]
     },
     {
+      "path": "tests/test-hotword-learner.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-http-error-boundary.js",
       "tier": "core",
       "lane": "deterministic",
@@ -5493,6 +5507,24 @@
       "path": "tests/test-voice-latency.js",
       "tier": "other",
       "lane": "live"
+    },
+    {
+      "path": "tests/test-voice-readiness-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
+      ]
+    },
+    {
+      "path": "tests/test-voice-readiness.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
     },
     {
       "path": "tests/test-voice-routes.js",

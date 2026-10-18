@@ -7,7 +7,9 @@ import 'package:http/http.dart' as http;
 import '../i18n.dart';
 import '../services/settings_service.dart';
 import '../services/voice_clip_recorder.dart';
+import '../services/manage_service.dart';
 import '../services/voice_dictation_service.dart';
+import 'voice_setup_panel.dart';
 
 /// 语音输入：会话页输入条与目录「快速新建」共用的同一份交互。
 ///
@@ -116,7 +118,47 @@ class VoiceComposerController extends ChangeNotifier {
       await commit(context);
       return;
     }
+    if (_clip.isRecording) {
+      await _toggleRecording(context);
+      return;
+    }
+    if (!await _voiceReady(context) || !context.mounted) return;
     await _startDictation(context);
+  }
+
+  /// 已确认能用就不再问；确认过一次就记住，省掉之后每次点麦克风的往返。
+  bool _confirmedReady = false;
+
+  /// 先问服务端语音能不能用：本地模型没装、也没配云端时，直接弹安装面板，
+  /// 别让用户先说完一整段再收到一句 `STT failed: 503`。问不到（老服务端、
+  /// 网络抖）就照常开始，让识别通道自己报错。
+  Future<bool> _voiceReady(BuildContext context) async {
+    if (_confirmedReady) return true;
+    Map<String, dynamic>? r;
+    try {
+      r = await (debugReadinessProbe ?? _defaultProbe)(_settings);
+    } catch (_) {
+      return true;
+    }
+    if (r['ready'] != false) {
+      _confirmedReady = r['ready'] == true;
+      return true;
+    }
+    if (context.mounted) await showVoiceSetupSheet(context, _settings, readiness: r);
+    return false;
+  }
+
+  /// 测试注入点（同 [debugDictationBuilder]）；生产走 [ManageService.fetchVoiceReadiness]。
+  @visibleForTesting
+  static Future<Map<String, dynamic>> Function(SettingsService)?
+      debugReadinessProbe;
+
+  static Future<Map<String, dynamic>> _defaultProbe(SettingsService s) =>
+      ManageService(settings: s).fetchVoiceReadiness();
+
+  void _offerSetup(BuildContext context, [Map<String, dynamic>? readiness]) {
+    _confirmedReady = false;
+    showVoiceSetupSheet(context, _settings, readiness: readiness);
   }
 
   Future<void> _startDictation(BuildContext context) async {
@@ -142,6 +184,17 @@ class VoiceComposerController extends ChangeNotifier {
     final host = _host;
     if (host == null || !host.mounted) return;
     final d = _dictation;
+    // 服务端说语音还没装好：退回整段录音也一样转不了，直接给安装面板。
+    if (d != null &&
+        d.state == VoiceDictationState.failed &&
+        d.errorCode == 'voice_not_ready') {
+      _legacyFallbackArmed = true;
+      _dictation?.removeListener(_onDictationChanged);
+      _dictation = null;
+      notifyListeners();
+      _offerSetup(host);
+      return;
+    }
     // 启动失败且一个字都没识别到：回退旧的整段上传，别让用户对着空 HUD 干等。
     if (d != null &&
         d.state == VoiceDictationState.failed &&
@@ -252,6 +305,11 @@ class VoiceComposerController extends ChangeNotifier {
         _showVoicePanel(context, text);
       }
     } on VoiceClipException catch (e) {
+      // 503 = 没有能用的识别（voice_not_ready）：给安装面板，不报一串状态码。
+      if (e.statusCode == 503 && context.mounted) {
+        _offerSetup(context);
+        return;
+      }
       // 非 200 与路上出错本来就是两种说法（`STT failed: 500` / `STT error: …`），
       // 由异常自己拼好。
       if (context.mounted) {

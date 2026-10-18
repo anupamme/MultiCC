@@ -28,6 +28,16 @@
     const hasNativeBridge = opts.hasNativeBridge === true;
     const installNativeBridgeCallbacks = opts.installNativeBridgeCallbacks !== false;
     const onCommit = typeof opts.onCommit === 'function' ? opts.onCommit : (() => {});
+    // "Voice is not set up" guide (voice-readiness.js): asked before recording,
+    // and shown again if a recogniser still answers voice_not_ready.
+    const readiness = opts.readiness !== undefined ? opts.readiness
+      : (win.MultiCCVoiceReadiness ? win.MultiCCVoiceReadiness.createVoiceReadiness({ window: win, document: doc, fetch: fetchFn, withToken }) : null);
+    const offerSetup = info => {
+      if (!readiness) return false;
+      if (info && info.reason) readiness.show(info);
+      else readiness.check().then(r => { if (r && !r.ready) readiness.show(r); });
+      return true;
+    };
 
     // Host elements. Chat passes only the input/mic/toast; the voice panel and
     // HUD are looked up by the ids chat.html has always used, and a host that
@@ -121,6 +131,10 @@
         data.append('file', blob, 'recording.webm');
         const response = await fetchFn(withToken('/api/voice/stt'), { method: 'POST', body: data });
         const result = await response.json();
+        if (result && result.code === 'voice_not_ready' && offerSetup(result.readiness)) {
+          hideMicToast();
+          return false;
+        }
         if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
         hideMicToast();
         if (result.text?.trim()) showVoicePanel(result.text.trim());
@@ -330,13 +344,17 @@
               micBtn?.classList.remove('recording');
               setHudStatus(text ? '识别完成' : '未识别到语音', 'done');
             },
-            onError(message) {
+            onError(message, code) {
               if (!ownsVoiceStart(generation, candidate)) return;
               voiceStartPhase = 'idle';
               voiceStream = null;
-              setHudStatus('⚠ ' + message, 'done');
               hudActive = false;
               micBtn?.classList.remove('recording');
+              if (code === 'voice_not_ready' && offerSetup(null)) {
+                hud?.classList.remove('open');
+                return;
+              }
+              setHudStatus('⚠ ' + message, 'done');
             },
           });
         } catch (error) {
@@ -427,6 +445,13 @@
       hud?.classList.remove('open');
     }
 
+    function refreshStreamingAvailability() {
+      return fetchFn(withToken('/api/settings/voice')).then(response => response.json()).then(data => {
+        const status = data && data.asr && data.asr.status;
+        asrStreamingAvailable = !!(status && (status.local?.ready || status.openai?.ready || status.volcano?.ready || status.funasr?.ready));
+      }).catch(() => { asrStreamingAvailable = false; });
+    }
+
     function bindVoice() {
       // The native host may install MultiCCBridge after the page script has
       // loaded, so retain the legacy callbacks even in an ordinary browser.
@@ -472,24 +497,31 @@
 
       const canLegacyRecord = hasNativeBridge || (!!win.MediaRecorder && !!nav.mediaDevices);
       const canStream = !!(nav.mediaDevices && win.AudioWorkletNode && win.VoiceStream && !hasNativeBridge);
-      if (fetchFn) {
-        fetchFn(withToken('/api/settings/voice')).then(response => response.json()).then(data => {
-          const status = data && data.asr && data.asr.status;
-          asrStreamingAvailable = !!(status && (status.local?.ready || status.openai?.ready || status.volcano?.ready || status.funasr?.ready));
-        }).catch(() => { asrStreamingAvailable = false; });
-      }
+      if (fetchFn) refreshStreamingAvailability();
       if (!micBtn) return;
       if (!canLegacyRecord && !canStream) {
         micBtn.disabled = true;
         micBtn.title = 'Recording not supported (needs HTTPS / AudioWorklet)';
       } else {
-        micBtn.onclick = () => {
-          if (canStream && asrStreamingAvailable) {
-            if (voiceStartPhase === 'starting') return;
-            if (voiceStartPhase === 'active' || hudActive) commitStreamingVoice();
-            else startStreamingVoice();
-          } else if (isRecording) stopRecording();
+        const startDictation = () => {
+          if (canStream && asrStreamingAvailable) startStreamingVoice();
           else startRecording();
+        };
+        if (readiness) readiness.check();
+        micBtn.onclick = () => {
+          // Stopping / committing never waits on anything.
+          if (canStream && asrStreamingAvailable && (voiceStartPhase === 'starting')) return;
+          if (canStream && asrStreamingAvailable && (voiceStartPhase === 'active' || hudActive)) { commitStreamingVoice(); return; }
+          if (!(canStream && asrStreamingAvailable) && isRecording) { stopRecording(); return; }
+          // Starting asks first, so nobody dictates a sentence into a recogniser
+          // that cannot run. Known-ready skips the round trip.
+          if (!readiness || readiness.ready) { startDictation(); return; }
+          readiness.ensureReady().then(ok => {
+            if (!ok) return;
+            // The model may have just finished installing: re-read which path to use.
+            if (fetchFn) refreshStreamingAvailability().finally(startDictation);
+            else startDictation();
+          });
         };
       }
     }

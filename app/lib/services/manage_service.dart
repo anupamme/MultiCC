@@ -893,6 +893,27 @@ class ManageService {
         .cast<String, dynamic>();
   }
 
+  /// Can voice input run right now (src/voice/readiness.js)? `{ready, engine,
+  /// reason, cloudConfigured, download}` — `download` is the local model's
+  /// install state, the same object the web settings page draws.
+  Future<Map<String, dynamic>> fetchVoiceReadiness() async {
+    final res = await _send('GET', '/api/voice/readiness',
+        timeout: const Duration(seconds: 5));
+    if (res.statusCode >= 400) _throw(res);
+    return (jsonDecode(utf8.decode(res.bodyBytes)) as Map)
+        .cast<String, dynamic>();
+  }
+
+  /// Start (`download`) or stop (`cancel`) the local speech model install.
+  /// Not a secret, so unlike keys it is fine to drive from the phone.
+  Future<Map<String, dynamic>> localAsrModelAction(String action) async {
+    final res = await _send('POST', '/api/settings/voice/asr-model',
+        body: jsonEncode({'action': action}));
+    if (res.statusCode >= 400) _throw(res);
+    return (jsonDecode(utf8.decode(res.bodyBytes)) as Map)
+        .cast<String, dynamic>();
+  }
+
   // ── Turn outcome ───────────────────────────────────────────────────────────
 
   /// Back-compatible endpoint: manually mark a waiting turn as succeeded.

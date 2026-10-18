@@ -111,6 +111,7 @@ test('mounts the complete legacy voice REST surface', () => {
     'DELETE /api/voice/vocab/:term',
     'GET /api/settings/voice',
     'GET /api/voice/hotwords',
+    'GET /api/voice/readiness',
     'GET /api/voice/test-sse',
     'GET /api/voice/vocab',
     'POST /api/settings/voice',
@@ -225,6 +226,38 @@ test('STT preserves missing-file response and local-ASR first behavior', async (
   });
   assert.equal(transcribed, 1);
   assert.deepEqual(res.body, { text: '本地结果', duration_ms: 12, engine: 'local' });
+});
+
+test('with no local model and no cloud key, STT answers 503 voice_not_ready with what to offer', async () => {
+  const { app } = createHarness();
+  const res = await invoke(app, 'POST', '/api/voice/stt', {
+    file: { buffer: Buffer.from('audio'), originalname: 'a.webm', size: 5, mimetype: 'audio/webm' },
+  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'voice_not_ready');
+  assert.equal(res.body.readiness.ready, false);
+  assert.equal(res.body.readiness.reason, 'missing');
+  assert.equal(res.body.readiness.download.totalBytes, 240193589);
+});
+
+test('readiness: local model or any cloud credential makes voice usable', async () => {
+  let harness = createHarness();
+  let res = await invoke(harness.app, 'GET', '/api/voice/readiness');
+  assert.deepEqual({ ready: res.body.ready, engine: res.body.engine, reason: res.body.reason }, { ready: false, engine: null, reason: 'missing' });
+
+  harness = createHarness({ asrLocal: { isAvailable: () => true, transcribeBuffer: async () => ({}) } });
+  res = await invoke(harness.app, 'GET', '/api/voice/readiness');
+  assert.equal(res.body.engine, 'local');
+
+  const voice = createHarness().voice;
+  voice.cfg.OPENROUTER_API_KEY = 'k';
+  harness = createHarness({ voice });
+  res = await invoke(harness.app, 'GET', '/api/voice/readiness');
+  assert.equal(res.body.engine, 'cloud');
+
+  harness = createHarness({ voiceAsr: { cfg: {}, providerStatus: () => ({ volcano: { ready: true } }), applyConfig() {} } });
+  res = await invoke(harness.app, 'GET', '/api/voice/readiness');
+  assert.equal(res.body.engine, 'cloud');
 });
 
 test('cloud STT retains auth, form fields and response DTO', async () => {

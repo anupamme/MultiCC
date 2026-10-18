@@ -70,7 +70,7 @@ function applyConfig(updates) {
 function providerStatus() {
   const local = asrLocal.status();
   return {
-    default: resolveProvider(cfg.defaultProvider),
+    default: resolveProvider(cfg.defaultProvider) || 'none',
     local:   { ready: local.ready, model: local.model, loaded: local.loaded, sampleRate: local.sampleRate },
     openai:  { ready: !!cfg.openai.apiKey,  model: cfg.openai.model,  sampleRate: cfg.openai.sampleRate },
     volcano: { ready: !!(cfg.volcano.appId && cfg.volcano.accessToken), sampleRate: cfg.volcano.sampleRate },
@@ -79,14 +79,16 @@ function providerStatus() {
 }
 
 // 'auto' picks the best available provider: local model beats any cloud hop,
-// then cloud providers in configured-credential order.
+// then cloud providers in configured-credential order. Null when nothing can
+// run — the session then reports `voice_not_ready` instead of blaming a key
+// for a provider the user never chose.
 function resolveProvider(requested) {
   if (requested && requested !== 'auto') return requested;
   if (asrLocal.isAvailable()) return 'local';
   if (cfg.openai.apiKey) return 'openai';
   if (cfg.volcano.appId && cfg.volcano.accessToken) return 'volcano';
   if (cfg.funasr.url) return 'funasr';
-  return 'openai';
+  return null;
 }
 
 function targetSampleRate(provider) {
@@ -348,7 +350,7 @@ function handleVoiceWs(ws, req, urlObj) {
     onPartial: (t) => { partial = t; send({ type: 'partial', text: aggregate + partial }); },
     onFinal:   (t) => { aggregate += t; partial = ''; send({ type: 'final', text: aggregate }); },
     onDone:    () => { send({ type: 'done', text: aggregate }); },
-    onError:   (m) => { send({ type: 'error', message: m }); },
+    onError:   (m, code) => { send({ type: 'error', message: m, ...(code ? { code } : {}) }); },
   };
 
   ws.on('message', (raw, isBinary) => {
@@ -387,6 +389,11 @@ function handleVoiceWs(ws, req, urlObj) {
       const requested = (msg.provider && msg.provider !== 'auto') ? msg.provider : cfg.defaultProvider;
       provider = resolveProvider(requested);
       pendingPcmByte = null;
+      if (!provider) {
+        // The client asks GET /api/voice/readiness for what to offer.
+        cb.onError('语音识别未就绪：本地模型未安装，也没有配置云端识别', 'voice_not_ready');
+        return;
+      }
       try {
         upstream = createAsrSession(provider, { lang: msg.lang }, cb);
       } catch (e) { cb.onError(e.message); }

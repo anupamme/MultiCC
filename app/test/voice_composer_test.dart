@@ -219,9 +219,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() => I18n.init('zh'));
 
+  // 点麦克风前会先问服务端语音能不能用；这组用例只管听写流程，一律答「能」。
+  setUp(() {
+    VoiceComposerController.debugReadinessProbe = (_) async => {'ready': true};
+  });
+
   tearDown(() {
     VoiceComposerController.debugDictationBuilder = null;
     VoiceComposerController.debugClipBuilder = null;
+    VoiceComposerController.debugReadinessProbe = null;
   });
 
   testWidgets('会话页输入条：点麦克风 → 实时浮层 → 提交，文本按换行接进草稿', (
