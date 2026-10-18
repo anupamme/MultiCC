@@ -1903,6 +1903,7 @@ final class RfbClient: NSObject {
   var lastMoveAt = Date.distantPast
   var lastMovePos = CGPoint.zero
   var mods: Set<String> = []
+  var hoverMoves = false       // H.264 viewer: no-button motion moves the real cursor (rfbHover)
   // negotiated state, guarded by RfbScreen's lock
   var div = RFB_DIV            // client framebuffer = logical / div
   var swapRB = false           // SetPixelFormat asked for RGBX (noVNC) instead of our BGRX
@@ -2541,6 +2542,10 @@ func rfbPointer(_ c: RfbClient, mask: Int, x rfbX: Int, y rfbY: Int) {
   let p = CGPoint(x: CGFloat(x), y: CGFloat(y))
   let prev = c.lastMask
   c.lastMask = mask
+  if mask == 0 && prev == 0 {
+    if c.hoverMoves { rfbHover(c, p) }
+    return
+  }
   // Wheel buttons are transient pulses in RFB.
   if (mask & 0x08 != 0 && prev & 0x08 == 0) || (mask & 0x10 != 0 && prev & 0x10 == 0) {
     rfbInput(["op": "scroll", "x": x, "y": y, "amount": mask & 0x08 != 0 ? 3 : -3, "allowSystem": true])
@@ -2569,6 +2574,23 @@ func rfbPointer(_ c: RfbClient, mask: Int, x rfbX: Int, y rfbY: Int) {
       rfbInput(["op": "click", "x": Int(start.x), "y": Int(start.y), "count": dbl ? 2 : 1, "allowSystem": true])
     }
   }
+}
+
+// Hover from the H.264 viewer. Its video shows the real cursor (nothing draws one
+// locally), so without this the pointer only jumps on click. Moving the cursor acts
+// on nothing, so it skips withMutation's per-app checks and its two AX hit tests per
+// sample — but Esc halt, the lock screen and another session's lease still win, and
+// a busy input lane just drops the sample (the browser sends the next within ~33ms
+// and always flushes the final position). noVNC keeps hover local (Cursor pseudo-
+// encoding) and never sets hoverMoves.
+@available(macOS 14.0, *)
+func rfbHover(_ c: RfbClient, _ p: CGPoint) {
+  guard hypot(p.x - c.lastMovePos.x, p.y - c.lastMovePos.y) >= 1 else { return }
+  guard AXIsProcessTrusted(), !screenLocked(), !(control.isHalted && !control.clearIdleHalt()),
+        control.holderConflict("remote-screen") == nil, mutationLane.try() else { return }
+  defer { mutationLane.unlock() }
+  c.lastMoveAt = Date(); c.lastMovePos = p
+  post(CGEvent(mouseEventSource: automationEventSource, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left))
 }
 
 @available(macOS 14.0, *)

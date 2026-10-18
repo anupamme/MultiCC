@@ -155,6 +155,23 @@ test('h264 stream: fake agent → bridge → Chrome WebCodecs decodes frames and
       assert.ok(hex.includes('0500' + '00a0' + '0078'), `pointer up at (160,120): ${hex}`);
       assert.ok(hex.includes('0401000000000061') && hex.includes('0400000000000061'), `key a down/up: ${hex}`);
 
+      // 悬停：画面里是远端真实光标，鼠标不按键移动也要发（限频，首个立即、末个补发，中间丢）；
+      // 触屏没有悬停，不发。
+      received.length = 0;
+      await page.evaluate(`(() => {
+        const c = document.querySelector('#t canvas');
+        const mv = (x, pointerType) => c.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: 240, buttons: 0, pointerType, bubbles: true }));
+        for (let x = 100; x <= 300; x += 20) mv(x, 'mouse');
+        mv(400, 'touch');
+        return true;
+      })()`);
+      await new Promise(r => setTimeout(r, 300));
+      const hover = Buffer.from(received).toString('hex');
+      assert.ok(hover.includes('0500' + '0032' + '0078'), `first hover sample goes out at once (50,120): ${hover}`);
+      assert.ok(hover.includes('0500' + '0096' + '0078'), `final hover position is flushed (150,120): ${hover}`);
+      assert.ok(!hover.includes('0500' + '0064' + '0078'), `burst samples in between are throttled: ${hover}`);
+      assert.ok(!hover.includes('0500' + '00c8' + '0078'), `touch moves without contact send nothing: ${hover}`);
+
       await page.evaluate('window.v.disconnect(), true');
       assert.ok(await page.waitFor('window.disconnected === true', { timeoutMs: 3000 }));
     });

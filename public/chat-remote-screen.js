@@ -156,7 +156,7 @@
     if (!s || s.running) return;
     s.running = true;
     const current = s;
-    while (s === current && !current.closed && !s.paused && !document.querySelector('.annotate-overlay')) {
+    while (s === current && !current.closed && !s.paused && !current.rfb && !document.querySelector('.annotate-overlay')) {
       const t0 = Date.now();
       try {
         const epoch = current.regionEpoch || 0;
@@ -201,7 +201,7 @@
     }
     current.running = false;
     // 标注器盖在上面时暂停；它关了自动续上。
-    if (s === current && !s.closed && !s.paused) s.resumeTimer = setTimeout(loop, 600);
+    if (s === current && !s.closed && !s.paused && !s.rfb) s.resumeTimer = setTimeout(loop, 600);
   }
   // 操作后立刻拉下一帧，不等节流间隔。
   function kick() { if (s) s.wakeAt = Date.now() + 1000; }
@@ -321,12 +321,48 @@
   // 几分之一。chat-remote-screen-h264.js 只模仿下面用到的那截 noVNC 接口，所以后面
   // 的连接 / 回退 / 放大 / 输入代码两种模式共用。旧 Agent（没有 h264.sock）、
   // 浏览器没有 WebCodecs、或解码失败：本页之后都直接走 noVNC。
+  //
+  // 工具栏「高清 / 流畅」按钮让人手动二选一（记在本机浏览器），切换立即重连。
   let rfbMod = null;
   let h264Failed = false;
+  const STREAM_KEY = 'multicc.remoteScreen.stream';
+  function streamPref() {
+    try { return localStorage.getItem(STREAM_KEY) === 'rfb' ? 'rfb' : 'h264'; } catch { return 'h264'; }
+  }
+  function h264Possible() {
+    const H264 = global.MultiCCH264View;
+    return !!(H264 && H264.supported()) && !(caps && caps.streams && caps.streams.h264 === false);
+  }
+  function updateStreamBtn() {
+    if (!s || !s.streamBtn) return;
+    const hd = streamPref() === 'h264';
+    s.streamBtn.hidden = !h264Possible();
+    s.streamBtn.textContent = hd ? '🎞 ' + tr('rsStreamHd', '高清') : '⚡ ' + tr('rsStreamRfb', '流畅');
+  }
+  async function switchStream() {
+    const current = s;
+    if (!current) return;
+    try { localStorage.setItem(STREAM_KEY, streamPref() === 'h264' ? 'rfb' : 'h264'); } catch {}
+    h264Failed = false;
+    updateStreamBtn();
+    // 暂停 / 局部清晰时只记住选择，下次连流生效。
+    if (current.closed || current.paused || current.region) return;
+    const old = current.rfb;
+    if (old) {
+      // 等旧流的 disconnect 收尾（它会把图片层摆回来），再连新的，免得两者交错。
+      const gone = new Promise(r => { old.addEventListener('disconnect', r, { once: true }); setTimeout(r, 1500); });
+      current.rfbIntent = true;
+      try { old.disconnect(); } catch {}
+      await gone;
+    }
+    if (s !== current || current.closed || current.paused || current.region) return;
+    status(tr('rsConnecting', '正在取第一帧…'));
+    if (!(await startRfb())) loop();
+  }
   async function startRfb() {
     const H264 = global.MultiCCH264View;
-    const canH264 = !h264Failed && H264 && H264.supported()
-      && !(caps && caps.streams && caps.streams.h264 === false);
+    updateStreamBtn();
+    const canH264 = !h264Failed && streamPref() === 'h264' && h264Possible();
     if (canH264) {
       if (await startStream(H264, 'h264')) return true;
       h264Failed = true;
@@ -840,6 +876,7 @@
       s.rightBtn.classList.toggle('on', s.rightOnce);
     });
     s.boxBtn = btn('⛶', tr('rsBoxZoomTitle', '圈选一块区域局部放大'), () => setBoxSel(!s.boxSelOn));
+    s.streamBtn = btn('', tr('rsStreamTitle', '切换画面模式：高清（H.264，省流量更清晰）/ 流畅（兼容模式，本地画光标）'), () => { void switchStream(); });
     const pauseBtn = btn('⏸ ' + tr('rsPause', '暂停'), '', async () => {
       s.paused = !s.paused;
       pauseBtn.textContent = s.paused ? '▶ ' + tr('rsResume', '继续') : '⏸ ' + tr('rsPause', '暂停');
@@ -870,10 +907,11 @@
     s.unhalt.hidden = true;
     const releaseBtn = btn(tr('rsRelease', '交还'), tr('rsReleaseTitle', '释放操作租约，让其它会话的 agent 立刻可以操作电脑'), () => input({ op: 'release' }));
     head.append(title, statusEl,
-      s.modeBtn, s.rightBtn, s.boxBtn,
+      s.modeBtn, s.rightBtn, s.boxBtn, s.streamBtn,
       btn('✎ ' + tr('rsAnnotate', '标注'), tr('rsAnnotateTitle', '冻结当前画面并打开标注器：开「实时透传」则标记直接在本机执行，关则录入输入框与 agent 对话'), annotate, 'primary'),
       pauseBtn, s.wakeBtn, s.unhalt, releaseBtn,
       btn('✕', tr('rsClose', '关闭'), close, 'rs-close'));
+    updateStreamBtn();
     const stage = el('div', 'rs-stage');
     s.stage = stage;
     // 缩放内层：img 与流畅模式画布都挂在这里，双指捏合只动它的 transform。
