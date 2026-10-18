@@ -341,10 +341,19 @@ test('host composition resolves history and rebound workspace broadcasting lazil
     path.join(__dirname, '..', 'src', 'chat', 'turn-engine.js'),
     'utf8',
   );
+  // The queue-wait protocol lives in ./admission-progress; turn-engine only
+  // wires it. Assert the wiring here and the ordering (memory wait → delivery →
+  // admission-progress frame) in the module that owns it.
+  const admissionProgress = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'chat', 'admission-progress.js'),
+    'utf8',
+  );
   assert.match(server, /loadHistory:\s*sessionId\s*=>\s*chatHistoryRuntime\.load\(sessionId\)/);
   assert.match(server,
     /workspaceBroadcast:\s*\(dirId, payload\)\s*=>\s*workspaceBroadcast\(dirId, payload\)/);
   assert.match(server, /const memoryRuntime = createMemoryRuntime[\s\S]*chatHistoryRuntime = createChatHistoryRuntime/);
   assert.match(turnEngine,
-    /pendingMemory = getPendingMemoryDistill\(sessionName\);[\s\S]*const deliver = \(\) => taskContextHost\.deliverSessionMessage[\s\S]*deliverAfterPendingMemory\([\s\S]*type: 'message_admission_progress'/);
+    /createQueuedTurnPreparation\(\{\s*prepareRouting:[\s\S]*getPendingMemory:\s*getPendingMemoryDistill,\s*broadcast:/);
+  assert.match(admissionProgress,
+    /pendingMemory = getPendingMemory\?\.\(sessionId\)[\s\S]*prepareRouting\([\s\S]*deliverAfterPendingMemory\(pendingMemory[\s\S]*type: 'message_admission_progress'/);
 });
