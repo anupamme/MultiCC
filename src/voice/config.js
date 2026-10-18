@@ -9,6 +9,7 @@
 const fs = require('fs');
 const { createPaths } = require('../paths');
 const { atomicWriteJson } = require('../runtime-security');
+const { stripAliases } = require('./hotword-corrector');
 
 const RUNTIME_PATHS = createPaths({ dataDir: process.env.MULTICC_DATA_DIR });
 const VOICE_EXAMPLES_FILE = RUNTIME_PATHS.voiceExamplesFile;
@@ -164,7 +165,10 @@ function buildWhisperPrompt() {
   const parts = [];
 
   // 1. User-configured static prompt (highest priority)
-  if (cfg.WHISPER_PROMPT) parts.push(cfg.WHISPER_PROMPT.trim());
+  // `term=alias` spellings are for the local corrector only; a cloud prompt
+  // should carry just the terms.
+  const staticTerms = stripAliases(cfg.WHISPER_PROMPT).trim();
+  if (staticTerms) parts.push(staticTerms);
 
   // 2. Load accumulated vocabulary from user corrections
   try {
