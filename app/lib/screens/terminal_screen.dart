@@ -12,6 +12,7 @@ import '../services/terminal_service.dart';
 import '../utils/cli_display.dart';
 import '../widgets/conflict_diff_dialog.dart';
 import '../widgets/terminal_copy_button.dart';
+import '../widgets/voice_composer.dart';
 import 'memo_screen.dart';
 
 class TerminalScreen extends StatefulWidget {
@@ -43,9 +44,20 @@ class _TerminalScreenState extends State<TerminalScreen> {
   /// 「复制」按钮要读的就是它的 selection。
   final TerminalController _controller = TerminalController();
 
+  /// 语音输入：复用输入框那套流式听写（/ws/voice），但终端没有输入框——
+  /// 提交后文字会落进这个隐形的 [_voiceTarget]，监听器立刻把它打进 pty 并清空。
+  /// 和 web 终端一致：只写入文字、不自动回车，让用户确认后自己按 Enter。
+  final TextEditingController _voiceTarget = TextEditingController();
+  late final VoiceComposerController _voice;
+
   @override
   void initState() {
     super.initState();
+    _voice = VoiceComposerController(
+      settings: widget.settings,
+      target: _voiceTarget,
+    );
+    _voiceTarget.addListener(_flushVoiceToTerminal);
     _macros = widget.settings.readTerminalMacros();
     _svc = TerminalService(
       settings: widget.settings,
@@ -58,8 +70,23 @@ class _TerminalScreenState extends State<TerminalScreen> {
     _svc.connect();
   }
 
+  void _flushVoiceToTerminal() {
+    final text = _voiceTarget.text;
+    if (text.isEmpty) return;
+    _terminal.ctrlArmed.value = false;
+    _terminal.textInput(text);
+    // 听写提交还没返回完（它在赋值之后还会改 _pending*），等它收尾再清。
+    scheduleMicrotask(() {
+      _voiceTarget.clear();
+      _voice.clearPendingVoice();
+    });
+  }
+
   @override
   void dispose() {
+    _voiceTarget.removeListener(_flushVoiceToTerminal);
+    _voice.dispose();
+    _voiceTarget.dispose();
     _controller.dispose();
     _svc.dispose();
     _terminal.ctrlArmed.dispose();
@@ -284,6 +311,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _voice.syncSettings(widget.settings);
     return Scaffold(
       backgroundColor: const Color(0xFFf4f8fd),
       appBar: PreferredSize(
@@ -330,10 +358,24 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       controller: _controller,
                     ),
                   ),
+                  // 听写浮层同样盖在终端上、不占布局（理由见上）。
+                  Positioned(
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    child: ListenableBuilder(
+                      listenable: _voice,
+                      builder: (_, _) => _voice.showHud
+                          ? VoiceDictationHud(controller: _voice)
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
                 ],
               ),
             ),
             TerminalKeyBar(
+              voice: _voice,
+              voiceEnabled: _connState == TerminalConnectionState.connected,
               terminal: _terminal,
               ctrlArmed: _terminal.ctrlArmed,
               macros: _macros,
@@ -621,9 +663,14 @@ class TerminalKeyBar extends StatelessWidget {
   final ValueChanged<TerminalMacro>? onMacro;
   /// 传了才显示「＋」（管理自定义按键的入口）。
   final VoidCallback? onEditMacros;
+  /// 传了才在最左显示麦克风键（语音输入）；[voiceEnabled] 是连接态门禁。
+  final VoiceComposerController? voice;
+  final bool voiceEnabled;
   const TerminalKeyBar({
     super.key,
     required this.terminal,
+    this.voice,
+    this.voiceEnabled = true,
     this.ctrlArmed,
     this.macros = const [],
     this.onMacro,
@@ -645,6 +692,8 @@ class TerminalKeyBar extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
+                  if (voice != null)
+                    VoiceMicButton(controller: voice!, enabled: voiceEnabled),
                   // 回车和退格放在最左：软键盘的退格靠 deleteDetection 才工作、回车键
                   // 依输入法而定，这两个是手机上「终端能不能用」的底线，必须一眼可见。
                   _Key('⌫', () => terminal.keyInput(TerminalKey.backspace),
