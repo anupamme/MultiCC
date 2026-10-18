@@ -142,6 +142,11 @@ class VoiceDictationService extends ChangeNotifier {
   String _errorDetail = '';
   String get errorDetail => _errorDetail;
 
+  /// 服务端给的机器码（目前只有 `voice_not_ready`：本地模型没装、也没配云端）。
+  /// 宿主据此弹「下载离线模型」，而不是退回整段录音让用户白说一遍。
+  String _errorCode = '';
+  String get errorCode => _errorCode;
+
   String _rawFinal = '';
   String get rawFinal => _rawFinal;
 
@@ -361,6 +366,7 @@ class VoiceDictationService extends ChangeNotifier {
         _fail(
           VoiceDictationError.asr,
           detail: (msg['message'] ?? '').toString(),
+          code: (msg['code'] ?? '').toString(),
         );
         break;
     }
@@ -468,6 +474,7 @@ class VoiceDictationService extends ChangeNotifier {
     _refined = '';
     _error = VoiceDictationError.none;
     _errorDetail = '';
+    _errorCode = '';
     _refineSeq++;
     _refineTimer?.cancel();
     _refineTimer = null;
@@ -480,9 +487,10 @@ class VoiceDictationService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _fail(VoiceDictationError reason, {String detail = ''}) {
+  void _fail(VoiceDictationError reason, {String detail = '', String code = ''}) {
     _error = reason;
     _errorDetail = detail;
+    _errorCode = code;
     _teardown();
     _state = VoiceDictationState.failed;
     notifyListeners();

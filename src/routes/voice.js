@@ -1,5 +1,7 @@
 'use strict';
 
+const { NOT_READY, voiceReadiness } = require('../voice/readiness');
+
 const CONFIG_SNAPSHOT_UNAVAILABLE = Symbol('voice-config-snapshot-unavailable');
 
 function requireFunction(value, name) {
@@ -299,6 +301,17 @@ ${eventsStr}
 
   app.get('/api/voice/vocab', (req, res) => res.json(loadWhisperVocab()));
 
+  // Asked by every mic button before it records (see src/voice/readiness.js).
+  function readiness() {
+    return voiceReadiness({
+      asrLocal,
+      installer: asrModelInstaller,
+      voiceCfg: voice.cfg,
+      streamingStatus: () => voiceAsr.providerStatus(),
+    });
+  }
+  app.get('/api/voice/readiness', (req, res) => res.json(readiness()));
+
   // The learned hotword list: what is active, what still waits for a second
   // sighting, and what was vetoed because the user writes that spelling.
   app.get('/api/voice/hotwords', (req, res) => {
@@ -336,7 +349,15 @@ ${eventsStr}
     }
 
     const apiKey = voice.cfg.WHISPER_API_KEY || voice.cfg.OPENROUTER_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: '本地 ASR 未就绪，且 WHISPER_API_KEY 或 OPENROUTER_API_KEY 未设置' });
+    if (!apiKey) {
+      // Not a server fault: the client turns `readiness` into "download the
+      // local model / enter a cloud key" instead of showing this text.
+      return res.status(503).json({
+        error: '本地 ASR 未就绪，且 WHISPER_API_KEY 或 OPENROUTER_API_KEY 未设置',
+        code: NOT_READY,
+        readiness: readiness(),
+      });
+    }
 
     log.log(`[multicc/stt][${reqId}] Forwarding to ${voice.cfg.WHISPER_BASE_URL}/audio/transcriptions (model: ${voice.cfg.WHISPER_MODEL})`);
     const t0 = Date.now();

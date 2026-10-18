@@ -4,10 +4,12 @@ import '../widgets/named_back_button.dart';
 import '../services/manage_service.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
+import '../widgets/voice_setup_panel.dart';
 
 /// 语音设置 — 镜像网页 manage 页「语音设置」面板：查看 ASR（实时语音识别）、
-/// TTS（语音合成）、Whisper（离线转写）、OpenRouter 配置状态。只读——密钥类
-/// 项仍需在网页管理台修改（移动端不处理敏感凭据）。
+/// TTS（语音合成）、Whisper（离线转写）、OpenRouter 配置状态。密钥类项只读，
+/// 仍需在网页管理台修改（移动端不处理敏感凭据）；本地离线模型不是密钥，顶上
+/// 那一格可以直接下载 / 取消 / 重试并看着进度装好（[VoiceSetupPanel]）。
 class VoiceSettingsScreen extends StatefulWidget {
   final SettingsService settings;
   const VoiceSettingsScreen({super.key, required this.settings});
@@ -76,6 +78,8 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
                       child: ListView(
                         padding: const EdgeInsets.all(12),
                         children: [
+                          VoiceSetupPanel(manage: _manage),
+                          const SizedBox(height: 12),
                           _asrCard(),
                           const SizedBox(height: 12),
                           _ttsCard(),
@@ -94,7 +98,12 @@ class _VoiceSettingsScreenState extends State<VoiceSettingsScreen> {
   Widget _asrCard() {
     final asr = (_cfg!['asr'] as Map?) ?? {};
     final provider = (asr['provider'] ?? '') as String;
-    final status = (asr['status'] ?? '') as String;
+    // 服务端的 asr.status 是逐家就绪表（{default, local, openai, …}），不是一句话。
+    final statusMap = (asr['status'] as Map?) ?? const {};
+    final ready = ['local', 'openai', 'volcano', 'funasr']
+        .where((k) => (statusMap[k] as Map?)?['ready'] == true)
+        .toList();
+    final status = ready.isEmpty ? 'missing' : 'ready: ${ready.join(', ')}';
     return _section(
       title: '实时语音识别 (ASR)',
       icon: Icons.mic_outlined,

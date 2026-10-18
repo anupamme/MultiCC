@@ -65,8 +65,14 @@ class VoiceStream {
           if (this.opts.onDone) this.opts.onDone(m.text || '');
           this._teardown();
         } else if (m.type === 'error') {
-          if (this.opts.onError) this.opts.onError(m.message || voiceTr('voiceAsrError', 'ASR 错误'));
-          if (!settled) { settled = true; reject(new Error(m.message || voiceTr('voiceAsrError', 'ASR 错误'))); }
+          // `code` (e.g. voice_not_ready) lets the caller offer a fix, not just a message.
+          if (this.opts.onError) this.opts.onError(m.message || voiceTr('voiceAsrError', 'ASR 错误'), m.code);
+          if (!settled) {
+            settled = true;
+            const error = new Error(m.message || voiceTr('voiceAsrError', 'ASR 错误'));
+            if (m.code) error.code = m.code;
+            reject(error);
+          }
         }
       };
       ws.onerror = () => {

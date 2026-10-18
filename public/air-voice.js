@@ -75,6 +75,12 @@
 .air-voice-bar[hidden] { display: none; }
 .air-voice-bar-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .3s ease; }
 .air-voice-bar-fill.err { background: #b34b34; }
+/* 语音输入还用不了时顶在面板最上面的那条：说清缺什么、给一颗能直接动手的按钮。 */
+.air-voice-setup { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.air-voice-setup[hidden] { display: none; }
+.air-voice-setup p { flex: 1 1 260px; margin: 0; font-size: 12px; line-height: 1.6; }
+.air-voice-setup button { width: auto; }
 @media (max-width: 620px) {
   .air-voice-row { grid-template-columns: 1fr; }
   .air-voice-hint-block { margin-left: 0; }
@@ -262,6 +268,7 @@
       // 同一颗按钮换三种身份：下载 / 取消 / 重试。没有动作的状态（已就绪、平台不支持、
       // 已关闭）就把按钮收起来，别留一颗点了没反应的按钮。
       action.hidden = !spec.action;
+      action.dataset.action = spec.action || '';
       if (spec.action) action.textContent = t(spec.action === 'cancel' ? 'airVoiceLocalCancel' : (state === 'failed' ? 'airVoiceLocalRetry' : 'airVoiceLocalDownload'));
     }
     // 下载状态变了就播一条通知；轮询每次都会重画，只有真的跨过状态才说一次。
@@ -295,6 +302,7 @@
     try {
       const result = await context.api('/api/settings/voice/asr-model', { action });
       if (result && result.status) paintLocalModel(result.status);
+      void load(); // the setup banner above follows the same state
       if (action === 'download') context?.notice?.(t('airVoiceLocalDownloadStarted'));
       else if (result && result.cancelled) context?.notice?.(t('airVoiceLocalCancelledNotice'));
     } catch (err) {
@@ -323,7 +331,8 @@
     const status = make('span');
     status.id = 'asr-local-status';
     status.className = 'air-voice-status';
-    const action = button(t('airVoiceLocalDownload'), () => localModelAction('download'), 'primary');
+    // The label flips between download / cancel / retry; the click must follow it.
+    const action = button(t('airVoiceLocalDownload'), () => localModelAction(action.dataset.action || 'download'), 'primary');
     action.id = 'asr-local-action';
     const footer = make('div', null, 'air-voice-save');
     footer.append(action, status);
@@ -501,6 +510,43 @@
     node.style.color = ready.length ? 'var(--muted)' : 'var(--accent)';
   }
 
+  // ── 语音输入能不能用 ─────────────────────────────────────────────────
+  // 同 src/voice/readiness.js 的口径：本地模型就绪，或任何一家云端（Whisper / 精修 key
+  // 也能转写 / 三家流式）配了凭据，就算能用。都没有时面板顶上挂一条，并把 ASR 那块
+  // 展开到本地模型 —— 用户从麦克风那张引导卡点「改用云端」过来，第一眼就该看见要填哪。
+  let setupExpanded = false;
+  function paintSetup(data, status) {
+    const node = el('air-voice-setup');
+    if (!node) return;
+    const dl = (status.local && status.local.download) || {};
+    const cloud = !!(data.hasWhisperKey || data.hasKey)
+      || ASR_PROVIDERS.some(name => status[name] && status[name].ready);
+    const ready = !!(status.local && status.local.ready) || cloud;
+    node.hidden = ready;
+    if (ready) return;
+    const canDownload = dl.state === 'missing' || dl.state === 'failed';
+    el('air-voice-setup-text').textContent = dl.state === 'downloading'
+      ? t('airVoiceSetupDownloading')
+      : canDownload ? t('airVoiceSetupMissing') : t('airVoiceSetupCloudOnly');
+    el('air-voice-setup-action').hidden = !canDownload;
+    if (!setupExpanded) {
+      setupExpanded = true;
+      setAsrOpen(true);
+    }
+  }
+
+  function setupBanner() {
+    const node = make('div', null, 'air-voice-setup');
+    node.id = 'air-voice-setup';
+    node.hidden = true;
+    const text = make('p');
+    text.id = 'air-voice-setup-text';
+    const go = button(t('airVoiceLocalDownload'), () => localModelAction('download'), 'primary');
+    go.id = 'air-voice-setup-action';
+    node.append(text, go);
+    return node;
+  }
+
   function apply(data) {
     const asr = data.asr || {};
     const status = asr.status || {};
@@ -527,6 +573,7 @@
     setBadge('asr-funasr-badge', status.funasr && status.funasr.ready);
     paintLocalModel(status.local && status.local.download);
     paintAsrSummary(asr, status);
+    paintSetup(data, status);
   }
 
   async function load() {
@@ -614,7 +661,7 @@
     const error = make('p', null, 'admin-empty error air-voice-error');
     error.id = 'air-voice-error';
     error.hidden = true;
-    wrap.append(error, qwenCard(), asrCard(), refineCard(), whisperCard());
+    wrap.append(error, setupBanner(), qwenCard(), asrCard(), refineCard(), whisperCard());
     host.replaceChildren(wrap);
     // qwen 那块是纯 id 驱动的：DOM 已经就位，这时挂上它（initialize 会设 notify 并立刻
     // loadPanel），之后每次 refresh() 只要再调一次 loadPanel 就行，不会重复绑事件。
