@@ -67,18 +67,52 @@ test('命中缓存的那几轮，runState 与 worktreeChanges 仍是现算的', 
   assert.deepEqual(card(second.json, 'tsk_1').worktreeChanges, { dirty: true, ahead: 2 });
 });
 
-test('任务板卡片被原地改写、会话记录被原地改写、任务库读数变化，都必须重建', async () => {
+test('卡片或它引用的会话记录被原地改写时，只重建那一张卡', async () => {
   const f = fixture();
   await f.get();
   f.board.tasks.tsk_2.title = '改过名';           // 原地改写，没有任何版本号
   assert.equal(card((await f.get()).json, 'tsk_2').title, '改过名');
-  assert.equal(f.state.accessCalls, 4);
+  assert.equal(f.state.accessCalls, 3, '只有 tsk_2 重建（正在跑的那张卡不能拖着整板重建）');
   f.records.get('s1').taskState.goalState = 'achieved';
   assert.equal(card((await f.get()).json, 'tsk_1').goalState, 'achieved');
-  assert.equal(f.state.accessCalls, 6);
+  assert.equal(f.state.accessCalls, 4, 's1 只被 tsk_1 引用');
   f.records.get('s1').provider = 'p2';
   assert.equal(card((await f.get()).json, 'tsk_1').providerName, '线路-p2');
-  assert.equal(f.state.accessCalls, 8);
+  assert.equal(f.state.accessCalls, 5);
+  // 新出现的卡只建它自己；消失的卡不留在缓存里。
+  f.board.tasks.tsk_3 = { id: 'tsk_3', title: '新卡', status: 'active', refs: [{ sessionId: 's2', dirId: 'd1', ts: 1 }] };
+  assert.equal((await f.get()).json.tasks.length, 3);
+  assert.equal(f.state.accessCalls, 6);
+  delete f.board.tasks.tsk_3;
+  assert.equal((await f.get()).json.tasks.length, 2);
+  assert.equal(f.state.accessCalls, 6);
+});
+
+test('capacityReason 每轮现算（跨卡输入），且一轮里按目录/驻留态只问一次', async () => {
+  const handlers = new Map(), app = { get: (p, fn) => handlers.set(p, fn), post() {} };
+  const tasks = {}, records = new Map(), workspaces = [];
+  for (let i = 0; i < 6; i++) {
+    tasks[`t${i}`] = { id: `t${i}`, title: `卡 ${i}`, status: 'active', chatSessionId: `s${i}`, refs: [{ sessionId: `s${i}`, dirId: 'd1' }] };
+    records.set(`s${i}`, { id: `s${i}`, dirId: 'd1', kind: 'chat' });
+    workspaces.push({ id: `ws${i}`, ownerId: `s${i}`, dirId: i < 4 ? 'd1' : 'd2', residency: i % 2 ? 'resident' : 'hibernated', pins: [] });
+  }
+  let asked = 0, reason = null;
+  mountAirRoutes(app, {
+    admission: { snapshot: () => ({ workspaces, leases: [], budgets: {} }), capacityReason: () => { asked += 1; return reason; } },
+    records, directories: new Map(), getBoard: () => ({ tasks }), clis: [],
+    shell: { taskAccess: () => ({ readOnly: false }), readEpoch: () => 'e' },
+    cardCache: createAirCardCache({ mode: 'on' }),
+  });
+  const run = async () => { const res = airResponse(); await handlers.get('/api/air')({ headers: {} }, res); return JSON.parse(res.body); };
+  await run();
+  // 键：resident 一个；非 resident 按目录 d1、d2 各一个 —— 共 3 次，而不是 6 次。
+  assert.equal(asked, 3);
+  reason = 'workspace_execution_capacity';           // 全局租约数满了：没有任何卡片的输入变
+  const second = await run();
+  assert.equal(asked, 6, '命中缓存的轮次仍要现问容量');
+  assert.ok(second.tasks.every(task => task.resource.capacityReason === 'workspace_execution_capacity'));
+  const keys = Object.keys(second.tasks[0].resource);
+  assert.deepEqual(keys, ['id', 'residency', 'lease', 'capacityReason', 'reason', 'pins', 'path', 'branch'], '字段顺序不变');
 });
 
 test('任务库读数变了（权属可能变了）就重建；读数拿不到就绕过缓存', async () => {
@@ -130,8 +164,9 @@ test('shadow 档永远现建；签名没变而内容变了时记下差异（签�
 test('off 档与未知档位：off 永远现建；拼错的档位退回 shadow 而不是 on', () => {
   let builds = 0;
   const off = createAirCardCache({ mode: 'off' });
-  off.resolve('s', () => { builds += 1; return []; });
-  off.resolve('s', () => { builds += 1; return []; });
-  assert.equal(builds, 2);
+  const spec = { keyOf: item => item, signatureOf: () => 'same', build: item => { builds += 1; return { card: { id: item } }; } };
+  off.resolve('g', ['a', 'b'], spec);
+  off.resolve('g', ['a', 'b'], spec);
+  assert.equal(builds, 4);
   assert.equal(createAirCardCache({ mode: 'yes' }).mode, 'shadow');
 });
