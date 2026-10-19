@@ -486,7 +486,7 @@ void main() {
       find.byKey(const ValueKey('air-directory-schedules')),
       findsOneWidget,
     );
-    for (final status in ['running', 'todo', 'error', 'today']) {
+    for (final status in ['running', 'needsMe', 'error', 'today']) {
       await tester.tap(find.byKey(ValueKey('air-stat-$status')));
       await tester.pumpAndSettle();
       expect(
@@ -1249,7 +1249,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('控制台入口带着「待办」的数字，点进去是原生控制台', (tester) async {
+  testWidgets('控制台入口带着「等我处理」的数字，点进去是原生控制台', (tester) async {
     // 控制台很长，统计带在底部「更多」里；给一块够高的画布让它整棵建出来。
     tester.view.physicalSize = const Size(900, 3200);
     tester.view.devicePixelRatio = 1;
@@ -1315,15 +1315,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('air-console-more')));
     await tester.pumpAndSettle();
-    // 那条等待回复的任务在「待办」那一格里（清单默认收起，数字先摆着）。
+    // 那条等待回复的任务在「等我处理」那一格里（清单默认收起，数字先摆着）。
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('air-console-tile-todo')),
+        of: find.byKey(const ValueKey('air-console-tile-needsMe')),
         matching: find.text('1'),
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('air-console-tile-todo')));
+    await tester.tap(find.byKey(const ValueKey('air-console-tile-needsMe')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-console-task-t1')), findsOneWidget);
     expect(tester.takeException(), isNull);

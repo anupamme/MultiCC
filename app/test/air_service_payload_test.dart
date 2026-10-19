@@ -108,6 +108,93 @@ void main() {
         ['/api/task-board/directories/d1/retention', '/api/task-board/directories/d1/retention']);
     expect(jsonDecode(requests.last.body), {'taskIds': ['old']});
   });
+  group('markTaskAchieved', () {
+    test('POST /api/air/tasks/mark-achieved，body 只有 taskId', () async {
+      final settings = await _settings();
+      final posts = _sink();
+      await _service(settings, posts).markTaskAchieved('t1');
+      expect(posts.single, {
+        'path': '/api/air/tasks/mark-achieved',
+        'body': {'taskId': 't1'},
+      });
+    });
+
+    test('不适用时保留服务端 code，宿主能翻成「当前状态下不能执行」', () async {
+      final settings = await _settings();
+      final service = AirService(
+        settings: settings,
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'ok': false,
+              'code': 'mark_achieved_not_applicable',
+              'message': 'not applicable',
+            }),
+            409,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      await expectLater(
+        service.markTaskAchieved('t1'),
+        throwsA(
+          predicate(
+            (error) => '$error'.contains('mark_achieved_not_applicable'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('toggleTaskTodoIgnore', () {
+    test('回执里的 ignored / kind / taskIds / todos 原样读出来', () async {
+      final settings = await _settings();
+      final service = AirService(
+        settings: settings,
+        httpClient: MockClient(
+          (request) async => http.Response(
+            jsonEncode({
+              'ok': true,
+              'ignored': true,
+              'kind': 'waiting',
+              'taskIds': ['t1'],
+              'todos': ['t2'],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      final result = await service.toggleTaskTodoIgnore('t1');
+      expect(result.ignored, isTrue);
+      expect(result.kind, 'waiting');
+      expect(result.taskIds, ['t1']);
+      expect(result.todos, ['t2'], reason: '忽略与手动待办是两份独立清单');
+    });
+
+    test('旧服务没有 kind 字段时按 null 处理，不崩', () async {
+      final settings = await _settings();
+      final service = AirService(
+        settings: settings,
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              'ok': true,
+              'ignored': false,
+              'taskIds': <String>[],
+              'todos': <String>[],
+            }),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      final result = await service.toggleTaskTodoIgnore('t1');
+      expect(result.kind, isNull);
+      expect(result.ignored, isFalse);
+    });
+  });
+
   group('renameTask', () {
     test('任务标题写入任务身份端点，任务 id 会安全编码', () async {
       final settings = await _settings();

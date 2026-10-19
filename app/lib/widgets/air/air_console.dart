@@ -87,17 +87,17 @@ class AirConsoleBody extends StatefulWidget {
 const int _taskListLimit = 60;
 const int _taskPageSize = 20;
 
-/// 顶上那五个过滤格（同 Web `air-admin.js` 的 `tiles`）：进行中 / 待办 /
+/// 顶上那五个过滤格（同 Web `air-admin.js` 的 `tiles`）：进行中 / 等我处理 /
 /// 异常 / 今日完成 / 全部。点一格，统计带和工作目录之间就展开那一格的清单；再点
 /// 同一格收起。默认什么都不展开 —— 控制台第一眼是数字，不是一堵清单墙。
-enum _ConsoleTile { running, todo, error, today, all }
+enum _ConsoleTile { running, needsMe, error, today, all }
 
 /// 一格的三个词：叫什么、空的时候写什么、以及它自己的 id（`name` 正好就是 Web 那边
 /// 的 `data-view`，所以两边同一格的清单用的是同一个键）。
 extension on _ConsoleTile {
   String get labelKey => switch (this) {
     _ConsoleTile.running => 'airAdminTileRunning',
-    _ConsoleTile.todo => 'airTodoFilter',
+    _ConsoleTile.needsMe => 'airNeedsMeFilter',
     _ConsoleTile.error => 'airAdminTileError',
     _ConsoleTile.today => 'airAdminTileToday',
     _ConsoleTile.all => 'airAdminTileAll',
@@ -105,7 +105,7 @@ extension on _ConsoleTile {
 
   String get emptyKey => switch (this) {
     _ConsoleTile.running => 'airAdminNoRunningTasks',
-    _ConsoleTile.todo => 'airAdminNoAttentionTasks',
+    _ConsoleTile.needsMe => 'airAdminNoAttentionTasks',
     _ConsoleTile.error => 'airAdminNoErrorTasks',
     _ConsoleTile.today => 'airAdminNoDoneToday',
     _ConsoleTile.all => 'airAdminNoMatchingTasks',
@@ -433,7 +433,23 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     if (deleted && mounted) await _load();
   }
 
-  /// 长按任务行切换「手动待办」；切完重拉快照，行上的 🚩 跟着变。
+  /// 任务行上唯一那颗动作按钮 / 长按：按任务当前状态执行
+  /// [airTaskPrimaryAction]（已忽略 → 取消忽略，手动待办 → 取消待办，异常 /
+  /// 等待回复 → 忽略，需要交互 → 标记达成，其余 → 标记待办）。
+  void _runTaskAction(AirTask task) {
+    switch (airTaskPrimaryAction(task)) {
+      case AirTaskAction.unignore:
+        _toggleIgnore(task, ignore: false);
+      case AirTaskAction.ignoreError || AirTaskAction.ignoreWaiting:
+        _toggleIgnore(task, ignore: true);
+      case AirTaskAction.markAchieved:
+        _markAchieved(task);
+      case AirTaskAction.markTodo || AirTaskAction.unmarkTodo:
+        _toggleTodo(task);
+    }
+  }
+
+  /// 手动待办：长按与动作按钮共用这一条，切完重拉快照，行上的 🚩 跟着变。
   void _toggleTodo(AirTask task) => unawaited(
     toggleAirTaskTodo(
       context: context,
@@ -446,21 +462,17 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
   /// 忽略 / 取消忽略。先按用户意图把本地快照翻过来（乐观更新），请求回来再用
   /// 服务端的两份清单覆盖；失败就把点击前的那份快照放回去，并给一条 SnackBar。
   ///
-  /// 忽略一条手动待办会同时把它从待办清单里拿掉（服务端互斥，回执里两份清单都
-  /// 会给），所以这里乐观的 `todos` 也跟着去一条，行上的 🚩 不会闪一下再消失。
-  void _toggleIgnore(AirTask task) {
+  /// 忽略与手动待办是两份独立清单：这里只动 `taskTodoIgnored`，不再顺手清除
+  /// 手动标记的待办。
+  void _toggleIgnore(AirTask task, {required bool ignore}) {
     final before = _data;
     if (before == null) return;
-    final ignore = !before.isTodoIgnored(task.id);
     final nextIgnored = ignore
         ? {...before.taskTodoIgnored, task.id}.toList()
         : before.taskTodoIgnored.where((id) => id != task.id).toList();
-    final nextTodos = ignore
-        ? before.taskTodos.where((id) => id != task.id).toList()
-        : before.taskTodos;
     setState(
       () => _data = before.withTodoLists(
-        todos: nextTodos,
+        todos: before.taskTodos,
         ignored: nextIgnored,
       ),
     );
@@ -498,11 +510,42 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(
+          SnackBar(content: Text(airTaskActionErrorMessage(error))),
+        );
+    }
+  }
+
+  /// 标记达成：本地先把 goalState 翻成 achieved（任务当场离开「等我处理」），
+  /// 失败则回滚整份快照。
+  void _markAchieved(AirTask task) {
+    final before = _data;
+    if (before == null) return;
+    setState(
+      () => _data = before.withTask(task.copyWith(goalState: 'achieved')),
+    );
+    unawaited(_commitMarkAchieved(task, before));
+  }
+
+  Future<void> _commitMarkAchieved(AirTask task, AirSnapshot before) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _service.markTaskAchieved(task.id);
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
           SnackBar(
-            content: Text(
-              error.toString().replaceFirst('Exception: ', ''),
-            ),
+            content: Text(t('airTodoMarkAchievedDone')),
+            duration: const Duration(seconds: 2),
           ),
+        );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _data = before);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(airTaskActionErrorMessage(error))),
         );
     }
   }
@@ -581,12 +624,13 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     final active = tasks.where(AirDirectoryTaskFilter.open.matches).toList();
     final executing = tasks.where(airTaskRunning).toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    // 「待办」取自 [airTodoTasks]（等回答 / 出错 / 需要交互 / 手动标记），侧栏
-    // 徽标数的也是这份总数 —— 同一份判定，两处不会各说各话。
-    final attention = airTodoTasks(tasks);
-    // 「异常」是独立的一格，**不跟着忽略走**：忽略只让任务不再进待办，故障本身
-    // 还在那里等人处理。所以这里直接从全部非归档任务里按执行状态取，而不是从
-    // attention 里筛 —— 否则用户按掉一条报错，异常计数会凭空消失，问题被藏起来。
+    // 「等我处理」取自 [airNeedsMeTasks]（等回答 / 出错 / 需要交互 / 手动标记），
+    // 侧栏徽标数的也是这份总数 —— 同一份判定，两处不会各说各话。
+    final attention = airNeedsMeTasks(tasks);
+    // 「异常」是独立的一格，**不跟着忽略走**：忽略只让任务不再进「等我处理」，
+    // 故障本身还在那里等人处理。所以这里直接从全部非归档任务里按执行状态取，
+    // 而不是从 attention 里筛 —— 否则用户按掉一条报错，异常计数会凭空消失，
+    // 问题被藏起来。
     final failed = tasks
         .where((task) => task.status != 'archived')
         .where((task) => airTaskStatus(task) == CanonicalStatus.error)
@@ -671,8 +715,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
               recent: recent,
               directoryName: _directoryName,
               onOpenTask: widget.onOpenTask,
-              onToggleTodo: _toggleTodo,
-              onToggleIgnore: _toggleIgnore,
+              onTaskAction: _runTaskAction,
             ),
             const SizedBox(height: 15),
             _Panel(
@@ -779,7 +822,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                   _Tiles(
                     running: executing.length,
                     runningDirectories: running.length,
-                    todo: attention.length,
+                    needsMe: attention.length,
                     failed: failed.length,
                     today: finished.length,
                     all: active.length,
@@ -804,7 +847,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                       child: _TileDrawer(
                         tile: _tile!,
                         executing: executing,
-                        todo: attention,
+                        needsMe: attention,
                         failed: failed,
                         finished: finished,
                         rows: rows,
@@ -836,8 +879,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                         onPage: _changePage,
                         onOpenTask: widget.onOpenTask,
                         onDeleteTask: _deleteTask,
-                        onToggleTodo: _toggleTodo,
-                        onToggleIgnore: _toggleIgnore,
+                        onTaskAction: _runTaskAction,
                         unread: attention.length,
                         onOpenAttention: () => _openAttention(attention),
                         onClose: () => setState(() => _tile = null),
@@ -879,7 +921,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
           builder: (_) => AirAttentionScreen(
             tasks: urgent,
             directoryName: _directoryName,
-            onToggleTodo: _toggleTodo,
+            onTaskAction: _runTaskAction,
             onOpenTask: (task) {
               Navigator.of(context).pop();
               widget.onOpenTask(task);
@@ -1241,9 +1283,9 @@ class _AssistantCard extends StatelessWidget {
 /// 上半区：跨目录的任务流。
 ///
 /// 控制台先回答「现在有什么在等我 / 在跑 / 刚动过」，再回答「我有哪些目录」。
-/// 三个分区共用同一套判定（`air_task_status.dart`）：待办走 [airTodoTasks]，
-/// 正在运行看 [airTaskRunning]，一条任务只会落在一个分区里，因此这里数出来的
-/// 东西和侧栏、目录首页说的是同一件事。
+/// 三个分区共用同一套判定（`air_task_status.dart`）：等我处理走
+/// [airNeedsMeTasks]，正在运行看 [airTaskRunning]，一条任务只会落在一个分区里，
+/// 因此这里数出来的东西和侧栏、目录首页说的是同一件事。
 class _TaskStream extends StatelessWidget {
   const _TaskStream({
     required this.attention,
@@ -1251,8 +1293,7 @@ class _TaskStream extends StatelessWidget {
     required this.recent,
     required this.directoryName,
     required this.onOpenTask,
-    required this.onToggleTodo,
-    required this.onToggleIgnore,
+    required this.onTaskAction,
   });
 
   /// 每个分区最多铺几条。控制台是「扫一眼」的地方，不是任务列表；更长的清单在
@@ -1264,17 +1305,16 @@ class _TaskStream extends StatelessWidget {
   final List<AirTask> recent;
   final String Function(String) directoryName;
   final ValueChanged<AirTask> onOpenTask;
-  final ValueChanged<AirTask> onToggleTodo;
-  final ValueChanged<AirTask> onToggleIgnore;
+  final ValueChanged<AirTask> onTaskAction;
 
   @override
   Widget build(BuildContext context) {
     final sections = <Widget>[
-      // 「待办」常驻：空的时候给一句话，而不是让整个分区消失 —— 用户要确认的
-      // 不是「有没有分区」，而是「现在确实没有我要做的事」。
+      // 「等我处理」常驻：空的时候给一句话，而不是让整个分区消失 —— 用户要
+      // 确认的不是「有没有分区」，而是「现在确实没有我要做的事」。
       _section(
         'attention',
-        t('airTodoSectionTitle'),
+        t('airNeedsMeFilter'),
         attention,
         empty: t('airNothingNeedsYou'),
         showAge: true,
@@ -1342,8 +1382,8 @@ class _TaskStream extends StatelessWidget {
               directoryName: directoryName(task.dirId),
               showAge: showAge,
               onTap: () => onOpenTask(task),
-              onLongPress: () => onToggleTodo(task),
-              onIgnore: () => onToggleIgnore(task),
+              onLongPress: () => onTaskAction(task),
+              onAction: () => onTaskAction(task),
             ),
       ],
     );
@@ -1358,7 +1398,7 @@ class _StreamTaskRow extends StatelessWidget {
     required this.directoryName,
     required this.onTap,
     required this.onLongPress,
-    required this.onIgnore,
+    required this.onAction,
     this.showAge = false,
   });
 
@@ -1367,7 +1407,7 @@ class _StreamTaskRow extends StatelessWidget {
   final String directoryName;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
-  final VoidCallback onIgnore;
+  final VoidCallback onAction;
 
   /// 待办那一段要回答「这件事等了多久」：显示相对时间而不是绝对钟点。
   final bool showAge;
@@ -1375,6 +1415,7 @@ class _StreamTaskRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final spec = airTaskSpec(task);
+    final action = airTaskPrimaryAction(task);
     // 同 Web 的 `todoAt(task)`：有消息时间看消息，没有才退回更新时间。
     final age = showAge
         ? formatRelativeTime(
@@ -1439,13 +1480,13 @@ class _StreamTaskRow extends StatelessWidget {
                   ),
                 ),
               ],
-              // 待办行行尾的「忽略」入口。出错、等了很久的任务在这里就能让它
-              // 闭嘴，不用先点开任务详情。
+              // 行尾只放一颗动作按钮：按这条任务当前状态决定是忽略异常 /
+              // 忽略等待 / 标记达成 / 取消待办 / 标记待办。长按执行同一个动作。
               AirTaskRowAction(
-                key: ValueKey('air-console-stream-ignore-${task.id}'),
-                tooltip: t('airTodoIgnore'),
-                icon: const Icon(Icons.visibility_off_outlined),
-                onPressed: onIgnore,
+                key: ValueKey('air-console-stream-action-${task.id}'),
+                tooltip: t(action.labelKey),
+                icon: Icon(action.icon),
+                onPressed: onAction,
               ),
               const Icon(
                 Icons.chevron_right_rounded,
@@ -1576,7 +1617,7 @@ class _Tiles extends StatelessWidget {
   const _Tiles({
     required this.running,
     required this.runningDirectories,
-    required this.todo,
+    required this.needsMe,
     required this.failed,
     required this.today,
     required this.all,
@@ -1587,7 +1628,7 @@ class _Tiles extends StatelessWidget {
 
   final int running;
   final int runningDirectories;
-  final int todo;
+  final int needsMe;
   final int failed;
   final int today;
   final int all;
@@ -1610,12 +1651,12 @@ class _Tiles extends StatelessWidget {
         AppColors.success,
       ),
       (
-        _ConsoleTile.todo,
-        todo,
-        todo > 0
+        _ConsoleTile.needsMe,
+        needsMe,
+        needsMe > 0
             ? t('airAdminTileWaitingDetail')
             : t('airAdminNothingPending'),
-        todo > 0 ? AppColors.amber : null,
+        needsMe > 0 ? AppColors.amber : null,
       ),
       (
         _ConsoleTile.error,
@@ -1732,7 +1773,7 @@ class _TileDrawer extends StatelessWidget {
   const _TileDrawer({
     required this.tile,
     required this.executing,
-    required this.todo,
+    required this.needsMe,
     required this.failed,
     required this.finished,
     required this.rows,
@@ -1755,8 +1796,7 @@ class _TileDrawer extends StatelessWidget {
     required this.onPage,
     required this.onOpenTask,
     required this.onDeleteTask,
-    required this.onToggleTodo,
-    required this.onToggleIgnore,
+    required this.onTaskAction,
     required this.unread,
     required this.onOpenAttention,
     required this.onClose,
@@ -1764,7 +1804,7 @@ class _TileDrawer extends StatelessWidget {
 
   final _ConsoleTile tile;
   final List<AirTask> executing;
-  final List<AirTask> todo;
+  final List<AirTask> needsMe;
   final List<AirTask> failed;
   final List<AirTask> finished;
 
@@ -1789,8 +1829,7 @@ class _TileDrawer extends StatelessWidget {
   final ValueChanged<int> onPage;
   final ValueChanged<AirTask> onOpenTask;
   final ValueChanged<AirTask> onDeleteTask;
-  final ValueChanged<AirTask> onToggleTodo;
-  final ValueChanged<AirTask> onToggleIgnore;
+  final ValueChanged<AirTask> onTaskAction;
 
   /// 跨目录待处理的总数。「待办」那一格后面挂的整页出口用它。
   final int unread;
@@ -1799,7 +1838,7 @@ class _TileDrawer extends StatelessWidget {
 
   List<AirTask> get _list => switch (tile) {
     _ConsoleTile.running => executing,
-    _ConsoleTile.todo => todo,
+    _ConsoleTile.needsMe => needsMe,
     _ConsoleTile.error => failed,
     _ConsoleTile.today => finished,
     _ConsoleTile.all => rows,
@@ -1826,7 +1865,7 @@ class _TileDrawer extends StatelessWidget {
       action: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (tile == _ConsoleTile.todo && unread > 0)
+          if (tile == _ConsoleTile.needsMe && unread > 0)
             _LinkButton(
               id: 'air-console-attention-all',
               label: t('airAdminViewAllCount', {'n': '$unread'}),
@@ -1860,27 +1899,20 @@ class _TileDrawer extends StatelessWidget {
               showTime: true,
               timeAt: tile == _ConsoleTile.all ? sortAt(visible[i]) : null,
               onTap: () => onOpenTask(visible[i]),
-              onLongPress: () => onToggleTodo(visible[i]),
-              // 每一格都带「忽略 / 取消忽略」：待办里的任务不必先点开
-              // 详情才能让它闭嘴；「已忽略」那档里同一颗按钮就是「取消忽略」。
+              onLongPress: () => onTaskAction(visible[i]),
+              // 每一格都带那颗随状态变化的唯一动作按钮：不需要先点开详情。
               // 删除只在「全部」那格里给：其余几格都是「现在有事」的清单，在这里
               // 删掉一条，读的人多半还没看清它是什么。
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   AirTaskRowAction(
-                    key: ValueKey('air-console-ignore-${visible[i].id}'),
+                    key: ValueKey('air-console-action-${visible[i].id}'),
                     tooltip: t(
-                      visible[i].todoIgnored
-                          ? 'airTodoUnignore'
-                          : 'airTodoIgnore',
+                      airTaskPrimaryAction(visible[i]).labelKey,
                     ),
-                    icon: Icon(
-                      visible[i].todoIgnored
-                          ? Icons.visibility_rounded
-                          : Icons.visibility_off_outlined,
-                    ),
-                    onPressed: () => onToggleIgnore(visible[i]),
+                    icon: Icon(airTaskPrimaryAction(visible[i]).icon),
+                    onPressed: () => onTaskAction(visible[i]),
                   ),
                   if (tile == _ConsoleTile.all)
                     AirTaskRowAction(
@@ -1946,19 +1978,17 @@ class _TileDrawer extends StatelessWidget {
               child: _Picker<AirDirectoryTaskFilter>(
                 pickerKey: const ValueKey('air-console-status'),
                 value: status,
-                // 控制台只摆 Web 那三档（进行中与待处理 / 全部记录 / 已归档）。
-                // 目录首页那七档里的「运行中 / 等待回复 / 异常 / 执行成功」在这里是
-                // 上面那几格数字，用点选代替下拉 —— 同一件事不给两条路。
-                // 「待办」另算一档：它跨了上面好几格（等待 / 异常 / 需要交互 / 手动
-                // 标记），没有哪一格的数字能代替它。
+                // 控制台只摆 Web 那几档（等我处理 / 待办 / 进行中与待处理 /
+                // 全部记录 / 已归档）。目录首页那几档（运行中 / 等待回复 / 异常 /
+                // 执行成功）在这里是上面那几格数字，用点选代替下拉 —— 同一件事
+                // 不给两条路。
+                // 「等我处理」是系统汇总口径，「待办」只收手动标记，两者并列。
                 items: {
+                  AirDirectoryTaskFilter.needsMe: t('airNeedsMeFilter'),
                   AirDirectoryTaskFilter.todo: t('airTodoFilter'),
                   AirDirectoryTaskFilter.open: t('airAdminFilterOpen'),
                   AirDirectoryTaskFilter.all: t('airAdminFilterAll'),
                   AirDirectoryTaskFilter.archived: t('airAdminStatusArchived'),
-                  // 「已忽略」是找回被自己按掉的那几条的唯一入口：它们不进
-                  // 待办，也不该从任务列表里消失。
-                  AirDirectoryTaskFilter.ignored: t('airTodoIgnoredFilter'),
                 },
                 onChanged: onStatus,
               ),

@@ -5,6 +5,7 @@ const { isTerminalLetter, isSettledLetter, classifyDisplay, GOAL_STATES } = requ
 const { taskShortCode } = require('../classify/task-short-code');
 const { auxVerdictStaleness } = require('../classify/aux-verdict-health');
 const { providerSelectionDto } = require('../providers/auto-provider-config');
+const { mountTaskGoalRoutes } = require('./task-goal');
 
 function assertFunction(value, name) {
   if (typeof value !== 'function') throw new TypeError(`[session-admin] ${name} must be a function`);
@@ -595,6 +596,11 @@ function createSessionAdminRuntime(rawDeps) {
       cases.sort((left, right) => (right.lastTs || '').localeCompare(left.lastTs || ''));
       return res.json({ count: cases.length, cases });
     });
+
+    // Air 的「标记达成」：语义与上面的 /mark-goal-achieved 相同，只是入口给的是
+    // taskId。挂在这里是因为 deps 里已经有真正的状态 writer（server.js 的
+    // setTaskState）；air-routes 的依赖没有它，另写一份写盘 + 广播就是第二套实现。
+    mountTaskGoalRoutes(app, deps);
   }
 
   return Object.freeze({

@@ -172,6 +172,7 @@ test('session admin mounts the complete bounded route set once', () => {
     'POST /api/sessions/:id/reclassify',
     'POST /api/sessions/:id/mark-task-done',
     'POST /api/sessions/:id/mark-goal-achieved',
+    'POST /api/air/tasks/mark-achieved',
     'POST /api/reclassify-all',
     'GET /api/directories/:id/sessions',
     'GET /api/directories/:id/workspace',

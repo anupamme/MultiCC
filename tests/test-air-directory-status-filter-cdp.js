@@ -51,27 +51,30 @@ test('the workspace overview exposes the same done-today quick filter as the con
       addEventListener('unhandledrejection', event => __errors.push('unhandledrejection: ' + String(event.reason && event.reason.message)));
     })()`);
 
-    // ── 五张卡：与控制台同为「运行中 / 待办 / 异常 / 今日完成 / 全部」 ──
+    // ── 五张卡：与控制台同为「运行中 / 等我处理 / 异常 / 今日完成 / 全部」 ──
+    // 这条用例没有手动待办，所以「等我处理」= 等待回复 1 + 异常 1。
     assert.ok(await page.waitFor(`document.querySelectorAll('#directory-stats .directory-stat').length===5`));
     const cards = () => page.evaluate(`[...document.querySelectorAll('#directory-stats .directory-stat')]
       .map(el => [el.querySelector('span').textContent, el.querySelector('strong').textContent])`);
     assert.deepEqual(await cards(), [
-      ['进行中', '1'], ['待办', '2'], ['异常', '1'],
+      ['进行中', '1'], ['等我处理', '2'], ['异常', '1'],
       ['今日完成', '2'], ['全部', '7'],
     ]);
 
-    // ── 状态那格：没有那个旧档 ────────────────────────────────────────────
+    // ── 状态那格：「等我处理」与「待办」并列，没有已忽略/等待回复的旧档 ──
     const options = await page.evaluate(`[...document.getElementById('directory-task-status').options]
       .map(o => [o.value, o.textContent])`);
     assert.deepEqual(options, [
-      ['todo', '待办'], ['ignored', '已忽略'], ['open', '进行中与待处理'], ['running', '运行中'],
+      ['needs', '等我处理'], ['todo', '待办'], ['open', '进行中与待处理'], ['running', '运行中'],
       ['error', '异常'], ['today', '今日完成'], ['succeeded', '执行成功'],
       ['achieved', '完成目标'], ['interact', '需要交互'], ['all', '全部记录'], ['archived', '已归档'],
     ]);
     assert.deepEqual(options.filter(([value, text]) => value === 'done' || text === '已完成'), [],
       '生命周期 done 不再是用户可选的一档');
     assert.deepEqual(options.filter(([value, text]) => value === 'waiting' || text === '等待回复'), [],
-      '「等待回复」已并入待办，不再留一个重复档');
+      '「等待回复」已并入等我处理，不再留一个重复档');
+    assert.deepEqual(options.filter(([value]) => value === 'ignored'), [],
+      '「已忽略」不再单独一档：被忽略的异常仍留在异常清单里，行上可取消忽略');
 
     // ── 点卡片 = 按同一档筛：只出现今天完成的两条 ────────────────────────
     const titles = () => page.evaluate(`[...document.querySelectorAll('#directory-task-list .directory-task-row strong')]

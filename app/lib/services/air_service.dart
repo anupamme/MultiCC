@@ -500,8 +500,13 @@ class AirTask {
     todoIgnored: todoIgnored,
   );
 
-  /// 乐观更新用：只改用户手动那两格（待办 / 忽略），其余字段原样带过。
-  AirTask copyWith({bool? manualTodo, bool? todoIgnored}) => AirTask(
+  /// 乐观更新用：只改用户手动那几格（待办 / 忽略）或刚在本地确认的目标状态，
+  /// 其余字段原样带过。
+  AirTask copyWith({
+    bool? manualTodo,
+    bool? todoIgnored,
+    String? goalState,
+  }) => AirTask(
     id: id,
     dirId: dirId,
     title: title,
@@ -515,7 +520,7 @@ class AirTask {
     sourceSessionId: sourceSessionId,
     providerName: providerName,
     runState: runState,
-    goalState: goalState,
+    goalState: goalState ?? this.goalState,
     resource: resource,
     worktreeChanges: worktreeChanges,
     manualTodo: manualTodo ?? this.manualTodo,
@@ -625,8 +630,8 @@ class AirSnapshot {
   bool isTodoIgnored(String? taskId) =>
       taskId != null && taskTodoIgnored.contains(taskId);
 
-  /// 乐观更新用：拿服务端 / 本地先算好的两份清单重铺每一行。两份清单互斥
-  /// （忽略一条手动待办会同时把它从 `taskTodos` 里拿掉），这里不替服务端推断。
+  /// 乐观更新用：拿服务端 / 本地先算好的两份清单重铺每一行。忽略与手动待办在
+  /// 服务端是两份独立清单，本地也不互相清除。
   AirSnapshot withTodoLists({
     List<String>? todos,
     List<String>? ignored,
@@ -653,6 +658,19 @@ class AirSnapshot {
       worktreePolicy: worktreePolicy,
     );
   }
+
+  /// 乐观更新用：替换其中一条任务（标记达成后本地先翻 goalState）。
+  AirSnapshot withTask(AirTask updated) => AirSnapshot(
+    directories: directories,
+    tasks: [for (final task in tasks) task.id == updated.id ? updated : task],
+    clis: clis,
+    sessions: sessions,
+    taskPins: taskPins,
+    taskTodos: taskTodos,
+    taskTodoIgnored: taskTodoIgnored,
+    externalFleets: externalFleets,
+    worktreePolicy: worktreePolicy,
+  );
 
   AirDirectory? directoryOf(String? id) {
     for (final directory in directories) {
@@ -800,15 +818,20 @@ class AirRoleBindings {
 /// `/api/air` 的客户端。Air 的任务创建是三步事务（建任务 → 绑角色 → 发第一条
 /// 消息），所以三步都收在这里，界面不需要知道中间的 clientMsgId 约定。
 /// `/api/air/todos/ignore` 的回执：这次是忽略还是取消，加上服务端算好的两份
-/// 清单（有效忽略 / 手动待办）。客户端按它重铺快照，不自己猜互斥关系。
+/// 清单（有效忽略 / 手动待办）与被忽略任务的类型。客户端按它重铺快照，不自己
+/// 猜互斥关系 —— 两份清单各自独立。
 class AirTodoIgnoreResult {
   const AirTodoIgnoreResult({
     required this.ignored,
+    this.kind,
     this.taskIds = const [],
     this.todos = const [],
   });
 
   final bool ignored;
+
+  /// 被忽略任务的类型：`error` / `waiting`；取消忽略时为 null。
+  final String? kind;
   final List<String> taskIds;
   final List<String> todos;
 }
@@ -1132,11 +1155,13 @@ class AirService {
   }
 
   /// 忽略 / 取消忽略一条任务，返回服务端算好的三样：这次是忽略还是取消、
-  /// 有效的忽略清单、以及手动待办清单（忽略与手动待办互斥，服务端会同时移除）。
+  /// 被忽略任务的类型、有效的忽略清单，以及手动待办清单（忽略与手动待办是两份
+  /// 独立清单，互不清除）。
   Future<AirTodoIgnoreResult> toggleTaskTodoIgnore(String taskId) async {
     final result = await _post('/api/air/todos/ignore', {'taskId': taskId});
     return AirTodoIgnoreResult(
       ignored: result['ignored'] == true,
+      kind: result['kind'] as String?,
       taskIds: ((result['taskIds'] as List?) ?? const [])
           .map((e) => '$e')
           .toList(),
@@ -1144,6 +1169,16 @@ class AirService {
           .map((e) => '$e')
           .toList(),
     );
+  }
+
+  /// 把「需要交互」的任务标记为达成目标（`goalState: achieved`）。成功后该任务
+  /// 离开「等我处理」；不适用时服务端回 409 `mark_achieved_not_applicable`。
+  ///
+  /// 走 [_lifecycle] 的报错口径：这条路由的失败响应把原因放在 `code` 里，走
+  /// [_send] 会退化成一句 `message`（或 HTTP 状态码），宿主就分不出「当前状态
+  /// 不能执行」和别的失败。
+  Future<void> markTaskAchieved(String taskId) async {
+    await _lifecycle('POST', '/api/air/tasks/mark-achieved', {'taskId': taskId});
   }
 
   /// 建任务。第一条消息由 [sendFirstMessage] 单独发出，中途失败时任务已经存在

@@ -629,6 +629,117 @@ void main() {
       client.close();
     });
 
+    testWidgets('详情唯一按钮随状态变：忽略异常 / 忽略等待 / 标记达成 / 取消忽略 / 取消待办', (tester) async {
+      final settings = await settingsFor();
+      final client = MockClient((request) async => ok(details()));
+      var ignores = 0;
+      var achievements = 0;
+      var todos = 0;
+      Future<bool> onIgnore() async {
+        ignores += 1;
+        return true;
+      }
+
+      Future<bool> onAchieve() async {
+        achievements += 1;
+        return true;
+      }
+
+      Future<bool> onTodo() async {
+        todos += 1;
+        return true;
+      }
+
+      AirTask task({
+        String? runState,
+        String? goalState,
+        bool manualTodo = false,
+        bool todoIgnored = false,
+      }) => AirTask(
+        id: 't1',
+        dirId: 'dir-a',
+        title: '登录页面',
+        status: 'active',
+        recordType: '',
+        updatedAt: 1,
+        readOnly: false,
+        runState: runState,
+        goalState: goalState,
+        manualTodo: manualTodo,
+        todoIgnored: todoIgnored,
+      );
+
+      Future<void> pump(AirTask task, String key) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: KeyedSubtree(
+                key: ValueKey(key),
+                child: AirTaskDetailsPanel(
+                  taskId: 't1',
+                  task: task,
+                  todo: task.manualTodo,
+                  todoIgnored: task.todoIgnored,
+                  service: AirService(settings: settings, httpClient: client),
+                  directories: directories,
+                  dirId: 'dir-a',
+                  onToggleTodo: onTodo,
+                  onToggleIgnore: onIgnore,
+                  onMarkAchieved: onAchieve,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      // 异常：忽略异常；点完本地翻成已忽略，按钮立刻变取消忽略。
+      await pump(task(runState: 'error'), 'error');
+      expect(find.text('忽略异常'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('air-details-todo')));
+      await tester.pumpAndSettle();
+      expect(ignores, 1);
+      expect(find.text('取消忽略'), findsOneWidget);
+
+      // 等待回复：忽略等待。
+      await pump(task(runState: 'waiting'), 'waiting');
+      expect(find.text('忽略等待'), findsOneWidget);
+
+      // 成功但需要交互：标记达成；点完之后同一条任务能继续被标记待办。
+      await pump(
+        task(runState: 'succeeded', goalState: 'interact'),
+        'achieved',
+      );
+      expect(find.text('标记达成'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('air-details-todo')));
+      await tester.pumpAndSettle();
+      expect(achievements, 1);
+      expect(find.text('标记为待办'), findsOneWidget);
+
+      // 已忽略压过状态：取消忽略。
+      await pump(
+        task(runState: 'error', todoIgnored: true),
+        'ignored',
+      );
+      expect(find.text('取消忽略'), findsOneWidget);
+
+      // 手动待办：取消待办。
+      await pump(task(runState: 'idle', manualTodo: true), 'manual');
+      expect(find.text('取消待办'), findsOneWidget);
+
+      // 其余状态：标记为待办；点完翻成取消待办。
+      await pump(task(runState: 'idle'), 'mark');
+      expect(find.text('标记为待办'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('air-details-todo')));
+      await tester.pumpAndSettle();
+      expect(todos, 1);
+      expect(find.text('取消待办'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+      client.close();
+    });
+
     testWidgets('移动只列别的目录，选中后发 relocate', (tester) async {
       final settings = await settingsFor();
       final writes = <String>[];

@@ -118,29 +118,29 @@ void main() {
     });
   });
 
-  group('待办', () {
-    test('等待回答 / 出错 / 需要交互 / 手动标记都算待办，跑着的不算', () {
-      expect(airTaskTodo(_task(runState: 'waiting')), isTrue);
-      expect(airTaskTodo(_task(runState: 'error')), isTrue);
+  group('等我处理', () {
+    test('等待回答 / 出错 / 需要交互 / 手动标记都算，跑着的不算', () {
+      expect(airTaskNeedsMe(_task(runState: 'waiting')), isTrue);
+      expect(airTaskNeedsMe(_task(runState: 'error')), isTrue);
       expect(
-        airTaskTodo(_task(runState: 'succeeded', goalState: 'interact')),
+        airTaskNeedsMe(_task(runState: 'succeeded', goalState: 'interact')),
         isTrue,
       );
       expect(
-        airTaskTodo(_task(runState: 'succeeded', goalState: 'achieved')),
+        airTaskNeedsMe(_task(runState: 'succeeded', goalState: 'achieved')),
         isFalse,
       );
       // 手动标记：哪怕这一轮空闲着也留着，直到用户自己取消。
-      expect(airTaskTodo(_task(manualTodo: true)), isTrue);
+      expect(airTaskNeedsMe(_task(manualTodo: true)), isTrue);
       // 跑着 / 等后台任务：有东西在外面跑，不需要我操作。
-      expect(airTaskTodo(_task(runState: 'running')), isFalse);
-      expect(airTaskTodo(_task(runState: 'background')), isFalse);
-      expect(airTaskTodo(_task()), isFalse);
-      expect(airTaskTodo(_task(status: 'done')), isFalse);
-      expect(airTaskTodo(_task(status: 'archived')), isFalse);
+      expect(airTaskNeedsMe(_task(runState: 'running')), isFalse);
+      expect(airTaskNeedsMe(_task(runState: 'background')), isFalse);
+      expect(airTaskNeedsMe(_task()), isFalse);
+      expect(airTaskNeedsMe(_task(status: 'done')), isFalse);
+      expect(airTaskNeedsMe(_task(status: 'archived')), isFalse);
       // 卡在资源只说明还没轮到它跑，不是要人回答 / 处理的那一类。
       expect(
-        airTaskTodo(
+        airTaskNeedsMe(
           _task(
             runState: 'idle',
             resource: const {'capacityReason': 'workspace_execution_capacity'},
@@ -148,10 +148,12 @@ void main() {
         ),
         isFalse,
       );
+      // 旧名是同一份判定。
+      expect(airTaskTodo(_task(runState: 'waiting')), isTrue);
     });
 
-    test('清单只收待办：在跑的不列，空闲 / 已结束的也不列', () {
-      final rows = airTodoTasks([
+    test('清单只收等我处理的：在跑的不列，空闲 / 已结束的也不列', () {
+      final rows = airNeedsMeTasks([
         _task(id: 'idle', runState: 'idle'),
         _task(id: 'done', status: 'done'),
         _task(id: 'run', runState: 'running', updatedAt: 999),
@@ -162,7 +164,7 @@ void main() {
     });
 
     test('清单按最早的消息时间升序，不按紧急度分层（同 Web）', () {
-      final rows = airTodoTasks([
+      final rows = airNeedsMeTasks([
         _task(id: 'old', runState: 'waiting', updatedAt: 100),
         _task(id: 'err', runState: 'error', updatedAt: 999),
         _task(id: 'new', runState: 'waiting', updatedAt: 200),
@@ -172,7 +174,7 @@ void main() {
     });
 
     test('手动待办进清单、忽略的不进；排序看最早消息而不是更新时间', () {
-      final rows = airTodoTasks([
+      final rows = airNeedsMeTasks([
         _task(
           id: 'ignored',
           runState: 'waiting',
@@ -193,6 +195,8 @@ void main() {
         ),
       ]);
       expect(rows.map((t) => t.id).toList(), ['older', 'manual']);
+      // 旧名仍指向同一份清单。
+      expect(airTodoTasks(rows).map((t) => t.id), ['older', 'manual']);
     });
 
     test('有任务在跑的目录才带标记', () {
@@ -390,25 +394,43 @@ void main() {
     });
   });
 
-  group('待办 = 等输入 + 出错 + 需要交互 + 手动标记', () {
-    test('四类各自进待办，其余不进；归档的一律不算', () {
+  group('等我处理（汇总）与待办（仅手动标记）', () {
+    test('等我处理含四类；待办只收手动标记的那一类', () {
+      final needsMe = AirDirectoryTaskFilter.needsMe;
+      expect(needsMe.matches(_task(runState: 'waiting')), isTrue);
+      expect(needsMe.matches(_task(runState: 'error')), isTrue);
+      expect(
+        needsMe.matches(_task(runState: 'succeeded', goalState: 'interact')),
+        isTrue,
+      );
+      expect(
+        needsMe.matches(_task(runState: 'succeeded', goalState: 'achieved')),
+        isFalse,
+      );
+      expect(needsMe.matches(_task(runState: 'running')), isFalse);
+      expect(needsMe.matches(_task(runState: 'idle')), isFalse);
+      expect(needsMe.matches(_task(status: 'archived', runState: 'waiting')), isFalse);
+
+      // 「待办」不再等于汇总：只有手动标记的才进来。
       final todo = AirDirectoryTaskFilter.todo;
-      expect(todo.matches(_task(runState: 'waiting')), isTrue);
-      expect(todo.matches(_task(runState: 'error')), isTrue);
-      expect(todo.matches(_task(runState: 'succeeded', goalState: 'interact')), isTrue);
-      expect(todo.matches(_task(runState: 'succeeded', goalState: 'achieved')), isFalse);
-      expect(todo.matches(_task(runState: 'running')), isFalse);
-      expect(todo.matches(_task(runState: 'idle')), isFalse);
-      // 手动标记：哪怕这一轮已经跑完 / 空闲着也留着，直到用户自己取消。
+      expect(todo.matches(_task(runState: 'waiting')), isFalse);
+      expect(todo.matches(_task(runState: 'error')), isFalse);
+      expect(
+        todo.matches(_task(runState: 'succeeded', goalState: 'interact')),
+        isFalse,
+      );
       final marked = AirTask.fromJson(const {
         'id': 'm1', 'dirId': 'd1', 'title': 'x', 'status': 'active', 'runState': 'idle',
       }, manualTodo: true);
       expect(todo.matches(marked), isTrue);
-      expect(todo.matches(_task(status: 'archived', runState: 'waiting')), isFalse);
+      // 手动标记的待办同时也在「等我处理」里。
+      expect(needsMe.matches(marked), isTrue);
+      // 归档的手动待办仍算「待办」，但不进「等我处理」。
       final archivedMarked = AirTask.fromJson(const {
         'id': 'm2', 'dirId': 'd1', 'title': 'x', 'status': 'archived',
       }, manualTodo: true);
-      expect(todo.matches(archivedMarked), isFalse);
+      expect(todo.matches(archivedMarked), isTrue);
+      expect(needsMe.matches(archivedMarked), isFalse);
     });
 
     test('快照的 taskTodos 回填到每一行上', () {
@@ -426,32 +448,49 @@ void main() {
       expect(AirSnapshot.fromJson(const {'tasks': []}).taskTodos, isEmpty);
     });
 
-    test('忽略的进不了待办；但异常口径不受影响', () {
-      final todo = AirDirectoryTaskFilter.todo;
+    test('忽略的进不了等我处理；异常口径与「待办」都不受影响', () {
+      final needsMe = AirDirectoryTaskFilter.needsMe;
       final ignoredWaiting = _task(runState: 'waiting', todoIgnored: true);
       final ignoredError = _task(runState: 'error', todoIgnored: true);
       final ignoredManual = _task(todoIgnored: true, manualTodo: true);
-      expect(todo.matches(ignoredWaiting), isFalse);
-      expect(todo.matches(ignoredError), isFalse);
-      expect(todo.matches(ignoredManual), isFalse, reason: '忽略压过手动标记');
+      expect(needsMe.matches(ignoredWaiting), isFalse);
+      expect(needsMe.matches(ignoredError), isFalse);
+      expect(needsMe.matches(ignoredManual), isFalse, reason: '忽略压过手动标记');
       expect(
-        airTodoTasks([ignoredWaiting, ignoredError, ignoredManual])
+        airNeedsMeTasks([ignoredWaiting, ignoredError, ignoredManual])
             .map((t) => t.id),
         isEmpty,
       );
-      // 「已忽略」档只收这些任务，别处按原口径照旧。
-      final ignored = AirDirectoryTaskFilter.ignored;
-      expect(ignored.matches(ignoredWaiting), isTrue);
-      expect(ignored.matches(_task(runState: 'waiting')), isFalse);
-      // 但「异常」不受忽略影响：忽略只让任务不进待办，故障本身还在。
+      // 「已忽略」不再是筛选项；被忽略的异常仍留在异常清单里。
+      expect(
+        AirDirectoryTaskFilter.values.map((f) => f.name),
+        isNot(contains('ignored')),
+      );
       final error = AirDirectoryTaskFilter.error;
       expect(error.matches(ignoredError), isTrue);
       expect(error.matches(_task(runState: 'error')), isTrue);
       expect(error.matches(ignoredWaiting), isFalse);
+      // 忽略与手动待办互不清除：「待办」仍只看手动标记。
+      expect(AirDirectoryTaskFilter.todo.matches(ignoredManual), isTrue);
+      // 乐观更新也只是同时铺两份清单，不会顺手把另一边清空。
+      final both = AirSnapshot.fromJson(const {
+        'tasks': [
+          {
+            'id': 't1',
+            'dirId': 'd1',
+            'title': 'a',
+            'status': 'active',
+          },
+        ],
+      }).withTodoLists(todos: ['t1'], ignored: ['t1']);
+      expect(both.taskTodos, ['t1']);
+      expect(both.taskTodoIgnored, ['t1']);
+      expect(both.tasks.single.manualTodo, isTrue);
+      expect(both.tasks.single.todoIgnored, isTrue);
     });
 
-    test('待办清单最早的消息时间在前，同一时间按 id 稳定', () {
-      final rows = airTodoTasks([
+    test('等我处理清单最早的消息时间在前，同一时间按 id 稳定', () {
+      final rows = airNeedsMeTasks([
         _task(id: 'new', runState: 'waiting', updatedAt: 300),
         _task(id: 'old', runState: 'error', updatedAt: 100),
         _task(id: 'mid', runState: 'waiting', updatedAt: 200),
@@ -460,7 +499,7 @@ void main() {
         _task(id: 'ignored', runState: 'error', updatedAt: 50, todoIgnored: true),
         _task(id: 'idle', runState: 'idle', updatedAt: 25),
       ]);
-      // 最老的先来；忽略的和不构成待办的不出现。
+      // 最老的先来；忽略的和不构成等我处理的不出现。
       expect(rows.map((t) => t.id).toList(), ['old', 'a', 'b', 'mid', 'new']);
     });
 
@@ -483,6 +522,78 @@ void main() {
       });
       expect(legacy.taskTodoIgnored, isEmpty);
       expect(legacy.tasks.single.todoIgnored, isFalse);
+    });
+  });
+
+  group('唯一动作按钮', () {
+    test('优先级：已忽略 > 手动待办 > 状态动作 > 标记待办', () {
+      // 已忽略压过一切：先给取消忽略。
+      expect(
+        airTaskPrimaryAction(
+          _task(runState: 'error', todoIgnored: true, manualTodo: true),
+        ),
+        AirTaskAction.unignore,
+      );
+      // 手动标记压过状态动作。
+      expect(
+        airTaskPrimaryAction(_task(runState: 'waiting', manualTodo: true)),
+        AirTaskAction.unmarkTodo,
+      );
+      expect(
+        airTaskPrimaryAction(_task(runState: 'error')),
+        AirTaskAction.ignoreError,
+      );
+      expect(
+        airTaskPrimaryAction(_task(runState: 'waiting')),
+        AirTaskAction.ignoreWaiting,
+      );
+      expect(
+        airTaskPrimaryAction(
+          _task(runState: 'succeeded', goalState: 'interact'),
+        ),
+        AirTaskAction.markAchieved,
+      );
+      expect(airTaskPrimaryAction(_task(runState: 'idle')), AirTaskAction.markTodo);
+      expect(
+        airTaskPrimaryAction(_task(runState: 'succeeded', goalState: 'achieved')),
+        AirTaskAction.markTodo,
+      );
+    });
+
+    test('每个动作都有中英文案键', () {
+      for (final action in AirTaskAction.values) {
+        expect(t(action.labelKey), isNotEmpty);
+        expect(t(action.labelKey), isNot(action.labelKey));
+      }
+      expect(t('airNeedsMeFilter'), '等我处理');
+      expect(t('airTodoIgnoreError'), '忽略异常');
+      expect(t('airTodoIgnoreWaiting'), '忽略等待');
+      expect(t('airTodoMarkAchieved'), '标记达成');
+      expect(t('airTodoMarkAchievedDone'), '已标记为达成目标');
+      expect(t('airTodoIgnoredBadge'), '已忽略');
+      expect(t('airTodoErrNotApplicable'), '当前状态下不能执行这个操作');
+    });
+
+    test('标记达成后任务离开等我处理（乐观更新替换同一行）', () {
+      final snapshot = AirSnapshot.fromJson(const {
+        'directories': [],
+        'tasks': [
+          {
+            'id': 't1',
+            'dirId': 'd1',
+            'title': 'a',
+            'status': 'active',
+            'runState': 'succeeded',
+            'goalState': 'interact',
+          },
+        ],
+      });
+      expect(airNeedsMeTasks(snapshot.tasks), hasLength(1));
+      final updated = snapshot.withTask(
+        snapshot.tasks.single.copyWith(goalState: 'achieved'),
+      );
+      expect(updated.tasks.single.goalState, 'achieved');
+      expect(airNeedsMeTasks(updated.tasks), isEmpty);
     });
   });
 }

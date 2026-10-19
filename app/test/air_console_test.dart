@@ -36,6 +36,7 @@ MockClient _client(
   List<String>? dirOrder,
   bool dirOrderFails = false,
   List<String>? uiLayoutBodies,
+  List<String>? achieved,
 }) => MockClient((request) async {
   const headers = {'content-type': 'application/json; charset=utf-8'};
   final path = request.url.path;
@@ -127,15 +128,13 @@ MockClient _client(
       headers: headers,
     );
   }
-  // 手动忽略：回执带「这次是忽略还是取消」+ 两份互斥清单（同服务端契约）。
+  // 手动忽略：回执带「这次是忽略还是取消」+ 两份独立清单（同服务端契约）。
   if (path == '/api/air/todos/ignore') {
     final id = '${(jsonDecode(request.body) as Map)['taskId']}';
     final ignoredList = ignored ?? <String>[];
-    final todoList = todos ?? <String>[];
     final nowIgnored = !ignoredList.contains(id);
     if (nowIgnored) {
       ignoredList.add(id);
-      todoList.remove(id);
     } else {
       ignoredList.remove(id);
     }
@@ -143,9 +142,20 @@ MockClient _client(
       jsonEncode({
         'ok': true,
         'ignored': nowIgnored,
+        'kind': nowIgnored ? 'error' : null,
         'taskIds': ignoredList,
-        'todos': todoList,
+        'todos': todos ?? <String>[],
       }),
+      200,
+      headers: headers,
+    );
+  }
+  // 标记达成：只接受成功且还在「需要交互」的任务（同服务端契约）。
+  if (path == '/api/air/tasks/mark-achieved') {
+    final id = '${(jsonDecode(request.body) as Map)['taskId']}';
+    achieved?.add(id);
+    return http.Response(
+      jsonEncode({'ok': true, 'taskId': id, 'goalState': 'achieved'}),
       200,
       headers: headers,
     );
@@ -196,7 +206,7 @@ MockClient _client(
 
 /// 四条任务，四种处境：
 ///   t1 等我回答 · t2 出错（两条都要我动手，t2 更新得更晚）·
-///   t3 空闲（不进「待办」，也不在跑）· t4 已归档（默认筛选里不出现）。
+///   t3 空闲（不进「等我处理」，也不在跑）· t4 已归档（默认筛选里不出现）。
 const List<Map<String, dynamic>> _baseTasks = [
   {
     'id': 't1',
@@ -241,7 +251,7 @@ const List<Map<String, dynamic>> _baseTasks = [
 /// 五格数字各要吃一份不同的料：一条在跑（r1，落在 d1）、一条空闲（t3，落在
 /// d2）、一条今天跑完（n1）、一条很久以前就跑完的（n2，不该算进「今日完成」），
 /// 外加基础夹具那四条。算出来是：
-///   进行中 4（t1 t2 t3 r1）· 待办 2（t1 t2）· 异常 1（t2）· 今日完成 1（n1）·
+///   进行中 4（t1 t2 t3 r1）· 等我处理 2（t1 t2）· 异常 1（t2）· 今日完成 1（n1）·
 ///   全部 4 / 共 7 条记录。
 List<Map<String, dynamic>> _fiveTileTasks() => [
   ..._baseTasks,
@@ -391,7 +401,7 @@ void main() {
   // 状态徽标、格上的词都来自 i18n 词典（注册表只给 key），不加载就只有 key。
   setUpAll(() => I18n.init('zh'));
 
-  testWidgets('五张统计格数的是同一份判定：谁在跑、待办、今天跑完了什么', (tester) async {
+  testWidgets('五张统计格数的是同一份判定：谁在跑、谁在等我、今天跑完了什么', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final requests = <String>[];
@@ -426,9 +436,9 @@ void main() {
     // 统计与工具收进了「更多」，展开后仍照旧工作。
     expect(_tileValue('running', '1'), findsOneWidget);
     expect(find.text('1 个目录正在跑'), findsOneWidget);
-    // 「待办」与「异常」是两格：待办是全部要人接手的（t1 等回答、t2 出错），异常
-    // 只是其中出错的那一部分。
-    expect(_tileValue('todo', '2'), findsOneWidget);
+    // 「等我处理」与「异常」是两格：等我处理是全部要人接手的（t1 等回答、t2
+    // 出错），异常只是其中出错的那一部分。
+    expect(_tileValue('needsMe', '2'), findsOneWidget);
     expect(find.text('等待回答或卡在资源上'), findsOneWidget);
     expect(_tileValue('error', '1'), findsOneWidget);
     expect(find.text('执行出错，需要处理或重试'), findsOneWidget);
@@ -471,23 +481,23 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    expect(_tileBorder(tester, 'todo'), AppColors.line);
+    expect(_tileBorder(tester, 'needsMe'), AppColors.line);
 
-    // 「待办」那一格：清单就是上面那个数字用的同一份数组，所以数字和清单不会
+    // 「等我处理」那一格：清单就是上面那个数字用的同一份数组，所以数字和清单不会
     // 分叉；这一格也没有搜索条和删除键 —— 那两样只属于「全部」。
-    await _openTile(tester, 'todo');
-    expect(_tileBorder(tester, 'todo'), AppColors.accent);
+    await _openTile(tester, 'needsMe');
+    expect(_tileBorder(tester, 'needsMe'), AppColors.accent);
     expect(find.text('ACROSS ALL WORKSPACES'), findsOneWidget);
     expect(_row('t1'), findsOneWidget, reason: 't1 在等我回答');
-    expect(_row('t2'), findsOneWidget, reason: 't2 出错，也是待办');
+    expect(_row('t2'), findsOneWidget, reason: 't2 出错，也在等我处理');
     expect(find.byKey(const ValueKey('air-console-search')), findsNothing);
     expect(find.byKey(const ValueKey('air-console-delete-t1')), findsNothing);
     expect(find.text('2 条'), findsOneWidget);
 
     // 再点同一格收起。
-    await _openTile(tester, 'todo');
+    await _openTile(tester, 'needsMe');
     expect(find.byKey(const ValueKey('air-console-collapse')), findsNothing);
-    expect(_tileBorder(tester, 'todo'), AppColors.line);
+    expect(_tileBorder(tester, 'needsMe'), AppColors.line);
 
     // 换一格只换内容，位置还在读数带正下方。
     await _openTile(tester, 'error');
@@ -512,7 +522,7 @@ void main() {
     expect(find.byKey(const ValueKey('air-console-collapse')), findsNothing);
 
     // 点一行交给宿主开那条任务。
-    await _openTile(tester, 'todo');
+    await _openTile(tester, 'needsMe');
     await tester.tap(_row('t1'));
     await tester.pumpAndSettle();
     expect(opened, ['t1']);
@@ -552,7 +562,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('任务流：待办 / 正在运行 / 最近使用，待办最老的在前且不重复', (tester) async {
+  testWidgets('任务流：等我处理 / 正在运行 / 最近使用，等我处理最老的在前且不重复', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final opened = <String>[];
@@ -573,7 +583,7 @@ void main() {
 
     // 分区顺序：先要动手的，再在跑的，最后是其余的最近使用。
     expect(
-      y(find.text('待办')),
+      y(find.text('等我处理')),
       lessThan(y(find.text('正在运行'))),
       reason: '要我动手的排在正在运行之前',
     );
@@ -583,7 +593,7 @@ void main() {
       reason: '正在运行排在最近使用之前',
     );
 
-    // 待办按 updatedAt 升序：t1（等回答）比 t2（出错）老，先处理老问题。
+    // 等我处理按 updatedAt 升序：t1（等回答）比 t2（出错）老，先处理老问题。
     expect(streamRow('attention', 't2'), findsOneWidget);
     expect(streamRow('attention', 't1'), findsOneWidget);
     expect(
@@ -659,7 +669,101 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('待办行尾可以忽略：移出待办与统计；「已忽略」档里能找回来取消忽略', (tester) async {
+  testWidgets('成功但需要交互的任务：唯一按钮是「标记达成」，按下后离开等我处理', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final achieved = <String>[];
+    final client = _client(
+      <String>[],
+      achieved: achieved,
+      tasks: [
+        ..._baseTasks,
+        {
+          'id': 'done1',
+          'dirId': 'd1',
+          'title': '等你确认结果',
+          'status': 'active',
+          'runState': 'succeeded',
+          'goalState': 'interact',
+          'updatedAt': 1700000050000,
+          'resource': const {'residency': 'planned', 'lease': 'idle'},
+        },
+      ],
+    );
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+
+    final row = find.byKey(
+      const ValueKey('air-console-stream-attention-done1'),
+    );
+    expect(row, findsOneWidget, reason: '需要我确认结果，属于等我处理');
+    final action = find.byKey(
+      const ValueKey('air-console-stream-action-done1'),
+    );
+    expect(action, findsOneWidget);
+    expect(find.byTooltip('标记达成'), findsOneWidget);
+
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(achieved, ['done1']);
+    expect(find.text('已标记为达成目标'), findsOneWidget);
+    expect(row, findsNothing, reason: '标记达成后不再需要我处理');
+    expect(
+      find.byKey(const ValueKey('air-console-stream-action-t1')),
+      findsOneWidget,
+    );
+
+    await _expandMore(tester);
+    expect(_tileValue('needsMe', '2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('待办行尾唯一按钮：已忽略、手动待办各有自己的动作', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final client = _client(
+      <String>[],
+      todos: ['t3'],
+      ignored: ['i2'],
+      tasks: [
+        ..._baseTasks,
+        {
+          'id': 'i2',
+          'dirId': 'd1',
+          'title': '已忽略的报错',
+          'status': 'active',
+          'runState': 'error',
+          'updatedAt': 1700000150000,
+          'resource': const {'residency': 'planned', 'lease': 'idle'},
+        },
+      ],
+    );
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+    await _openTile(tester, 'all');
+
+    // 空闲但手动标记 → 取消待办。
+    expect(find.byTooltip('取消待办'), findsWidgets);
+    // 被忽略的异常 → 取消忽略 + 徽标。
+    expect(
+      find.byKey(const ValueKey('air-console-action-i2')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('air-task-ignored-i2')), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('air-console-task-i2')),
+        matching: find.byTooltip('取消忽略'),
+      ),
+      findsOneWidget,
+      reason: '忽略压过异常状态，按钮先给取消忽略',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('异常行尾唯一按钮是「忽略异常」：移出等我处理但留在异常，可原地取消', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final requests = <String>[];
@@ -675,10 +779,12 @@ void main() {
     expect(streamRow('t1'), findsOneWidget);
     expect(streamRow('t2'), findsOneWidget);
 
-    // 出错的 t2 是待办；行尾那颗眼睛按下后立刻从待办消失（乐观更新）。
-    await tester.tap(
-      find.byKey(const ValueKey('air-console-stream-ignore-t2')),
-    );
+    // 出错的 t2 在等我处理；行尾唯一那颗按钮是「忽略异常」，按下后立刻从
+    // 等我处理消失（乐观更新）。
+    final ignore = find.byKey(const ValueKey('air-console-stream-action-t2'));
+    expect(ignore, findsOneWidget);
+    expect(find.byTooltip('忽略异常'), findsOneWidget);
+    await tester.tap(ignore);
     await tester.pumpAndSettle();
     expect(requests, contains('/api/air/todos/ignore'));
     expect(ignored, ['t2']);
@@ -686,37 +792,57 @@ void main() {
     expect(streamRow('t1'), findsOneWidget);
     expect(find.text('已忽略，有新动静会再提醒'), findsOneWidget);
 
-    // 忽略只把任务移出「待办」；「异常」是独立的一格，故障还在，计数不能跟着
+    // 忽略只把任务移出「等我处理」；「异常」是独立的一格，故障还在，计数不能跟着
     // 消失 —— 否则按一下眼睛，一条报错就从统计里被藏起来了。
     await _expandMore(tester);
     expect(_tileValue('error', '1'), findsOneWidget);
-    expect(_tileValue('todo', '1'), findsOneWidget);
+    expect(_tileValue('needsMe', '1'), findsOneWidget);
 
-    // 被忽略的异常仍在异常清单里，而且那一行的按钮已经变成「取消忽略」。
+    // 被忽略的异常仍在异常清单里，带「已忽略」徽标，按钮变成「取消忽略」。
     await _openTile(tester, 'error');
     expect(_row('t2'), findsOneWidget, reason: '忽略不该让报错从异常清单消失');
     expect(_row('t1'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('air-task-ignored-t2')),
+      findsOneWidget,
+      reason: '异常清单里要能看出这条已被忽略',
+    );
     final inlineUnignore = find.byKey(
-      const ValueKey('air-console-ignore-t2'),
+      const ValueKey('air-console-action-t2'),
     );
     expect(inlineUnignore, findsOneWidget);
-    expect(find.byTooltip('取消忽略'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('air-console-task-t2')),
+        matching: find.byTooltip('取消忽略'),
+      ),
+      findsOneWidget,
+    );
 
-    // 「已忽略」那一档把它找回来，点同一颗按钮取消忽略。
+    // 「已忽略」不再是筛选项；取消忽略就在异常这一行原地完成。
     await _openTile(tester, 'all');
-    await _pick(tester, 'air-console-status', '已忽略');
-    expect(_row('t2'), findsOneWidget);
-    expect(_row('t1'), findsNothing);
-    final unignore = find.byKey(const ValueKey('air-console-ignore-t2'));
+    await tester.tap(find.byKey(const ValueKey('air-console-status')));
+    await tester.pumpAndSettle();
+    expect(find.text('已忽略'), findsOneWidget, reason: '只剩行上的徽标，下拉里没有这一档');
+    // 关掉菜单，回到异常格。
+    await tester.tap(find.text('全部记录').last);
+    await tester.pumpAndSettle();
+    await _openTile(tester, 'error');
+    final unignore = find.byKey(const ValueKey('air-console-action-t2'));
     await tester.ensureVisible(unignore);
     await tester.pumpAndSettle();
     await tester.tap(unignore);
     await tester.pumpAndSettle();
     expect(ignored, isEmpty);
     expect(find.text('已取消忽略'), findsOneWidget);
-    expect(_row('t2'), findsNothing, reason: '取消忽略后它不再属于「已忽略」档');
-    expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('air-task-ignored-t2')),
+      findsNothing,
+      reason: '取消忽略后徽标消失',
+    );
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
     client.close();
   });
 
@@ -1107,8 +1233,8 @@ void main() {
     expect(find.text('定时任务 0/0 条启用'), findsNothing);
     // 主体照常：任务和目录才是这一页的主体。
     await _expandMore(tester);
-    expect(_tileValue('todo', '2'), findsOneWidget);
-    await _openTile(tester, 'todo');
+    expect(_tileValue('needsMe', '2'), findsOneWidget);
+    await _openTile(tester, 'needsMe');
     expect(_row('t1'), findsOneWidget);
     expect(_row('t2'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -1116,7 +1242,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('「待办」那一格的整页出口只在有东西等我时出现，且不属于别的格', (tester) async {
+  testWidgets('「等我处理」那一格的整页出口只在有东西等我时出现，且不属于别的格', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final client = _client(<String>[]);
@@ -1125,7 +1251,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 基础夹具有两条要我动手（t1 等我回答、t2 出错），出口带上同一个总数。
-    await _openTile(tester, 'todo');
+    await _openTile(tester, 'needsMe');
     expect(find.text('查看全部 2 条 ›'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
@@ -1136,7 +1262,7 @@ void main() {
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
       findsNothing,
-      reason: '整页出口只挂在「待办」那一格后面',
+      reason: '整页出口只挂在「等我处理」那一格后面',
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -1165,11 +1291,11 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    expect(_tileValue('todo', '0'), findsOneWidget);
+    expect(_tileValue('needsMe', '0'), findsOneWidget);
     expect(find.text('当前没有要处理的事'), findsOneWidget);
     expect(find.text('现在没有在跑的任务'), findsOneWidget);
 
-    await _openTile(tester, 'todo');
+    await _openTile(tester, 'needsMe');
     expect(find.text('没有正在等我的任务。'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
@@ -1183,7 +1309,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('整页「待办」是同一份清单：最早的消息在前，点一条先收它自己再交给宿主', (tester) async {
+  testWidgets('整页「等我处理」是同一份清单：最早的消息在前，点一条先收它自己再交给宿主', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final opened = <String>[];
@@ -1230,12 +1356,12 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    // 「待办」是等回答与出错两份加起来的那个总数（7）；「异常」只是其中跑出错的四条。
-    expect(_tileValue('todo', '7'), findsOneWidget);
+    // 「等我处理」是等回答与出错两份加起来的那个总数（7）；「异常」只是其中跑出错的四条。
+    expect(_tileValue('needsMe', '7'), findsOneWidget);
     expect(_tileValue('error', '4'), findsOneWidget);
     expect(_tileValue('running', '2'), findsOneWidget);
 
-    await _openTile(tester, 'todo');
+    await _openTile(tester, 'needsMe');
     // 出口带着整份清单的总数。
     expect(find.text('查看全部 7 条 ›'), findsOneWidget);
     for (final id in const ['w1', 'w2', 'e1', 'e2', 'e3', 'e4', 'w3']) {
@@ -1243,7 +1369,7 @@ void main() {
     }
     // 执行中的、空闲的从不进这份清单 —— 哪怕它们是最新的两条。
     for (final id in const ['r1', 'r2', 'i1']) {
-      expect(_row(id), findsNothing, reason: '$id 不需要我动手，不属于「待办」');
+      expect(_row(id), findsNothing, reason: '$id 不需要我动手，不属于「等我处理」');
     }
 
     // 整页：同一份清单铺开。
@@ -1251,9 +1377,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-attention')), findsOneWidget);
     expect(
-      find.descendant(of: find.byType(AppBar), matching: find.text('待办')),
+      find.descendant(of: find.byType(AppBar), matching: find.text('等我处理')),
       findsOneWidget,
-      reason: '整页标题改成「待办」',
+      reason: '整页标题改成「等我处理」',
     );
     expect(find.text('7 条 · 按最早消息排序，点击直达'), findsOneWidget);
     for (final id in const ['w1', 'w2', 'e1', 'e2', 'e3', 'e4', 'w3']) {
@@ -1266,7 +1392,7 @@ void main() {
         reason: '整页是同一份清单，执行中的不该在这里冒出来',
       );
     }
-    // 顺序是纯时间的证据：e2(500) 比 w3(400) 新，但整份待办按「最早的消息在前」，
+    // 顺序是纯时间的证据：e2(500) 比 w3(400) 新，但整份等我处理按「最早的消息在前」，
     // 所以更老的 w3 排在前面 —— 按紧急度分层则会反过来。
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('air-attention-task-w3'))).dy,
@@ -1447,7 +1573,7 @@ void main() {
     await _openTile(tester, 'all');
 
     expect(tester.takeException(), isNull);
-    for (final id in const ['running', 'todo', 'error', 'today', 'all']) {
+    for (final id in const ['running', 'needsMe', 'error', 'today', 'all']) {
       expect(_tile(id), findsOneWidget);
     }
     expect(find.byKey(const ValueKey('air-console-scope')), findsOneWidget);

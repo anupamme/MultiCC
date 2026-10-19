@@ -131,12 +131,14 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('air-directory-task-status')));
     await tester.pumpAndSettle();
-    // 下拉多了「待办」一档，最后那项可能落在菜单可视区外，先滚到它。
-    await tester.ensureVisible(find.text('已归档').last);
+    // 汇总叫「等我处理」，手动标记才叫「待办」，两项并排；「已忽略」已从
+    // 筛选项里移除。选一个菜单里看得见的档位，证明筛选仍会往宿主报一次。
+    expect(find.text('等我处理'), findsOneWidget);
+    expect(find.text('待办'), findsOneWidget);
+    expect(find.text('已忽略'), findsNothing);
+    await tester.tap(find.text('异常').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('已归档').last);
-    await tester.pumpAndSettle();
-    expect(statuses, [AirDirectoryTaskFilter.archived]);
+    expect(statuses, [AirDirectoryTaskFilter.error]);
     expect(tester.takeException(), isNull);
   });
 

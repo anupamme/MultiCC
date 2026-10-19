@@ -53,6 +53,7 @@ import 'tour_overlay.dart';
 import 'workspace_navigation_drawer.dart';
 
 part 'air/air_mobile_shell.dart';
+part 'air/air_tasks_view_actions.dart';
 
 /// Air 的移动端首页：目录优先，任务是行，对话开在自己的聊天页里。
 ///
@@ -109,7 +110,8 @@ enum _AirMode { console, tasks, library, recent, schedules }
 enum _DirectoryMode { chat, terminal }
 
 class _AirTasksViewState extends State<AirTasksView>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, _AirTasksViewActions {
+  @override
   late final AirService _service = AirService(
     settings: widget.settings,
     httpClient: widget.httpClient,
@@ -131,6 +133,7 @@ class _AirTasksViewState extends State<AirTasksView>
   final _tourComposerKey = GlobalKey();
   bool _tourStarted = false;
   AirLocalStore? _store;
+  @override
   AirSnapshot? _data;
   AirCreateAttempt? _attempt;
 
@@ -277,6 +280,7 @@ class _AirTasksViewState extends State<AirTasksView>
     });
   }
 
+  @override
   Future<void> _refresh() async {
     if (_loading) return;
     _loading = true;
@@ -434,7 +438,7 @@ class _AirTasksViewState extends State<AirTasksView>
                             Navigator.of(sheetContext).pop();
                             unawaited(_open(task));
                           },
-                          onLongPress: () => unawaited(_toggleTodo(task)),
+                          onLongPress: () => _runTaskAction(task),
                         ),
                       ),
                   ],
@@ -715,8 +719,12 @@ class _AirTasksViewState extends State<AirTasksView>
                 },
                 directories: _data?.directories ?? const <AirDirectory>[],
                 dirId: task.dirId,
+                task: task,
                 todo: _data?.isTodo(task.id) ?? false,
+                todoIgnored: _data?.isTodoIgnored(task.id) ?? false,
                 onToggleTodo: () => _toggleTodo(task),
+                onToggleIgnore: () => _toggleIgnore(task),
+                onMarkAchieved: () => _markAchieved(task),
                 // 归档/恢复只改这一条任务的状态：重拉快照，面板自己已经刷新过了。
                 onTaskChanged: () => unawaited(_refresh()),
                 // 移动之后这条任务属于别的目录了，所以先关掉这一层，再刷新并跟着
@@ -2375,9 +2383,10 @@ class _AirTasksViewState extends State<AirTasksView>
       showTime: MediaQuery.sizeOf(context).width > 380,
       timeAt: _taskSortAt(task),
       onTap: () => unawaited(_open(task)),
-      // 手动待办不再占行尾一颗按钮（390px 屏上标题会被挤到一半以下）：长按这一行
-      // 就地切换，ⓘ 详情里也有同一个开关；标记后徽标旁边会出一面 🚩。
-      onLongPress: () => unawaited(_toggleTodo(task)),
+      // 手动待办不占行尾一颗按钮（390px 屏上标题会被挤到一半以下）：长按这一行
+      // 就地执行当前状态的唯一动作，ⓘ 详情里也有同一个动作；标记后徽标旁边会出
+      // 一面 🚩，被忽略的任务会带「已忽略」小标。
+      onLongPress: () => _runTaskAction(task),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -2445,14 +2454,6 @@ class _AirTasksViewState extends State<AirTasksView>
       );
     }
   }
-
-  /// 标记 / 取消手动待办（见 [toggleAirTaskTodo]）。
-  Future<bool> _toggleTodo(AirTask task) => toggleAirTaskTodo(
-    context: context,
-    service: _service,
-    task: task,
-    onChanged: _refresh,
-  );
 
   Future<void> _deleteTaskFromList(AirTask task) async {
     final deleted = await deleteAirTaskWithConfirmation(

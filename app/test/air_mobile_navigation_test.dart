@@ -347,7 +347,7 @@ void main() {
     expect(find.text('昨天做完的'), findsNothing);
   });
 
-  testWidgets('移动工作区「待办」卡与控制台同口径：含手动待办、排除忽略、最早消息在前', (tester) async {
+  testWidgets('移动工作区「等我处理」卡与控制台同口径：含手动待办、排除忽略、最早消息在前', (tester) async {
     final config = await settings();
     final now = DateTime.now().millisecondsSinceEpoch;
     final transport = MockClient((req) async {
@@ -436,9 +436,9 @@ void main() {
 
     final card = find.byKey(const ValueKey('air-mobile-todo-card'));
     expect(card, findsOneWidget);
-    // 卡片标题与控制台 / 整页同一个词（airAdminAttention）。
+    // 卡片标题与控制台 / 整页同一个词（airNeedsMeFilter）。
     expect(
-      find.descendant(of: card, matching: find.text('待办')),
+      find.descendant(of: card, matching: find.text('等我处理')),
       findsOneWidget,
     );
     // 手动待办（空闲着但被标记）在卡里。
@@ -477,13 +477,23 @@ void main() {
     await tester.ensureVisible(all);
     await tester.tap(all);
     await tester.pumpAndSettle();
-    // 点「全部」带着「待办」这一格过去：四条都在，被忽略的仍然不在。
+    // 点「全部」带着「等我处理」这一格过去：四条都在，被忽略的仍然不在。
     expect(find.text('最新的待办'), findsOneWidget);
     expect(find.text('被忽略的'), findsNothing);
     expect(
-      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '待办')).selected,
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '等我处理'))
+          .selected,
       isTrue,
-      reason: '卡片「全部」带过来的是「待办」这一格',
+      reason: '卡片「全部」带过来的是「等我处理」这一格',
+    );
+    // 「待办」仍在筛选项里，但只收手动标记，和汇总不是一回事。
+    expect(find.widgetWithText(ChoiceChip, '待办'), findsOneWidget);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '待办'))
+          .selected,
+      isFalse,
     );
   });
 
@@ -687,7 +697,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 标记之后这条任务会同时出现在「待办」卡和最近列表里，所以取第一行来点、
+    // 标记之后这条任务会同时出现在「等我处理」卡和最近列表里，所以取第一行来点、
     // 标记按钮也按「至少一处」断言 —— 两处本来就是同一份数据。
     final row = find.byKey(const ValueKey('air-task-t1')).first;
     final flag = find.byKey(const ValueKey('air-task-todo-mark-t1'));

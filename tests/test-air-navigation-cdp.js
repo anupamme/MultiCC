@@ -161,7 +161,7 @@ test('手机底部导航保留最近任务、真实来路与项目切换', async
     // 控制台不分目录：顶栏没有目录按钮，卡片里两个项目的任务都在。
     assert.equal(await page.evaluate(`document.querySelector('#air-mobile-project').hidden`), true);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.mobile-console-filters button')].map(x=>x.dataset.filter)`),
-      ['recent', 'todo', 'today', 'running', 'error']);
+      ['recent', 'needs', 'todo', 'today', 'running', 'error']);
     const consoleIds = await page.evaluate(`[...document.querySelectorAll('.mobile-console-recent .mobile-task-row')].map(x=>x.dataset.taskId)`);
     assert.deepEqual(new Set(consoleIds.map(id => state.tasks.find(task => task.id === id).dirId)), new Set(['site', 'api']));
     const expectToday = state.tasks.filter(task => task.status === 'done').map(task => task.id);

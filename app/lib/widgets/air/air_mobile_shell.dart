@@ -152,7 +152,7 @@ extension _AirMobileShell on _AirTasksViewState {
             onSettings: _mobileSettings,
           ),
     onOpenTask: (task) => unawaited(_open(task)),
-    onToggleTodo: (task) => unawaited(_toggleTodo(task)),
+    onTaskAction: (task) => _runTaskAction(task),
     onRefresh: _refresh,
     onRecent: (filter) => _updateMobile(() {
       _mobileRecentFilter = filter;

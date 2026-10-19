@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../i18n.dart';
 import '../../services/air_service.dart';
 import '../../theme.dart';
 import 'air_task_status.dart';
@@ -322,7 +323,11 @@ class AirDirectoryTaskPanelHead extends StatelessWidget {
                     for (final filter in AirDirectoryTaskFilter.values)
                       DropdownMenuItem(
                         value: filter,
-                        child: Text(filter.label),
+                        child: Text(switch (filter) {
+                          AirDirectoryTaskFilter.needsMe => t('airNeedsMeFilter'),
+                          AirDirectoryTaskFilter.todo => t('airTodoFilter'),
+                          _ => filter.label,
+                        }),
                       ),
                   ],
                   onChanged: (value) {

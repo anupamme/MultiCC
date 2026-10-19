@@ -402,8 +402,8 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     //   同时把上一格 airGit* 补进源 json（此前只在生成物里，重新生成会丢），实测 9316/590989。
     // +6 键（airTodoSectionTitle/Ignore/Unignore/IgnoredFilter/IgnoredDone/UnignoredDone）：首页「待办」
     //   区块与手动忽略开关，实测 9332/591747。
-    maxLines: 9332,
-    maxBytes: 591747,
+    maxLines: 9350,
+    maxBytes: 592855,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
