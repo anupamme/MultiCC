@@ -81,6 +81,49 @@ test('task artifacts expose registry controls and sort permanent and pinned outp
   assert.equal(result.items.find(i => i.artifactId === 'unregistered').registryId, null);
 });
 
+test('artifact routes coalesce in-flight collects and memoize briefly per task', async () => {
+  const fakeRes = () => { const r = { body: null, status(code) { r.code = code; return r; }, json(v) { r.body = v; } }; return r; };
+  let collects = 0; let release; const gate = new Promise(done => { release = done; });
+  const routes = new Map();
+  const fakeApp = { get: (p, h) => routes.set(p, h), post() {}, delete() {} };
+  mountTaskShellRoutes(fakeApp, {
+    getRuntime: () => null,
+    artifacts: async id => { collects += 1; if (collects === 1) await gate; return { taskId: id, title: '', items: [] }; },
+    artifactsMemoMs: 60,
+  });
+  const handler = routes.get('/api/task-shell-tasks/:taskId/artifacts');
+  const inflight = [handler({ params: { taskId: 'tsk_a' } }, fakeRes()), handler({ params: { taskId: 'tsk_a' } }, fakeRes())];
+  release();
+  await Promise.all(inflight);
+  assert.equal(collects, 1, '进行中的采集要合并成一个');
+  await handler({ params: { taskId: 'tsk_a' } }, fakeRes());
+  assert.equal(collects, 1, '完成后的短窗口内直接复用同一份结果');
+  await new Promise(done => setTimeout(done, 70));
+  await handler({ params: { taskId: 'tsk_a' } }, fakeRes());
+  assert.equal(collects, 2, '窗口过后重新采集');
+  await handler({ params: { taskId: 'tsk_b' } }, fakeRes());
+  assert.equal(collects, 3, '不同任务各自采集');
+});
+
+test('a failed artifact collect is not memoized', async () => {
+  const fakeRes = () => { const r = { body: null, status(code) { r.code = code; return r; }, json(v) { r.body = v; } }; return r; };
+  let fails = true;
+  const routes = new Map();
+  mountTaskShellRoutes({ get: (p, h) => routes.set(p, h), post() {}, delete() {} }, {
+    getRuntime: () => null,
+    artifacts: async id => { if (fails) throw Object.assign(new Error('boom'), { status: 500 }); return { taskId: id, title: '', items: [id] }; },
+    artifactsMemoMs: 10_000,
+  });
+  const handler = routes.get('/api/task-shell-tasks/:taskId/artifacts');
+  const failed = fakeRes();
+  await handler({ params: { taskId: 'tsk_b' } }, failed);
+  assert.equal(failed.code, 500);
+  fails = false;
+  const recovered = fakeRes();
+  await handler({ params: { taskId: 'tsk_b' } }, recovered);
+  assert.deepEqual(recovered.body.items, ['tsk_b'], '失败不能落缓存，下一轮要能恢复');
+});
+
 test('registry task titles are readable before the shell runtime has started', t => {
   const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
   const { createTaskShellHost } = require('../src/task-shell/host');

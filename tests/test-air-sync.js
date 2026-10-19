@@ -244,3 +244,25 @@ test('waitingReply 只筛等待回复，兼容 waiting 继续代表待处理集�
   assert.deepEqual(index.page({ status: 'waitingReply' }).tasks.map(t => t.id), ['1']);
   assert.equal(index.page({ status: 'waiting' }).total, 2);
 });
+
+test('未挂到任务板的会话事件只重算元数据；工作区级事件仍走全量', async t => {
+  let observer; const builtIds = [];
+  let data = snapshot([task(1)]);
+  const runtime = createAirSyncRuntime({
+    build: async ids => { builtIds.push(ids); return ids ? { ...data, tasks: data.tasks.filter(x => ids.includes(x.id)) } : data; },
+    subscribe: fn => { observer = fn; }, send() {},
+    taskIdsForSession: () => [], // 会话尚未挂到任何任务板任务（新任务首轮/aux）
+  });
+  t.after(() => runtime.close());
+  await runtime.ensureReady();
+  assert.deepEqual(builtIds.at(-1), null, '首启引导仍是全量');
+  data = { ...data, sessions: [{ id: 'term-1' }] };
+  observer('d', { type: 'task_state', sessionId: 'unlinked' });
+  await runtime.flush();
+  assert.deepEqual(builtIds.at(-1), [], '空集合应走仅元数据构建，不再全量重建任务卡');
+  assert.deepEqual(runtime.index.snapshot().sessions, [{ id: 'term-1' }], '元数据照常推进');
+  assert.deepEqual(runtime.index.page({ status: 'all' }).tasks.map(x => x.id), ['1'], '任务行不受影响');
+  observer('d', { type: 'workspace_state' });
+  await runtime.flush();
+  assert.deepEqual(builtIds.at(-1), null, '无会话指向的事件保持全量');
+});
