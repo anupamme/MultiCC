@@ -160,7 +160,12 @@ function createRouterToolHost({
           }
           return res.json({ ok: true, result, requestId });
         } catch (error) {
-          const status = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+          // Task-shell and context-access failures carry their HTTP status on
+          // `status` (see src/task-shell/runtime.js failure()), not
+          // `statusCode`; without the fallback every 4xx reads as 500 and the
+          // real error code is replaced by router_internal_error.
+          const status = Number.isInteger(error?.statusCode) ? error.statusCode
+            : (Number.isInteger(error?.status) ? error.status : 500);
           const code = status >= 500 ? 'router_internal_error' : (error?.code || 'router_error');
           const retry = typeof error?.retryable === 'boolean' ? { retryable: error.retryable } : {};
           if (status >= 500) logger.error('router_tool_failure', {

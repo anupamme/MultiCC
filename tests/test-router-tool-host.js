@@ -305,3 +305,37 @@ test('a host-owned image bridge is advertised to a Claude chat when a direct Cod
   host.clear();
   assert.equal(stopped, 1);
 });
+
+test('get_task_context keeps the real 4xx code when the failure only carries `status`', async t => {
+  const records = new Map([['caller', { id: 'caller', dirId: 'dir', kind: 'chat', type: 'worker' }]]);
+  const host = createRouterToolHost({ express, isLocalRequest, logger: { warn() {}, error() {} } });
+  host.configure({
+    records,
+    orchestrationRuntime: { operations: { get: async () => null, list: async () => [] }, waits: { get: async () => null } },
+    dispatchToSession: async () => ({ ok: false }),
+    recordUserInput: async () => ({ ok: true }),
+    getTaskContext: async () => {
+      // task-shell/context-access.js fail() attaches the HTTP status as
+      // `status`, not `statusCode`; the host must not upgrade it to 500.
+      throw Object.assign(new Error('project_mismatch'), { code: 'project_mismatch', status: 403 });
+    },
+  });
+  const app = express();
+  host.mount(app);
+  const server = http.createServer(app);
+  const port = await listen(server);
+  t.after(async () => {
+    host.clear();
+    await new Promise(resolve => server.close(resolve));
+  });
+  const context = host.processContext({ sessionId: 'caller', turnId: 'turn-1', baseUrl: `http://127.0.0.1:${port}` });
+  t.after(() => context.revoke());
+  const response = await fetch(`http://127.0.0.1:${port}/api/internal/router-tools/get_task_context`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-multicc-router-capability': context.env.MULTICC_ROUTER_CAPABILITY },
+    body: JSON.stringify({ arguments: { task_id: 'task-not-a-task' } }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 403, 'status-only failures must keep their 4xx status');
+  assert.equal(body.code, 'project_mismatch', 'the real error code must survive instead of router_internal_error');
+});
