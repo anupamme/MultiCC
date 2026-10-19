@@ -42,6 +42,27 @@ class AirTaskRuntime {
 
   bool get isAuto => providerSelection != null;
 
+  /// 服务端快照 `lastRuntime`（最近用过的会话运行时）→ 新任务的起点。
+  /// 空 / 没有 cli 就返回 null，由调用方退回「第一条可用 chat 车道」。
+  static AirTaskRuntime? fromLast(Map<String, dynamic>? json) {
+    if (json == null) return null;
+    String s(String key) => (json[key] ?? '').toString();
+    final cli = s('cli');
+    if (cli.isEmpty) return null;
+    final sub = json['subagent'] == null
+        ? null
+        : SessionSubagent.fromJson(json['subagent']);
+    return AirTaskRuntime(
+      cli: cli,
+      provider: s('provider'),
+      providerName: s('providerName'),
+      model: s('model'),
+      effort: s('effort'),
+      providerSelection: parseProviderSelection(json['providerSelection']),
+      subagent: (sub?.providerId ?? '').isEmpty ? null : sub,
+    );
+  }
+
   /// 换 CLI 等于换了一整池 Provider 和模型，旧的选择不能带过去。
   AirTaskRuntime withCli(String next) =>
       next == cli ? this : AirTaskRuntime(cli: next);

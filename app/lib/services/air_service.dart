@@ -546,10 +546,16 @@ class AirSnapshot {
     this.worktreePolicy = const AirWorktreePolicy(),
     this.cursor = '',
     this.taskStats = const {},
+    this.lastRuntime,
   });
 
   final String cursor;
   final Map<String, Map<String, int>> taskStats;
+
+  /// 最近一次实际用过的 CLI · 线路 · 模型（服务端 `/api/air` 的 `lastRuntime`，
+  /// 取 lastWorkAt 最新的 chat 会话）。新任务输入区拿它当起点，而不是退回全局默认
+  /// 线路 —— 同 Web `acceptSnapshot` 里灌进 quickRuntime 的那一份。旧服务没有这一格。
+  final Map<String, dynamic>? lastRuntime;
   bool get indexed => cursor.isNotEmpty;
   int? count(String key, [String? dirId]) =>
       indexed ? (taskStats[dirId ?? 'all']?[key] ?? 0) : null;
@@ -638,6 +644,7 @@ class AirSnapshot {
       worktreePolicy: AirWorktreePolicy.fromJson(
         (json['worktreePolicy'] as Map?)?.cast<String, dynamic>(),
       ),
+      lastRuntime: (json['lastRuntime'] as Map?)?.cast<String, dynamic>(),
     );
   }
 
@@ -676,6 +683,7 @@ class AirSnapshot {
       worktreePolicy: worktreePolicy,
       cursor: cursor,
       taskStats: taskStats,
+      lastRuntime: lastRuntime,
     );
   }
 
@@ -692,6 +700,7 @@ class AirSnapshot {
     worktreePolicy: worktreePolicy,
     cursor: cursor,
     taskStats: taskStats,
+    lastRuntime: lastRuntime,
   );
 
   AirDirectory? directoryOf(String? id) {
