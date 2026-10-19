@@ -219,6 +219,45 @@ test('list_secrets projects metadata only', async t => {
   );
 });
 
+test('run_with_secrets / http_request_with_secret forward only names and map secret-tool errors', async t => {
+  const calls = [];
+  const { SecretToolError } = require('../src/secret-tools');
+  const { runtime } = fixture(t, {
+    secretTools: {
+      runWithSecrets: async (context, args) => {
+        calls.push({ tool: 'run', sessionId: context.sessionId, args });
+        if (args.secrets[0] === 'MISSING') throw new SecretToolError('unknown_secret', 'no such entry', 404);
+        return { ok: true, exit_code: 0, stdout: '[REDACTED:ARK_API_KEY]' };
+      },
+      httpRequestWithSecret: async (context, args) => {
+        calls.push({ tool: 'http', sessionId: context.sessionId, args });
+        return { ok: true, status: 200 };
+      },
+    },
+  });
+  const capability = runtime.issueContext({ sessionId: 'caller', turnId: 'turn-secret-tools' });
+  const run = await runtime.execute(capability, 'run_with_secrets', { secrets: ['ARK_API_KEY'], command: 'true' });
+  assert.equal(run.stdout, '[REDACTED:ARK_API_KEY]');
+  const http = await runtime.execute(capability, 'http_request_with_secret', { url: 'https://a.example.com/' });
+  assert.equal(http.status, 200);
+  assert.deepEqual(calls.map(c => c.sessionId), ['caller', 'caller']);
+  await assert.rejects(
+    runtime.execute(capability, 'run_with_secrets', { secrets: ['MISSING'], command: 'true' }),
+    error => error.code === 'unknown_secret' && error.statusCode === 404,
+  );
+});
+
+test('secret tools answer secret_tools_unavailable when the host did not configure them', async t => {
+  const { runtime } = fixture(t);
+  const capability = runtime.issueContext({ sessionId: 'caller', turnId: 'turn-secret-tools-off' });
+  for (const tool of ['run_with_secrets', 'http_request_with_secret']) {
+    await assert.rejects(
+      runtime.execute(capability, tool, {}),
+      error => error.code === 'secret_tools_unavailable' && error.statusCode === 501,
+    );
+  }
+});
+
 test('generate_image is capability-scoped to an eligible host bridge and keeps its artifact-only result', async t => {
   const calls = [];
   const { runtime } = fixture(t, {

@@ -13,6 +13,7 @@ const TERMINAL_OPERATION_STATES = new Set([
 const TOOL_NAMES = new Set([
   'wait_for_user_answer', 'request_user_input',
   'request_secret_input', 'list_secrets',
+  'run_with_secrets', 'http_request_with_secret',
   'get_task_context',
   'generate_image',
   'wait_for_external_result', 'get_external_wait', 'cancel_external_wait',
@@ -185,6 +186,9 @@ function createRouterToolRuntime({
   onAdmitted = async () => {},
   recordUserInput,
   listSecrets = () => [],
+  // Host-side executor that resolves vault values itself; this runtime only
+  // ever forwards entry names and receives already-redacted results.
+  secretTools = null,
   registerExternalWait,
   getExternalWait,
   listExternalWaits,
@@ -1010,6 +1014,20 @@ function createRouterToolRuntime({
     };
   }
 
+  async function runSecretTool(method, context, args, options) {
+    if (!secretTools || typeof secretTools[method] !== 'function') {
+      throw new RouterToolError('secret_tools_unavailable', 'secret tools are not configured on this host', 501);
+    }
+    try {
+      return await secretTools[method](context, args, options);
+    } catch (error) {
+      if (error && error.secretToolError) {
+        throw new RouterToolError(error.code, error.message, error.statusCode || 400);
+      }
+      throw error;
+    }
+  }
+
   function externalWaitSummary(wait) {
     const metadata = wait?.metadata && typeof wait.metadata === 'object'
       ? wait.metadata : {};
@@ -1310,6 +1328,10 @@ function createRouterToolRuntime({
     if (tool === 'list_secrets') {
       rejectUnknownArguments(args, new Set());
       return listSecretsForContext(context);
+    }
+    if (tool === 'run_with_secrets') return runSecretTool('runWithSecrets', context, args, options);
+    if (tool === 'http_request_with_secret') {
+      return runSecretTool('httpRequestWithSecret', context, args, options);
     }
     if (tool === 'wait_for_external_result') {
       return waitForExternalResult(context, args);

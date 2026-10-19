@@ -30,6 +30,15 @@ MultiCC 在本地维护一个敏感信息保险箱（secrets vault），用于�
 
 存储为数据目录下的 `secrets.json`（0600 权限）。
 
+## 用密钥：优先用这两个 MCP 工具（值不进模型、不进你能读的进程）
+
+- `run_with_secrets`：`{secrets: ["ARK_API_KEY"], command: "curl -H \"Authorization: Bearer $ARK_API_KEY\" ..."}`。
+  宿主按条目名取值，作为【同名环境变量】注入这一次命令，输出里的密钥值（含 base64/URL 编码/JSON 转义形式）替换为 `[REDACTED:NAME]` 再返回。只注入你点名的条目；宿主自身的 ANTHROPIC_/OPENAI_/CODEX_/MULTICC_ 等路由变量不会带进命令。可选 `timeout_seconds`（默认 120，最大 600）。
+- `http_request_with_secret`：宿主代发一次 HTTP 请求，在 header 值、url（路径/查询，自动 URL 编码）、body、json 里用 `{{secret:NAME}}` 占位。至少要有一个占位符；仅 https（回环地址允许 http）；**不跟随重定向**；响应头与文本正文同样脱敏，二进制正文只返回类型。
+- 两者都先 `list_secrets` 看有哪些名字；条目名必须是合法环境变量名。
+- 脱敏只做精确匹配：命令里自己 rev/hex/拆分后再打印的变形值拦不住——别这么做，也别试图“看一眼密钥”。
+- 命令会真的在宿主上执行（`destructiveHint`），审批/安全边界与你直接执行 Bash 相同，不要借它做越权的事。
+
 ## 子进程 env 统一注入
 
 spawn CLI 子进程（chat 每 turn 与终端会话）时，保险箱条目会以【同名环境变量】自动注入子进程环境，命令与脚本里直接引用同名变量即可（如环境变量 `MY_TOKEN`），无需任何逐条映射配置。规则：
@@ -43,4 +52,4 @@ spawn CLI 子进程（chat 每 turn 与终端会话）时，保险箱条目会�
 
 - 绝不要求用户把密钥明文粘贴进聊天框或写进任何会进入上下文的文件。
 - 绝不尝试把保险箱里的值读出来贴进对话（值读取接口只供面板使用）。
-- 引用密钥时只使用条目名或同名环境变量；绝不 echo/print 把值整段打印进对话或日志。
+- 引用密钥时只使用条目名、占位符或同名环境变量；绝不 echo/print 把值整段打印进对话或日志。

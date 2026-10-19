@@ -131,8 +131,16 @@ test('the Air vault panel is native: metadata-only list, per-name reveal, real w
     // 名称不合规时不该发请求 —— 格式校验在本地就该挡住，值没必要为它跑一趟网络。
     await page.evaluate(`(() => { const n=document.getElementById('air-secret-name'); n.value='bad name!';
       document.getElementById('air-secret-value').value='x'; document.getElementById('air-secret-save').click(); })()`);
-    assert.equal(await text('#air-secret-status'), '名称仅限字母数字与 _ . -（1-64 位）');
+    const NAME_RULE = '名称须是合法环境变量名：字母、数字、下划线，不能以数字开头（1-64 位）';
+    assert.equal(await text('#air-secret-status'), NAME_RULE);
     assert.equal(posts.length, 0, '格式不对时不发写入请求');
+    // 含 - 或 . 的名字以前合法，但进不了环境变量（只存不注入），现在新建时直接拒绝。
+    for (const legacy of ['my-key', 'my.key', '1ABC']) {
+      await page.evaluate(`(() => { const n=document.getElementById('air-secret-name'); n.value=${JSON.stringify(legacy)};
+        document.getElementById('air-secret-value').value='x'; document.getElementById('air-secret-save').click(); })()`);
+      assert.equal(await text('#air-secret-status'), NAME_RULE, `${legacy} 不是合法环境变量名`);
+    }
+    assert.equal(posts.length, 0, '这些名字也都不发写入请求');
     // 值不能被明文提交进 URL（POST body 才是它该待的地方）—— 这条靠下面 body 断言兜底。
     await page.evaluate(`(() => { document.getElementById('air-secret-name').value='ANTHROPIC_BASE_URL_FIXTURE';
       document.getElementById('air-secret-value').value=''; document.getElementById('air-secret-save').click(); })()`);

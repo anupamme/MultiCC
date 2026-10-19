@@ -37,6 +37,7 @@ function createRouterToolHost({
     onDispatchCancelled,
     getTaskContext,
     listSecrets,
+    secretTools,
     imageBridge: configuredImageBridge,
   } = {}) {
     imageBridge = configuredImageBridge || null;
@@ -89,6 +90,7 @@ function createRouterToolHost({
       },
       recordUserInput,
       listSecrets: typeof listSecrets === 'function' ? listSecrets : () => [],
+      secretTools: secretTools || null,
       getTaskContext: typeof getTaskContext === 'function' ? getTaskContext : async () => null,
       subscribeDispatchProgress,
       resolveContext: resolveContext || (sessionId => {

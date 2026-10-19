@@ -324,6 +324,58 @@ const TOOLS = [
     },
   },
   {
+    name: 'run_with_secrets',
+    title: 'Run a shell command with vault secrets',
+    description: 'Run a shell command in the session working directory with the named vault entries injected as environment variables of the SAME NAME (e.g. secrets=["ARK_API_KEY"], command: curl -H "Authorization: Bearer $ARK_API_KEY" ...). The host resolves the values, runs the command, and replaces every occurrence of a secret value in stdout/stderr with [REDACTED:NAME] before returning, so values never reach you. Reference the variable by name only; do not try to print, encode or transform it. Only the entries you list are injected. Returns exit_code, stdout, stderr (each capped), timed_out. Use list_secrets first for the available names.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['secrets', 'command'],
+      properties: {
+        secrets: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 16,
+          uniqueItems: true,
+          items: { type: 'string', pattern: '^[A-Za-z_][A-Za-z0-9_]{0,63}$' },
+          description: 'Vault entry names to inject as env vars of the same name.',
+        },
+        command: { type: 'string', minLength: 1, maxLength: 16384, description: 'Shell command, run with bash -c in the session working directory.' },
+        timeout_seconds: { type: 'integer', minimum: 1, maximum: 600, default: 120 },
+      },
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: 'http_request_with_secret',
+    title: 'Send an HTTP request with a vault secret',
+    description: 'Send ONE HTTP request from the host, substituting {{secret:NAME}} placeholders with vault values in header values, the url (path/query, URL-encoded), the body or the json. The secret never enters any process you can read, and the response (headers + text body) is scrubbed of secret values before it is returned. At least one placeholder is required. https only (http allowed for loopback). Redirects are NOT followed. Example: headers {"Authorization":"Bearer {{secret:ARK_API_KEY}}"}. Use list_secrets first for the available names.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['url'],
+      properties: {
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], default: 'GET' },
+        url: { type: 'string', minLength: 8, maxLength: 4096 },
+        headers: { type: 'object', additionalProperties: { type: 'string' } },
+        body: { type: 'string', maxLength: 1048576, description: 'Raw request body. Mutually exclusive with json.' },
+        json: { type: ['object', 'array'], description: 'JSON body (placeholders allowed in string values). Mutually exclusive with body.' },
+        timeout_seconds: { type: 'integer', minimum: 1, maximum: 120, default: 60 },
+      },
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
     name: 'wait_for_external_result',
     title: 'Wait for external result',
     description: 'Register a durable callback or delay for the current session. It never accepts a session id, command, URL to poll, or arbitrary injected message. Callback capability URLs are returned only by the first successful registration; an idempotent replay never rotates or re-exposes the secret.',

@@ -102,7 +102,7 @@ const { bootstrapState } = require('./src/bootstrap/state');
 const { createSessionPersistence } = require('./src/session/persistence'); const { mountPublicSessionAccessGuard } = require('./src/session/public-session-access');
 const { initializeSessionWorktrees, resolveSessionCwd } = require('./src/session/hibernation');
 const { createOrchestrationRuntime } = require('./src/orchestration/runtime');
-const { createRouterToolHost } = require('./src/router-tool-host'); const { createOfficialImageBridgeRuntime } = require('./src/codex/image-bridge-runtime');
+const { createRouterToolHost } = require('./src/router-tool-host'); const { createSecretTools } = require('./src/secret-tools'); const { createOfficialImageBridgeRuntime } = require('./src/codex/image-bridge-runtime');
 const { createHostLifecycle } = require('./src/host-lifecycle');
 const { createLanDiscoveryRuntime } = require('./src/lan-discovery');
 const { requestIdMiddleware, safeErrorHandler, asyncHandler } = require('./src/http-errors');
@@ -2726,7 +2726,9 @@ const providerLogWatchdog = createProviderLogWatchdog({ listRecords: () => persi
 const logHousekeeping = createLogHousekeeping({ logsDir: path.join(__dirname, 'logs'), logger,
   retainDays: envNumber(process.env.MULTICC_LOG_RETAIN_DAYS), keepTailBytes: envNumber(process.env.MULTICC_LOG_KEEP_TAIL_BYTES) });
 routerToolHost.configure({ records: persistedSessions, dispatchToSession, createTask: input => taskShellHost.createTask(input), orchestrationRuntime, taskBoard: taskBoardRuntime,
-  recordUserInput: signal => sessionWorkHost.recordInput(signal), listSecrets: () => secretsVault.list(), cancelActiveTurn: (id, opts) => sessionWorkHost.cancelActiveTurn(id, opts),
+  recordUserInput: signal => sessionWorkHost.recordInput(signal), listSecrets: () => secretsVault.list(),
+  secretTools: createSecretTools({ vault: secretsVault, resolveSessionCwd: id => { const rec = persistedSessions.get(id); return rec ? cwdForSession(rec) : null; } }),
+  cancelActiveTurn: (id, opts) => sessionWorkHost.cancelActiveTurn(id, opts),
   onDispatchCancelled: id => cancelDispatchRun(id), subscribeDispatchProgress, recordRouterAdmission, imageBridge: createOfficialImageBridgeRuntime({ paths: MULTICC_PATHS, resolveSessionCwd: cwdForSession, providers, officialAccounts, registerArtifact: docsRegistry.register, codexCommand: cliCommands.codex }), getTaskContext: (context, query) => taskShellHost.refillContext(context.sessionId, { ...query, receiptId: context.requestId }) });
 
 waitInjector.init({
