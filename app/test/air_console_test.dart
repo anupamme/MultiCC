@@ -424,8 +424,9 @@ void main() {
 
     // 两份数据各拉一次，控制台不自己造统计口径；第三趟只问首启卡该不该亮
     // （aux 配没配），不参与任何一个数字。目录顺序另有一趟 ui-layout。
-    expect(requests, [
+    expect(requests.map((path) => Uri.parse(path).path), [
       '/api/ui-layout',
+      '/api/air/sync',
       '/api/air',
       '/api/external-fleets',
       '/api/cron',
@@ -747,10 +748,7 @@ void main() {
     // 空闲但手动标记 → 取消待办。
     expect(find.byTooltip('取消待办'), findsWidgets);
     // 被忽略的异常 → 取消忽略 + 徽标。
-    expect(
-      find.byKey(const ValueKey('air-console-action-i2')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('air-console-action-i2')), findsOneWidget);
     expect(find.byKey(const ValueKey('air-task-ignored-i2')), findsOneWidget);
     expect(
       find.descendant(
@@ -807,9 +805,7 @@ void main() {
       findsOneWidget,
       reason: '异常清单里要能看出这条已被忽略',
     );
-    final inlineUnignore = find.byKey(
-      const ValueKey('air-console-action-t2'),
-    );
+    final inlineUnignore = find.byKey(const ValueKey('air-console-action-t2'));
     expect(inlineUnignore, findsOneWidget);
     expect(
       find.descendant(

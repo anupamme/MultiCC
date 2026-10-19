@@ -39,6 +39,7 @@ class AirDirectoryLibrary extends StatefulWidget {
     required this.directories,
     required this.currentDirectoryId,
     required this.tasksOf,
+    this.counts = const {},
     required this.runningDirectories,
     required this.onOpen,
     required this.onAddDirectory,
@@ -49,6 +50,7 @@ class AirDirectoryLibrary extends StatefulWidget {
   final List<AirDirectory> directories;
   final String? currentDirectoryId;
   final List<AirTask> Function(String dirId) tasksOf;
+  final Map<String, Map<String, int>> counts;
 
   /// 有任务正在执行的目录 id —— 卡片上那圈运行环用它。
   final Set<String> runningDirectories;
@@ -152,6 +154,7 @@ class _AirDirectoryLibraryState extends State<AirDirectoryLibrary> {
                 itemBuilder: (context, index) => _DirectoryCard(
                   directory: rows[index],
                   tasks: widget.tasksOf(rows[index].id),
+                  counts: widget.counts[rows[index].id],
                   running: widget.runningDirectories.contains(rows[index].id),
                   current: rows[index].id == widget.currentDirectoryId,
                   onOpen: () => widget.onOpen(rows[index].id),
@@ -172,6 +175,7 @@ class _DirectoryCard extends StatelessWidget {
   const _DirectoryCard({
     required this.directory,
     required this.tasks,
+    this.counts,
     required this.running,
     required this.current,
     required this.onOpen,
@@ -180,6 +184,7 @@ class _DirectoryCard extends StatelessWidget {
 
   final AirDirectory directory;
   final List<AirTask> tasks;
+  final Map<String, int>? counts;
   final bool running;
   final bool current;
   final VoidCallback onOpen;
@@ -187,7 +192,7 @@ class _DirectoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final active = tasks.where((t) => !t.closed).length;
+    final active = counts?['open'] ?? tasks.where((t) => !t.closed).length;
     return Material(
       color: AppColors.panel,
       borderRadius: BorderRadius.circular(AppColors.radiusCard),
@@ -257,7 +262,7 @@ class _DirectoryCard extends StatelessWidget {
                       directory.external
                           ? '共享工作区'
                                 '${directory.interactive ? '' : ' · 授权已失效'}'
-                          : '${tasks.length} 个任务 · $active 个未完成'
+                          : '${counts?['total'] ?? tasks.length} 个任务 · $active 个未完成'
                                 ' · ${airWorktreeSummary(directory)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -542,19 +547,21 @@ class AirDirectoryStats extends StatelessWidget {
   const AirDirectoryStats({
     super.key,
     required this.tasks,
+    this.counts,
     this.worktreeCount = 0,
     this.onFilter,
   });
 
   final List<AirTask> tasks;
+  final Map<String, int>? counts;
   final int worktreeCount;
   final ValueChanged<AirDirectoryTaskFilter>? onFilter;
 
   @override
   Widget build(BuildContext context) {
-    final archived = tasks
-        .where(AirDirectoryTaskFilter.archived.matches)
-        .length;
+    final archived =
+        counts?['archived'] ??
+        tasks.where(AirDirectoryTaskFilter.archived.matches).length;
     const filters = [
       AirDirectoryTaskFilter.running,
       AirDirectoryTaskFilter.needsMe,
@@ -576,7 +583,8 @@ class AirDirectoryStats extends StatelessWidget {
             AirDirectoryTaskFilter.all => '全部',
             _ => filter.label,
           },
-          value: '${tasks.where(filter.matches).length}',
+          value:
+              '${counts?[filter.countKey] ?? tasks.where(filter.matches).length}',
           detail: switch (filter) {
             AirDirectoryTaskFilter.today => '今天跑完的任务',
             AirDirectoryTaskFilter.all =>

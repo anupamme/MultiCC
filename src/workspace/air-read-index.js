@@ -120,6 +120,7 @@ function createAirReadIndex({ historyLimit = 256, maxDeltaBytes = 256 * 1024 } =
       if (filter === 'archived') return task.status === 'archived';
       if (filter === 'today') return (state === 'succeeded' || task.status === 'done') && Number(task.updatedAt || 0) >= dayStart;
       if (filter === 'needs' || filter === 'waiting') return needs(task, todos, ignored);
+      if (filter === 'waitingReply') return state === 'waiting';
       if (filter === 'todo') return task.status !== 'archived' && todos.has(task.id);
       if (filter === 'achieved' || filter === 'interact') return state === 'succeeded' && task.goalState === filter;
       if (['running', 'error', 'succeeded'].includes(filter)) return state === filter;

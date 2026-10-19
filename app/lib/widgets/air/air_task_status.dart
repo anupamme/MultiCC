@@ -50,6 +50,13 @@ enum AirDirectoryTaskFilter {
   const AirDirectoryTaskFilter(this.label);
   final String label;
 
+  String get apiValue => switch (this) {
+    needsMe => 'needs',
+    waiting => 'waitingReply',
+    _ => name,
+  };
+  String get countKey => this == all ? 'total' : apiValue;
+
   bool matches(AirTask task) => switch (this) {
     needsMe => airTaskNeedsMe(task),
     todo => task.manualTodo,
@@ -128,8 +135,8 @@ extension AirTaskActionPresentation on AirTaskAction {
   IconData get icon => switch (this) {
     AirTaskAction.unignore => Icons.visibility_rounded,
     AirTaskAction.unmarkTodo => Icons.flag_rounded,
-    AirTaskAction.ignoreError || AirTaskAction.ignoreWaiting =>
-      Icons.visibility_off_outlined,
+    AirTaskAction.ignoreError ||
+    AirTaskAction.ignoreWaiting => Icons.visibility_off_outlined,
     AirTaskAction.markAchieved => Icons.check_circle_outline_rounded,
     AirTaskAction.markTodo => Icons.outlined_flag_rounded,
   };
@@ -264,11 +271,10 @@ Set<String> airRunningDirectories(Iterable<AirTask> tasks) => {
 List<AirTask> airNeedsMeTasks(Iterable<AirTask> tasks) {
   int todoAt(AirTask task) =>
       task.lastMessageAt > 0 ? task.lastMessageAt : task.updatedAt;
-  return tasks.where(airTaskNeedsMe).toList()
-    ..sort((a, b) {
-      final byTime = todoAt(a).compareTo(todoAt(b));
-      return byTime != 0 ? byTime : a.id.compareTo(b.id);
-    });
+  return tasks.where(airTaskNeedsMe).toList()..sort((a, b) {
+    final byTime = todoAt(a).compareTo(todoAt(b));
+    return byTime != 0 ? byTime : a.id.compareTo(b.id);
+  });
 }
 
 /// 旧名保留：历史调用点与测试仍按「待办清单」称呼这份汇总清单。

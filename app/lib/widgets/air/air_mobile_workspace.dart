@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../i18n.dart';
 import '../../services/air_service.dart';
+import '../../services/air_sync_service.dart';
 import '../../theme.dart';
 import 'air_panels.dart';
+import 'air_directory_task_panel.dart';
 import 'air_task_status.dart';
 
 /// 手机控制台和最近任务共用真实快照与状态判定；切换页面不重建会话。
@@ -18,11 +20,13 @@ class AirMobileWorkspace extends StatefulWidget {
     required this.onRefresh,
     required this.onResource,
     this.recent = false,
+    this.sync,
     this.initialFilter,
     this.setupNotice,
     this.onTaskAction,
   });
   final AirSnapshot? data;
+  final AirSyncService? sync;
   final String? directoryId;
   final List<AirTask> recentTasks;
   final ValueChanged<AirTask> onOpenTask;
@@ -46,6 +50,26 @@ class AirMobileWorkspace extends StatefulWidget {
 
 class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   String _query = '';
+  int _page = 1;
+  final _scroll = ScrollController();
+
+  void _changePage(int page) {
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    setState(() => _page = page);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant AirMobileWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.directoryId != widget.directoryId) _page = 1;
+  }
+
   late AirDirectoryTaskFilter _filter =
       widget.initialFilter ?? AirDirectoryTaskFilter.all;
   late bool _all = widget.initialFilter != null;
@@ -118,21 +142,53 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
         .toList();
     // 与控制台「等我处理」同一份口径：等回答 / 出错 / 需要交互 / 手动标记，
     // 排除归档与被忽略，最早的消息在前。
-    final needsMe = airNeedsMeTasks(scoped);
+    List<AirTask> rowsOf(AirPageResult? page) => [
+      for (final id in page?.ids ?? const <String>[])
+        if (widget.data?.taskOf(id) case final task?) task,
+    ];
+    final indexed = widget.data?.indexed == true;
+    final counts = widget.data?.taskStats[widget.directoryId ?? 'all'];
+    final needsPage = widget.sync?.page('mobile-needs', {
+      'dirId': widget.directoryId,
+      'status': 'needs',
+      'limit': 3,
+    });
+    final needsMe = indexed ? rowsOf(needsPage) : airNeedsMeTasks(scoped);
+    final needsCount = counts?['needs'] ?? needsMe.length;
     final recentAll = _rowsOf(withPins: false);
-    final consoleRows = _consoleFilter == null
+    final consolePage = widget.sync?.page('mobile-console', {
+      'dirId': widget.directoryId,
+      'status': _consoleFilter?.apiValue ?? 'recent',
+      'limit': _consoleFilter == null ? 3 : 5,
+    });
+    final consoleRows = indexed
+        ? rowsOf(consolePage)
+        : _consoleFilter == null
         ? recentAll
         : recentAll.where(_consoleFilter!.matches).toList();
-    final visible = rows
-        .where(
-          (t) =>
-              _filter.matches(t) &&
-              t.title.toLowerCase().contains(_query.toLowerCase()),
-        )
-        .toList();
+    final remote = widget.recent
+        ? widget.sync?.page('mobile-recent', {
+            'dirId': widget.directoryId,
+            'status': !_all && _filter == AirDirectoryTaskFilter.all
+                ? 'recent'
+                : _filter.apiValue,
+            'query': _query.trim(),
+            'page': _page,
+          })
+        : null;
+    final visible = indexed
+        ? rowsOf(remote)
+        : rows
+              .where(
+                (t) =>
+                    _filter.matches(t) &&
+                    t.title.toLowerCase().contains(_query.toLowerCase()),
+              )
+              .toList();
     return RefreshIndicator(
       onRefresh: widget.onRefresh,
       child: ListView(
+        controller: _scroll,
         key: PageStorageKey(
           widget.recent ? 'mobile-recent-scroll' : 'mobile-console-scroll',
         ),
@@ -160,7 +216,10 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                 hintText: t('airAdminSearchTasksLabel'),
                 filled: true,
               ),
-              onChanged: (v) => setState(() => _query = v),
+              onChanged: (v) => setState(() {
+                _query = v;
+                _page = 1;
+              }),
             ),
             const SizedBox(height: 12),
             SingleChildScrollView(
@@ -179,6 +238,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                         label: Text(entry.$1),
                         selected: _filter == entry.$2 && _all == entry.$3,
                         onSelected: (_) => setState(() {
+                          _page = 1;
                           _filter = entry.$2;
                           _all = entry.$3;
                         }),
@@ -189,15 +249,24 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
             ),
             const SizedBox(height: 12),
             ...visible.map(_task),
-            if (visible.isEmpty)
+            if (indexed && remote == null)
+              const LinearProgressIndicator()
+            else if (visible.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(t('airAdminNoMatchingTasks')),
               ),
+            if ((remote?.pages ?? 1) > 1)
+              AirTaskPagerBar(
+                page: remote!.page,
+                pageCount: remote.pages,
+                keyPrefix: 'air-mobile-recent',
+                onPage: _changePage,
+              ),
           ] else ...[
             if (widget.setupNotice != null) widget.setupNotice!,
             const SizedBox(height: 20),
-            if (needsMe.isNotEmpty)
+            if (needsCount > 0)
               Container(
                 key: const ValueKey('air-mobile-todo-card'),
                 decoration: BoxDecoration(
@@ -216,16 +285,14 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                       ),
                     ),
                     ...needsMe.take(3).map(_task),
-                    if (needsMe.length > 3)
+                    if (needsCount > 3)
                       TextButton(
                         key: const ValueKey('air-mobile-todo-all'),
                         // 带着「等我处理」这一格进最近任务页：数量、清单和点开
                         // 的是同一份清单，不会显示成「全部任务」。
                         onPressed: () =>
                             widget.onRecent(AirDirectoryTaskFilter.needsMe),
-                        child: Text(
-                          '${t('airAdminFilterAll')} · ${needsMe.length}',
-                        ),
+                        child: Text('${t('airAdminFilterAll')} · $needsCount'),
                       ),
                   ],
                 ),
@@ -249,7 +316,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                   key: const ValueKey('air-mobile-console-all'),
                   onPressed: () => widget.onRecent(_consoleFilter),
                   child: Text(
-                    '${t('airAdminFilterAll')} ${consoleRows.length} ›',
+                    '${t('airAdminFilterAll')} ${consolePage?.total ?? consoleRows.length} ›',
                   ),
                 ),
               ],
@@ -272,7 +339,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                         label: Text(
                           filter == null
                               ? t(key)
-                              : '${t(key)} ${recentAll.where(filter.matches).length}',
+                              : '${t(key)} ${counts?[filter.countKey] ?? recentAll.where(filter.matches).length}',
                         ),
                         selected: _consoleFilter == filter,
                         onSelected: (_) =>

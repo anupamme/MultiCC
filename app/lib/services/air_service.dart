@@ -8,6 +8,7 @@ import '../models/message.dart';
 import '../utils/status_presentation.dart';
 import 'settings_service.dart';
 import 'session_service.dart';
+import 'ws_ticket_service.dart';
 
 /// Air 面自己的词表。**规范状态的词不在这里写第二遍**：它们在注册表的
 /// `airLabelKey` 列上（`utils/status_presentation.dart` 的 [StatusSpec.airLabel]，
@@ -441,6 +442,7 @@ class AirTask {
   final String? workflowStage;
   final String? sessionId;
   final String? sourceSessionId;
+
   /// 当前任务会话绑定的 Provider 显示名；无绑定时不显示。
   final String? providerName;
 
@@ -502,30 +504,27 @@ class AirTask {
 
   /// 乐观更新用：只改用户手动那几格（待办 / 忽略）或刚在本地确认的目标状态，
   /// 其余字段原样带过。
-  AirTask copyWith({
-    bool? manualTodo,
-    bool? todoIgnored,
-    String? goalState,
-  }) => AirTask(
-    id: id,
-    dirId: dirId,
-    title: title,
-    status: status,
-    recordType: recordType,
-    updatedAt: updatedAt,
-    lastMessageAt: lastMessageAt,
-    readOnly: readOnly,
-    workflowStage: workflowStage,
-    sessionId: sessionId,
-    sourceSessionId: sourceSessionId,
-    providerName: providerName,
-    runState: runState,
-    goalState: goalState ?? this.goalState,
-    resource: resource,
-    worktreeChanges: worktreeChanges,
-    manualTodo: manualTodo ?? this.manualTodo,
-    todoIgnored: todoIgnored ?? this.todoIgnored,
-  );
+  AirTask copyWith({bool? manualTodo, bool? todoIgnored, String? goalState}) =>
+      AirTask(
+        id: id,
+        dirId: dirId,
+        title: title,
+        status: status,
+        recordType: recordType,
+        updatedAt: updatedAt,
+        lastMessageAt: lastMessageAt,
+        readOnly: readOnly,
+        workflowStage: workflowStage,
+        sessionId: sessionId,
+        sourceSessionId: sourceSessionId,
+        providerName: providerName,
+        runState: runState,
+        goalState: goalState ?? this.goalState,
+        resource: resource,
+        worktreeChanges: worktreeChanges,
+        manualTodo: manualTodo ?? this.manualTodo,
+        todoIgnored: todoIgnored ?? this.todoIgnored,
+      );
 
   /// 「完成」在 Air 里有两个词：工作流阶段走 done，归档走 archived。
   bool get closed => status == 'archived' || workflowStage == 'done';
@@ -545,7 +544,21 @@ class AirSnapshot {
     this.taskTodoIgnored = const [],
     this.externalFleets = const [],
     this.worktreePolicy = const AirWorktreePolicy(),
+    this.cursor = '',
+    this.taskStats = const {},
   });
+
+  final String cursor;
+  final Map<String, Map<String, int>> taskStats;
+  bool get indexed => cursor.isNotEmpty;
+  int? count(String key, [String? dirId]) =>
+      indexed ? (taskStats[dirId ?? 'all']?[key] ?? 0) : null;
+  Set<String> get runningDirectoryIds => indexed
+      ? {
+          for (final e in taskStats.entries)
+            if (e.key != 'all' && (e.value['running'] ?? 0) > 0) e.key,
+        }
+      : const <String>{};
 
   final List<AirDirectory> directories;
   final List<AirTask> tasks;
@@ -589,35 +602,43 @@ class AirSnapshot {
         .toList();
     final ignoredIds = ignored.toSet();
     return AirSnapshot(
-    directories: [
-      ...((json['directories'] as List?) ?? []).map(
-        (e) => AirDirectory.fromJson((e as Map).cast<String, dynamic>()),
+      cursor: json['cursor'] as String? ?? '',
+      taskStats: {
+        for (final e in (json['taskStats'] as Map? ?? {}).entries)
+          '${e.key}': {
+            for (final c in (e.value as Map).entries)
+              '${c.key}': (c.value as num).toInt(),
+          },
+      },
+      directories: [
+        ...((json['directories'] as List?) ?? []).map(
+          (e) => AirDirectory.fromJson((e as Map).cast<String, dynamic>()),
+        ),
+        ...externalFleets.map(AirDirectory.fromExternalFleet),
+      ],
+      tasks: ((json['tasks'] as List?) ?? []).map((e) {
+        final row = (e as Map).cast<String, dynamic>();
+        final id = '${row['id']}';
+        return AirTask.fromJson(
+          row,
+          manualTodo: todoIds.contains(id),
+          todoIgnored: ignoredIds.contains(id),
+        );
+      }).toList(),
+      clis: ((json['clis'] as List?) ?? const []).map((e) => '$e').toList(),
+      sessions: ((json['sessions'] as List?) ?? [])
+          .map((e) => AirSession.fromJson((e as Map).cast<String, dynamic>()))
+          .toList(),
+      taskPins: ((json['taskPins'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList(),
+      taskTodos: todos,
+      taskTodoIgnored: ignored,
+      externalFleets: externalFleets,
+      worktreePolicy: AirWorktreePolicy.fromJson(
+        (json['worktreePolicy'] as Map?)?.cast<String, dynamic>(),
       ),
-      ...externalFleets.map(AirDirectory.fromExternalFleet),
-    ],
-    tasks: ((json['tasks'] as List?) ?? []).map((e) {
-      final row = (e as Map).cast<String, dynamic>();
-      final id = '${row['id']}';
-      return AirTask.fromJson(
-        row,
-        manualTodo: todoIds.contains(id),
-        todoIgnored: ignoredIds.contains(id),
-      );
-    }).toList(),
-    clis: ((json['clis'] as List?) ?? const []).map((e) => '$e').toList(),
-    sessions: ((json['sessions'] as List?) ?? [])
-        .map((e) => AirSession.fromJson((e as Map).cast<String, dynamic>()))
-        .toList(),
-    taskPins: ((json['taskPins'] as List?) ?? const [])
-        .map((e) => '$e')
-        .toList(),
-    taskTodos: todos,
-    taskTodoIgnored: ignored,
-    externalFleets: externalFleets,
-    worktreePolicy: AirWorktreePolicy.fromJson(
-      (json['worktreePolicy'] as Map?)?.cast<String, dynamic>(),
-    ),
-  );
+    );
   }
 
   /// 这个任务被 pin 住了吗。
@@ -632,10 +653,7 @@ class AirSnapshot {
 
   /// 乐观更新用：拿服务端 / 本地先算好的两份清单重铺每一行。忽略与手动待办在
   /// 服务端是两份独立清单，本地也不互相清除。
-  AirSnapshot withTodoLists({
-    List<String>? todos,
-    List<String>? ignored,
-  }) {
+  AirSnapshot withTodoLists({List<String>? todos, List<String>? ignored}) {
     final nextTodos = todos ?? taskTodos;
     final nextIgnored = ignored ?? taskTodoIgnored;
     final todoIds = nextTodos.toSet();
@@ -656,6 +674,8 @@ class AirSnapshot {
       taskTodoIgnored: nextIgnored,
       externalFleets: externalFleets,
       worktreePolicy: worktreePolicy,
+      cursor: cursor,
+      taskStats: taskStats,
     );
   }
 
@@ -670,6 +690,8 @@ class AirSnapshot {
     taskTodoIgnored: taskTodoIgnored,
     externalFleets: externalFleets,
     worktreePolicy: worktreePolicy,
+    cursor: cursor,
+    taskStats: taskStats,
   );
 
   AirDirectory? directoryOf(String? id) {
@@ -866,6 +888,31 @@ class AirService {
     Map<String, dynamic>? body,
   ]) async => _checked(await _request(method, path, body));
 
+  WsTicketClient airTickets() => WsTicketClient(
+    post: (endpoint, {required headers, required body}) =>
+        _http.post(endpoint, headers: headers, body: body),
+  );
+
+  static String _airQuery(String path, Map<String, dynamic> query) => Uri(
+    path: path,
+    queryParameters: {
+      for (final e in query.entries)
+        if (e.value != null)
+          e.key: e.value is Map ? jsonEncode(e.value) : '${e.value}',
+    },
+  ).toString();
+
+  Future<Map<String, dynamic>?> readAirSync(Map<String, dynamic> query) async {
+    final response = await _request('GET', _airQuery('/api/air/sync', query));
+    if ([404, 405, 501].contains(response.statusCode)) return null;
+    final body = _checked(response);
+    // Older demo/proxy implementations may return an unversioned snapshot.
+    return body['cursor'] is String ? body : null;
+  }
+
+  Future<Map<String, dynamic>> readAirPage(Map<String, dynamic> query) =>
+      _get(_airQuery('/api/air/page', query));
+
   /// 上一份 `/api/air` 快照的 ETag 与正文。快照每 15 秒轮询一次，绝大多数轮次
   /// 内容没变：带上 If-None-Match，服务端回 304（`src/workspace/air-routes.js`
   /// 的 conditionalBody，Web air.js 同一约定），就不必经隧道再搬一遍 ~900KB。
@@ -889,7 +936,8 @@ class AirService {
   Map<String, dynamic> _checked(http.Response response) {
     final result = _decode(response);
     if (response.statusCode >= 400 || result['ok'] == false) {
-      if (result['code'] == 'task_shell_task_limit' || result['error'] == 'task_shell_task_limit') {
+      if (result['code'] == 'task_shell_task_limit' ||
+          result['error'] == 'task_shell_task_limit') {
         throw const AirTaskCapacityException();
       }
       throw Exception(
@@ -994,6 +1042,7 @@ class AirService {
         return null;
       }
     }
+
     final replies = await Future.wait(paths.map(read));
     if (replies.every((reply) => reply == null)) {
       throw StateError('Task search unavailable');
@@ -1131,12 +1180,17 @@ class AirService {
     force ? {'force': true} : null,
   );
 
-  Future<Map<String, dynamic>> previewTaskRetention(String dirId) =>
-      _get('/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention');
+  Future<Map<String, dynamic>> previewTaskRetention(String dirId) => _get(
+    '/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention',
+  );
 
-  Future<Map<String, dynamic>> deleteTaskRetention(String dirId, List<String> taskIds) =>
-      _post('/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention',
-          {'taskIds': taskIds});
+  Future<Map<String, dynamic>> deleteTaskRetention(
+    String dirId,
+    List<String> taskIds,
+  ) => _post(
+    '/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention',
+    {'taskIds': taskIds},
+  );
 
   /// 钉住 / 取消钉住一个任务，返回钉住之后的整份清单（顺序就是显示顺序）。
   ///
@@ -1165,9 +1219,7 @@ class AirService {
       taskIds: ((result['taskIds'] as List?) ?? const [])
           .map((e) => '$e')
           .toList(),
-      todos: ((result['todos'] as List?) ?? const [])
-          .map((e) => '$e')
-          .toList(),
+      todos: ((result['todos'] as List?) ?? const []).map((e) => '$e').toList(),
     );
   }
 
@@ -1178,7 +1230,9 @@ class AirService {
   /// [_send] 会退化成一句 `message`（或 HTTP 状态码），宿主就分不出「当前状态
   /// 不能执行」和别的失败。
   Future<void> markTaskAchieved(String taskId) async {
-    await _lifecycle('POST', '/api/air/tasks/mark-achieved', {'taskId': taskId});
+    await _lifecycle('POST', '/api/air/tasks/mark-achieved', {
+      'taskId': taskId,
+    });
   }
 
   /// 建任务。第一条消息由 [sendFirstMessage] 单独发出，中途失败时任务已经存在

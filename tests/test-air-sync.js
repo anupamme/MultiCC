@@ -237,3 +237,10 @@ test('前端：迟到分页不能覆盖推送后的状态，重启更换代际�
   index = createAirReadIndex(); index.apply(snapshot([task(1, { runState: 'error' })]));
   await client.sync(); assert.equal(client.current().tasks[0].runState, 'error');
 });
+
+test('waitingReply 只筛等待回复，兼容 waiting 继续代表待处理集合', () => {
+  const index = createAirReadIndex();
+  index.apply(snapshot([task(1, { runState: 'waiting' }), task(2, { runState: 'error' }), task(3, { runState: 'running' })]));
+  assert.deepEqual(index.page({ status: 'waitingReply' }).tasks.map(t => t.id), ['1']);
+  assert.equal(index.page({ status: 'waiting' }).total, 2);
+});
