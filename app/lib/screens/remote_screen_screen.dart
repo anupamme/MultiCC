@@ -1,6 +1,6 @@
 // 「🖥 屏幕」App 端：直连 /ws/remote-screen 讲最小 RFB 3.8（RemoteScreenRfb），
 // 断流/旧 Agent 自动回退 JPEG 轮询（RemoteScreenService）。只看/可操作、
-// 长按右键、滚轮脉冲、键盘条（文字 + 功能键/快捷键和弦）与可选 Esc 急停的
+// 显式「右键」一次性按钮（长按保持为按住拖动）、滚轮脉冲、键盘条（文字 + 功能键/快捷键和弦）与可选 Esc 急停的
 // 「解除急停」都对着 Web 版 public/chat-remote-screen.js 的语义。
 import 'dart:async';
 import 'dart:typed_data';
@@ -94,7 +94,9 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   String? _statusErr;
   Timer? _haltTimer;
   Timer? _permTimer;
-  Timer? _longPress;
+  // 点亮后的下一次轻点按右键发送，用掉即复位（与 Web 版「右键」按钮同语义）。
+  // 长按不再等于右键：按住不动再拖是推动/拖拽，右键必须显式点亮。
+  bool _rightOnce = false;
 
   /// 横幅独立于取帧权限门：屏录、辅助功能通过后，急停警告仍须保留。
   Map<String, dynamic>? _permGate;
@@ -124,7 +126,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   Offset _downLocal = Offset.zero;
   bool _downSent = true; // 未放大态的左键 down 是否已发给远端
   Timer? _downDefer;
-  bool _longPressFired = false;
 
   /// 框选源图裁剪（与 Web 版 setBoxSel 同一交互）：开启后拖一个矩形，
   /// 松开从原生截图裁剪并 fit 铺满视口，之后的
@@ -245,7 +246,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   void dispose() {
     _haltTimer?.cancel();
     _permTimer?.cancel();
-    _longPress?.cancel();
     _downDefer?.cancel();
     _xform.dispose();
     _frameSub?.cancel();
@@ -323,8 +323,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     } else {
       _haltTimer?.cancel();
       _haltTimer = null;
-      _longPress?.cancel();
-      _longPress = null;
+      _rightOnce = false;
     }
   }
 
@@ -380,8 +379,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   void _onPointerDown(PointerDownEvent e, double dw, double dh) {
     if (!_control) return;
     _pointerCount++;
-    _longPress?.cancel();
-    _longPressFired = false;
     if (_pointerCount >= 2) {
       // 第二指落下 = 捏合开始：撤掉第一指 pending 的 down；已发出的补一个
       // up 把单指操作干净收尾（Agent 端按位移判 click/drag）。
@@ -394,12 +391,8 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       return;
     }
     _downLocal = e.localPosition;
-    // 长按 450ms = 右键（Agent 端 mask 4→0 沿触发 click right）。
-    _longPress = Timer(const Duration(milliseconds: 450), () {
-      _longPressFired = true;
-      _sendPointer(4, e.localPosition.dx, e.localPosition.dy, dw, dh);
-      _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
-    });
+    // 「右键」已点亮：这一次落指不发左键 down，抬起时按位移决定是否发右键。
+    if (_rightOnce) return;
     if (_zoomed) return; // 放大态：down 不转发，up 按位移决定是否精确单击
     // 未放大：down 延迟 90ms 再发 —— 两指捏合通常在百毫秒内落齐，这扇窗把
     // 「第一指的 down」挡在捏合开始之前，远端不会收到幽灵按键。
@@ -413,6 +406,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
 
   void _onPointerMove(PointerMoveEvent e, double dw, double dh) {
     if (!_control || _pointerCount >= 2) return;
+    if (_rightOnce) return; // 右键待发：拖动只用来判「是否仍算轻点」
     if (_zoomed) return; // 放大态单指拖 = 平移画面，不转发远端
     if (e.buttons == 0) return;
     if (!_downSent) {
@@ -425,18 +419,25 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     final now = DateTime.now();
     if (now.difference(_lastMoveSent).inMilliseconds < 30) return;
     _lastMoveSent = now;
-    _longPress?.cancel(); // 拖动不是右键（任何 move 都取消，抖动手指别当长按）
     _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
   }
 
   void _onPointerUp(PointerEvent e, double dw, double dh) {
     if (_pointerCount > 0) _pointerCount--;
-    _longPress?.cancel();
-    _longPress = null;
     if (!_control || _pointerCount >= 1) return; // 捏合中一指抬起，忽略
+    if (_rightOnce) {
+      // Agent 端 mask 4→0 沿触发 click right；拖动超过阈值视为取消，不消耗「右键」。
+      if ((e.localPosition - _downLocal).distance < 10 &&
+          e.runtimeType != PointerCancelEvent) {
+        setState(() => _rightOnce = false);
+        _sendPointer(4, e.localPosition.dx, e.localPosition.dy, dw, dh);
+        _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
+      }
+      return;
+    }
     if (_zoomed) {
       final moved = (e.localPosition - _downLocal).distance;
-      if (!_longPressFired && moved < 10) {
+      if (moved < 10) {
         _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
         _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
       }
@@ -480,11 +481,9 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     _pointerCount++;
     if (_pointerCount > 1) {
       _fallbackMulti = true;
-      _longPress?.cancel();
       return;
     }
     _fallbackMulti = false;
-    _longPressFired = false;
     _fallbackDown = e.localPosition;
     _fallbackArea =
         _svc.viewRegion ??
@@ -494,20 +493,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
           _svc.fallbackWidth.toDouble(),
           _svc.fallbackHeight.toDouble(),
         );
-    _longPress?.cancel();
-    _longPress = Timer(const Duration(milliseconds: 450), () {
-      if (_control && !_fallbackMulti && _svc.fallbackJpeg != null) {
-        _longPressFired = true;
-        unawaited(_fallbackInput(e.localPosition, dw, dh, right: true));
-      }
-    });
-  }
-
-  void _fallbackMoveAt(PointerMoveEvent e) {
-    if (_fallbackDown != null &&
-        (e.localPosition - _fallbackDown!).distance > 8) {
-      _longPress?.cancel();
-    }
   }
 
   void _fallbackUpAt(
@@ -517,20 +502,23 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     bool cancelled = false,
   }) {
     if (_pointerCount > 0) _pointerCount--;
-    _longPress?.cancel();
     if (_pointerCount != 0) return;
     final start = _fallbackDown;
     _fallbackDown = null;
     if (cancelled ||
         !_control ||
         _fallbackMulti ||
-        _longPressFired ||
         start == null ||
         _svc.fallbackJpeg == null) {
       return;
     }
     final moved = (e.localPosition - start).distance;
     if (_zoomed && moved > 8) return; // local pan, not a remote drag
+    if (_rightOnce && moved <= 8) {
+      setState(() => _rightOnce = false);
+      unawaited(_fallbackInput(e.localPosition, dw, dh, right: true));
+      return;
+    }
     unawaited(
       _fallbackInput(e.localPosition, dw, dh, from: moved > 8 ? start : null),
     );
@@ -683,6 +671,13 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
             color: _control ? const Color(0xFF2ba67a) : null,
             onPressed: () => _setControl(!_control),
           ),
+          if (_control)
+            IconButton(
+              icon: const Icon(Icons.ads_click),
+              tooltip: t('rsRightClickHint'),
+              color: _rightOnce ? const Color(0xFF2ba67a) : null,
+              onPressed: () => setState(() => _rightOnce = !_rightOnce),
+            ),
           IconButton(
             icon: const Icon(Icons.crop_free),
             tooltip: t('rsBoxZoomTitle'),
@@ -914,7 +909,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
         },
       );
     }
-    // 兼容/选区模式：源图 JPEG + HTTP 点击、拖拽、长按右键。
+    // 兼容/选区模式：源图 JPEG + HTTP 点击、拖拽、显式右键。
     final jpeg = _svc.fallbackJpeg;
     if (jpeg == null) {
       return Center(
@@ -940,7 +935,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
           Listener(
             behavior: HitTestBehavior.opaque,
             onPointerDown: (e) => _fallbackDownAt(e, iw * scale, ih * scale),
-            onPointerMove: _fallbackMoveAt,
             onPointerUp: (e) => _fallbackUpAt(e, iw * scale, ih * scale),
             onPointerCancel: (e) =>
                 _fallbackUpAt(e, iw * scale, ih * scale, cancelled: true),
