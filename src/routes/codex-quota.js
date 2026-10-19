@@ -16,6 +16,7 @@ const os = require('os');
 const path = require('path');
 const { renderQuotaBar } = require('../quota/quota-bar-view');
 const { codexRateLimitWindows } = require('../codex/rate-limit-windows');
+const { officialFetch } = require('../network/official-fetch');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const TIMEOUT_MS = 10000;
@@ -47,14 +48,17 @@ function windowResetsAt(w, nowMs) {
 }
 
 async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
+  // chatgpt.com is an official upstream: go through officialFetch so the
+  // env / macOS system proxy applies (direct connects time out behind one).
+  const fetchImpl = options.fetch || officialFetch;
   const auth = readCodexAuth(options.authFile);
   if (!auth) return { status: 'no_auth', error: options.authFile ? '该账号尚未完成登录' : '未找到 ~/.codex/auth.json，请先登录 codex' };
 
   let body;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-    const res = await fetch(USAGE_URL, {
+    const res = await fetchImpl(USAGE_URL, {
       headers: {
         Authorization: `Bearer ${auth.accessToken}`,
         'ChatGPT-Account-Id': auth.accountId,
@@ -63,11 +67,18 @@ async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
       },
       signal: ctrl.signal,
     });
-    clearTimeout(timer);
+    if (res.status === 401 || res.status === 403) {
+      // e.g. {"error":{"code":"token_revoked"}} — the stored login is dead.
+      let code = '';
+      try { code = ((await res.json()).error || {}).code || ''; } catch (_) {}
+      return { status: 'no_auth', error: `Codex 登录凭证已失效（HTTP ${res.status}${code ? ` ${code}` : ''}），请重新登录 codex` };
+    }
     if (!res.ok) return { status: 'unavailable', error: `HTTP ${res.status}` };
     body = await res.json();
   } catch (err) {
-    return { status: 'unavailable', error: err.message || 'fetch failed' };
+    return { status: 'unavailable', error: ctrl.signal.aborted ? `timeout after ${TIMEOUT_MS}ms` : (err.message || 'fetch failed') };
+  } finally {
+    clearTimeout(timer);
   }
 
   const rl = body && typeof body === 'object' ? body.rate_limit : null;
