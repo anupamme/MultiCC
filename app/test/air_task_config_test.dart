@@ -844,4 +844,35 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('fromLast（新任务跟随最近用过的线路）', () {
+    test('快照 lastRuntime 解析成起点，空 cli 返回 null', () {
+      final snap = AirSnapshot.fromJson({
+        'directories': const [],
+        'tasks': const [],
+        'clis': const ['claude', 'codex'],
+        'lastRuntime': {
+          'cli': 'codex',
+          'provider': 'relay-x',
+          'providerName': 'Relay X',
+          'model': 'gpt-5',
+          'effort': null,
+        },
+      });
+      final runtime = AirTaskRuntime.fromLast(snap.lastRuntime)!;
+      expect(runtime.cli, 'codex');
+      expect(runtime.provider, 'relay-x');
+      expect(runtime.providerName, 'Relay X');
+      expect(runtime.model, 'gpt-5');
+      expect(runtime.effort, '');
+      expect(runtime.toCreateBody()['provider'], 'relay-x');
+      expect(AirTaskRuntime.fromLast(null), isNull);
+      expect(AirTaskRuntime.fromLast({'cli': ''}), isNull);
+      // 旧服务没有这一格
+      expect(
+        AirSnapshot.fromJson({'directories': [], 'tasks': []}).lastRuntime,
+        isNull,
+      );
+    });
+  });
 }

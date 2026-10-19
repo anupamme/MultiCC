@@ -805,6 +805,7 @@ class _AirTasksViewState extends State<AirTasksView>
       service: _service,
       httpClient: widget.httpClient,
       clis: _data?.clis ?? const [],
+      lastRuntime: _data?.lastRuntime,
       errorText: () => _lastCreateError,
       capacityExceeded: () => _capacityError,
       onSubmit:
@@ -1979,6 +1980,7 @@ class _AirTasksViewState extends State<AirTasksView>
                   service: _service,
                   httpClient: widget.httpClient,
                   clis: data?.clis ?? const [],
+                  lastRuntime: data?.lastRuntime,
                   busy: _submitting,
                   // 参数表就是 [AirComposerSubmit] 那一份，不必再抄一遍转发。
                   onSubmit: _createFromComposer,

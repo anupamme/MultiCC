@@ -735,7 +735,12 @@ class AirQuickComposer extends StatefulWidget {
     this.httpClient,
     this.autofocus = false,
     this.docked = false,
+    this.lastRuntime,
   });
+
+  /// 快照里的最近一次运行时（`AirSnapshot.lastRuntime`）。新任务的线路从它起步，
+  /// 用户在胶囊里自己改过就不再被后台刷新覆盖（同 Web quickRuntimeDirty）。
+  final Map<String, dynamic>? lastRuntime;
 
   /// 角色库（`/api/agent-presets`）要走服务地址和令牌，角色编辑器需要它。
   final SettingsService settings;
@@ -808,6 +813,7 @@ class _AirQuickComposerState extends State<AirQuickComposer> {
       orElse: () => 'claude-exp',
     );
     _runtime = AirTaskRuntime(cli: cli);
+    _followLastRuntime();
     _voice = VoiceComposerController(
       settings: widget.settings,
       target: _controller,
@@ -816,6 +822,26 @@ class _AirQuickComposerState extends State<AirQuickComposer> {
     _voice.addListener(_onVoiceChanged);
     _focus.addListener(_onFocusChanged);
     _controller.addListener(_onDraftChanged);
+  }
+
+  /// 用户亲手改过线路（[_runtimeDirty]）之后不再跟随；建完任务清掉脏标记，下一次
+  /// 同步又回到「最近使用」。最近那套的 CLI 这台机器不提供时放弃，留第一条车道。
+  bool _runtimeDirty = false;
+
+  void _followLastRuntime() {
+    if (_runtimeDirty) return;
+    final last = AirTaskRuntime.fromLast(widget.lastRuntime);
+    if (last == null) return;
+    if (widget.clis.isNotEmpty && !widget.clis.contains(last.cli)) return;
+    _runtime = last;
+  }
+
+  @override
+  void didUpdateWidget(covariant AirQuickComposer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.lastRuntime != widget.lastRuntime) {
+      setState(_followLastRuntime);
+    }
   }
 
   void _onVoiceChanged() {
@@ -911,7 +937,12 @@ class _AirQuickComposerState extends State<AirQuickComposer> {
       initial: _runtime,
       availableClis: widget.clis,
     );
-    if (picked != null && mounted) setState(() => _runtime = picked);
+    if (picked != null && mounted) {
+      setState(() {
+        _runtime = picked;
+        _runtimeDirty = true;
+      });
+    }
   }
 
   /// 任务还不存在，所以走编辑器的草稿模式：编辑结果先留在这一层，等创建流程
@@ -950,7 +981,9 @@ class _AirQuickComposerState extends State<AirQuickComposer> {
     setState(() {
       _controller.clear();
       _roles = const [];
+      _runtimeDirty = false;
       _runtime = AirTaskRuntime(cli: _runtime.cli);
+      _followLastRuntime();
       _goal = false;
       _attachments.clear();
       _attachError = '';

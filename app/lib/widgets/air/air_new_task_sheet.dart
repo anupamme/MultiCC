@@ -128,6 +128,7 @@ Future<void> showAirNewTaskSheet(
   bool Function()? capacityExceeded,
   AirService? service,
   http.Client? httpClient,
+  Map<String, dynamic>? lastRuntime,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -148,6 +149,7 @@ Future<void> showAirNewTaskSheet(
       capacityExceeded: capacityExceeded,
       service: service,
       httpClient: httpClient,
+      lastRuntime: lastRuntime,
     ),
   );
 }
@@ -163,8 +165,10 @@ class _AirNewTaskSheet extends StatefulWidget {
     required this.capacityExceeded,
     required this.service,
     required this.httpClient,
+    this.lastRuntime,
   });
 
+  final Map<String, dynamic>? lastRuntime;
   final List<AirDirectory> directories;
   final String initialDirectoryId;
   final SettingsService settings;
@@ -277,6 +281,7 @@ class _AirNewTaskSheetState extends State<_AirNewTaskSheet> {
                 service: widget.service,
                 httpClient: widget.httpClient,
                 clis: widget.clis,
+                lastRuntime: widget.lastRuntime,
                 busy: _submitting,
                 autofocus: true,
                 onSubmit: _submit,
