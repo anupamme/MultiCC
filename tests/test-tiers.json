@@ -75,6 +75,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/air_dirty_files_sheet_test.dart",
+      "tier": "other",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/air_fleet_sharing_test.dart",
       "tier": "flow",
       "lane": "flutter"

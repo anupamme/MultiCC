@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/message.dart';
 import '../../services/air_service.dart';
+import '../../i18n.dart';
 import '../../theme.dart';
 import '../git_status_row.dart';
 
@@ -22,6 +23,7 @@ class AirWorkspaceCard extends StatefulWidget {
     this.onReclaim,
     this.onPush,
     this.onCommit,
+    this.onShowDirty,
     this.pushing = false,
     this.committing = false,
   });
@@ -34,6 +36,10 @@ class AirWorkspaceCard extends StatefulWidget {
   /// 「提交全部改动」：主检出有未提交文件时出现，提交说明由服务端按改动自动生成，
   /// 不用再回对话里提需求。null = 不提供。
   final VoidCallback? onCommit;
+
+  /// 「查看未提交文件」：有未提交文件时出现，点开清单、再点一个文件看它的改动
+  /// （同 Web 目录页的「● N 个未提交文件」胶囊）。null = 不提供。
+  final VoidCallback? onShowDirty;
 
   /// 推送 / 提交进行中：按钮置灰，避免连点。
   final bool pushing;
@@ -152,8 +158,9 @@ class _AirWorkspaceCardState extends State<AirWorkspaceCard> {
   Widget _gitActions(DirectoryPushState git) {
     final w = widget;
     final canCommit = git.dirty > 0 && w.onCommit != null;
+    final canView = git.dirty > 0 && w.onShowDirty != null;
     final canPush = git.ahead > 0 && git.hasRemote && w.onPush != null;
-    if (!canCommit && !canPush) return const SizedBox.shrink();
+    if (!canCommit && !canPush && !canView) return const SizedBox.shrink();
     ButtonStyle style() => OutlinedButton.styleFrom(
       side: const BorderSide(color: AppColors.lineStrong),
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -165,6 +172,14 @@ class _AirWorkspaceCardState extends State<AirWorkspaceCard> {
         spacing: 8,
         runSpacing: 6,
         children: [
+          if (canView)
+            OutlinedButton.icon(
+              key: const ValueKey('air-workspace-dirty-files'),
+              onPressed: w.onShowDirty,
+              icon: const Icon(Icons.edit_note_rounded, size: 16),
+              label: Text(t('airGitDirtyFiles', {'n': '${git.dirty}'})),
+              style: style(),
+            ),
           if (canCommit)
             OutlinedButton.icon(
               key: const ValueKey('air-workspace-commit'),

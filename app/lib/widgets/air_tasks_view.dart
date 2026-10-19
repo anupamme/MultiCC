@@ -30,6 +30,7 @@ import 'air/air_directory_schedules.dart';
 import 'air/air_directory_search.dart';
 import 'air/air_directory_task_panel.dart';
 import 'air/air_destinations.dart';
+import 'air/air_dirty_files_sheet.dart';
 import 'air/air_fleet_sharing.dart';
 import 'air/air_new_task_sheet.dart';
 import 'air/air_ops.dart';
@@ -1002,6 +1003,19 @@ class _AirTasksViewState extends State<AirTasksView>
     } finally {
       if (mounted) setState(() => _pushing = false);
     }
+  }
+
+  /// 工作区卡上的「查看未提交文件」：清单 → 单个文件的改动
+  /// （`GET /api/git/directory-status` / `directory-file-diff`）。
+  void _showDirtyFiles(AirDirectory directory) {
+    final mgr = context.read<SessionManager?>();
+    if (mgr == null) return;
+    showAirDirtyFilesSheet(
+      context,
+      fetchFiles: () => mgr.service.fetchDirectoryDirtyFiles(directory.id),
+      fetchDiff: (path) =>
+          mgr.service.fetchDirectoryFileDiff(directory.id, path),
+    );
   }
 
   /// 工作区卡上的「提交全部改动」：message 留空，服务端按改动文件自动生成提交说明，
@@ -2260,6 +2274,7 @@ class _AirTasksViewState extends State<AirTasksView>
                       committing: _committing,
                       onPush: () => _pushMainCheckout(directory!),
                       onCommit: () => _commitMainCheckout(directory!),
+                      onShowDirty: () => _showDirtyFiles(directory!),
                     ),
                   if (directory != null)
                     Padding(

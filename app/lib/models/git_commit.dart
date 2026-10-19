@@ -89,3 +89,49 @@ class GitCommitFile {
     oldPath: json['oldPath']?.toString(),
   );
 }
+
+/// One uncommitted file of a directory's main checkout
+/// (`GET /api/git/directory-status` → `dirtyFiles[]`). `status` is the
+/// porcelain XY column trimmed (`M`, `A`, `D`, `??`), `path` may read
+/// `old → new` for a rename.
+class GitDirtyFile {
+  const GitDirtyFile({required this.status, required this.path});
+
+  final String status;
+  final String path;
+
+  factory GitDirtyFile.fromJson(Map<String, dynamic> json) => GitDirtyFile(
+    status: json['status']?.toString() ?? '',
+    path: json['path']?.toString() ?? '',
+  );
+
+  /// The path git can be asked about: a rename's new side.
+  String get diffPath => path.split(' → ').last;
+}
+
+/// Working-tree patch of one uncommitted file
+/// (`GET /api/git/directory-file-diff`). Untracked files come back as an
+/// all-added patch with [untracked] set.
+class GitWorkingDiff {
+  const GitWorkingDiff({
+    required this.path,
+    required this.patch,
+    required this.truncated,
+    required this.untracked,
+    this.error,
+  });
+
+  final String path;
+  final String patch;
+  final bool truncated;
+  final bool untracked;
+  final String? error;
+
+  factory GitWorkingDiff.fromJson(Map<String, dynamic> json) => GitWorkingDiff(
+    path: json['path']?.toString() ?? '',
+    patch: json['patch']?.toString() ?? '',
+    truncated: json['truncated'] == true,
+    untracked: json['untracked'] == true,
+    error: json['error']?.toString(),
+  );
+}
