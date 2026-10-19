@@ -258,11 +258,12 @@
    * 算出来的名次抹掉。除了不排序，其余筛选一字不差 —— 状态与目录的口径只有这一份。
    */
   function filterTasks(tasks, filter = {}, directoryName = () => '', { keepOrder = false } = {}) {
-    const status = filter.status || 'open';
+    // 旧的「等待回复」档已并入待办（同一份 isTodo）：遗留的 waiting 值回落到 todo。
+    const status = filter.status === 'waiting' ? 'todo' : filter.status || 'open';
     const dir = filter.dir || 'all';
     const needle = String(filter.query || '').trim().toLowerCase();
     // 状态口径与目录概览的统计卡同源：taskStatus 是权威判定（archived/done 生命周期
-    // 优先），所以「运行中/等待回复/异常/今日完成」四张卡与这里的筛选永远不会分叉。
+    // 优先），所以「运行中/待办/异常/今日完成」四张卡与这里的筛选永远不会分叉。
     // 成功那档问的是这一轮的结局（succeeded），不是生命周期 done —— 后者只剩旧看板
     // 时代的少量记录，拿它当「跑成功了吗」会筛出一个几乎空、且越用越旧的清单。
     const rows = (tasks || [])
@@ -277,13 +278,18 @@
                       : status === 'error' ? taskStatus(task) === 'error'
                         // 待办：等输入 / 出错 / 需要交互 / 手动标记，判定只在 air-task-todo.js 一处。
                         : status === 'todo' ? !!root.MultiCCAirTaskTodo?.isTodo(task)
+                          // 已忽略：用户主动压下去、还能从这里取回的那批。
+                          : status === 'ignored' ? !!root.MultiCCAirTaskTodo?.isIgnored?.(task.id)
                           : !['done', 'archived'].includes(task.status))
       .filter(task => dir === 'all' || task.dirId === dir);
     if (keepOrder) return rows;
     // 本地过滤按标题（和目录名）匹配：它仍是即时反馈，也是全文检索不可用时的退路。
     const matched = !needle ? rows
       : rows.filter(task => `${task.title || ''} ${directoryName(task.dirId)}`.toLowerCase().includes(needle));
-    return matched.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+    // 待办默认「最早的消息时间在前」：放得最久的那条先处理。
+    return status === 'todo'
+      ? matched.sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')))
+      : matched.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   }
 
   /**
@@ -319,9 +325,9 @@
     };
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
-    row.onclick = event => { if (!event.target.closest('.task-delete, .task-todo')) openTask(); };
+    row.onclick = event => { if (!event.target.closest('.task-delete, .task-todo, .task-ignore')) openTask(); };
     row.onkeydown = event => {
-      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.task-delete, .task-todo')) {
+      if ((event.key === 'Enter' || event.key === ' ') && !event.target.closest('.task-delete, .task-todo, .task-ignore')) {
         event.preventDefault();
         openTask();
       }
@@ -349,9 +355,11 @@
     if (snippet) copy.append(snippet);
     body.append(copy, make('time', task.updatedAt ? new Date(task.updatedAt).toLocaleString(getLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''));
     row.append(body);
-    // 「全部」那格的清单可以删，也就可以就地标记 / 取消待办。
+    // 「全部」那格的清单可以删，也就可以就地标记 / 取消待办、忽略 / 取消忽略。
     const todo = options.deletable ? root.MultiCCAirTaskTodo?.rowButton(task) : null;
     if (todo) row.append(todo);
+    const ignore = root.MultiCCAirTaskTodo?.ignoreButton?.(task);
+    if (ignore) row.append(ignore);
     if (options.deletable && context.deleteTask) {
       const remove = action(t('airAdminDelete'), async event => {
         event.stopPropagation();
@@ -364,32 +372,15 @@
     return row;
   }
 
-  // 「谁在等我」：跨所有目录、**需要我动手**的任务。正在跑的不算 —— 它在跑，
-  // 不需要我做任何事，混进清单只会把真正等我的那几条挤下去（这一格只留 5 条）。
-  // 这条信号原来由侧栏的「跨目录活动」承担，现在它是控制台面板的第一个分区，
-  // 也是入口徽标的数字 —— 一处定义，两处显示，不会再各说各话。
-  //
-  // 分级只用来判断「算不算在等我」这件事（见 needsAttention），不再决定谁排在前
-  // 面 —— 排序是纯时间。
-  function taskUrgency(task) {
-    const status = taskStatus(task);
-    if (status === 'waiting') return 0;
-    if (status === 'error') return 1;
-    if (task.resource?.capacityReason) return 2;
-    if (status === 'running' || status === 'background' || RUNNING_LEASES.includes(task.resource?.lease)) return 3;
-    if (status === 'done' || status === 'archived') return 5;
-    return 4;
-  }
-  // 「在等我」的分界线：0 等我回答 · 1 出错要我去处理 · 2 卡在资源 —— 这三类都得
-  // 我动手。3（正在跑 / 后台等待）不列进来：跑着的东西不是待办，它不需要我操作。上面那张
-  // 「等待处理」统计卡走的是同一条线，两处口径必须一致。
-  function needsAttention(task) { return taskUrgency(task) < 3; }
-  // 谁在等我由上面那条线筛出来，排在最前面的是最近动过的那条 —— 刚有动静的
-  // 任务才是眼下要接手的那条。
-  function urgentTasks(data) {
+  // 「待办」：跨所有目录、需要我接手的任务，判定只在 air-task-todo.js 一处 ——
+  // 等回答 / 出错 / 跑完要交互 / 手动标记，归档与手动忽略的不算。正在跑的不算：
+  // 它在跑，不需要我做任何事。排序按最后消息时间从早到晚：先处理放得最久的那条。
+  // 这张清单同时喂首页卡片、侧栏「控制台」徽标与统计卡，三处不会各说各话。
+  const todoAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
+  function todoTasks(data) {
     return (data?.tasks || [])
-      .filter(needsAttention)
-      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+      .filter(task => root.MultiCCAirTaskTodo?.isTodo(task))
+      .sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')));
   }
 
   // 「今日完成」：这一轮跑成功（succeeded）或生命周期 done、且最后一次更新落在今天
@@ -453,11 +444,11 @@
     const directories = data?.directories || [];
     const active = tasks.filter(task => task.status !== 'done' && task.status !== 'archived');
     const executing = tasks.filter(isRunning).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    // 「等我回复」和「异常」拆成两格：前者是要我回答 / 卡在资源上的，后者是跑出错的。
-    // 两格合起来仍是 urgentTasks —— 侧栏徽标数的是这个总数。
-    const urgent = urgentTasks(data);
-    const failed = urgent.filter(task => taskStatus(task) === 'error');
-    const waitingMe = urgent.filter(task => taskStatus(task) !== 'error');
+    // 「待办」一格是 isTodo 全集；「异常」必须独立于忽略开关：从全部非归档任务里
+    // 按 taskStatus 取，被手动忽略的出错任务仍留在异常计数与列表里（忽略只管待办）。
+    const todos = todoTasks(data);
+    const failed = tasks.filter(task => taskStatus(task) === 'error')
+      .sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')));
     const finished = tasks.filter(task => doneToday(task)).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
     const running = runningDirectories(data);
     // The overview is 控制台's own page; `#admin-content` is the fallback for any
@@ -473,7 +464,7 @@
     const stats = make('div', null, 'admin-stats console-filter-tabs');
     const tiles = [
       ['running', t('airAdminTileRunning'), executing.length, running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
-      ['waiting', t('airAdminTileWaiting'), waitingMe.length, waitingMe.length ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), waitingMe.length ? 'amber' : ''],
+      ['todo', t('airTodoFilter'), todos.length, todos.length ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), todos.length ? 'amber' : ''],
       ['error', t('airAdminTileError'), failed.length, failed.length ? t('airAdminTileErrorDetail') : t('airAdminTileErrorNone'), failed.length ? 'red' : ''],
       ['today', t('airAdminTileToday'), finished.length, t('airAdminTileTodayDetail'), 'blue'],
       ['all', t('airAdminTileAll'), active.length, t('airAdminTileAllDetail', { n: tasks.length }), 'purple'],
@@ -526,7 +517,7 @@
     const statusPick = make('select');
     statusPick.id = 'console-task-status';
     statusPick.setAttribute('aria-label', t('airAdminFilterByStatus'));
-    for (const [value, text] of [['todo', t('airTodoFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
+    for (const [value, text] of [['todo', t('airTodoFilter')], ['ignored', t('airTodoIgnoredFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
       const option = make('option', text);
       option.value = value;
       statusPick.append(option);
@@ -593,8 +584,10 @@
       try { visits = JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}') || {}; } catch (_) {}
       const messageAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
       const sortAt = task => consoleFilter.sort === 'visit' ? Number(visits[task.id] || 0) : messageAt(task);
-      return rows.sort((a, b) => sortAt(b.task) - sortAt(a.task)
-        || messageAt(b.task) - messageAt(a.task)
+      // 待办按「最早的消息时间在前」；其余清单仍是最近动过的在前。
+      const direction = consoleFilter.status === 'todo' ? -1 : 1;
+      return rows.sort((a, b) => direction * (sortAt(b.task) - sortAt(a.task))
+        || direction * (messageAt(b.task) - messageAt(a.task))
         || String(a.task.id).localeCompare(String(b.task.id)));
     }
     function paintTaskList() {
@@ -627,7 +620,7 @@
     // 四个固定过滤项的清单：口径就是上面那几格数字用的同一份数组，数字和清单不会分叉。
     const fixedLists = {
       running: [executing, 'airAdminNoRunningTasks'],
-      waiting: [waitingMe, 'airAdminNoAttentionTasks'],
+      todo: [todos, 'airAdminNoAttentionTasks'],
       error: [failed, 'airAdminNoErrorTasks'],
       today: [finished, 'airAdminNoDoneToday'],
     };
@@ -699,7 +692,7 @@
     const flow = make('section', null, 'console-flow');
     const attention = make('section', null, 'console-priority');
     const attentionHead = make('div', null, 'admin-panel-head');
-    attentionHead.append(make('h2', t('airNeedsYou')), action(t('airRecentAll'), () => setMode('attention')));
+    attentionHead.append(make('h2', t('airTodoSectionTitle')), action(t('airRecentAll'), () => setMode('attention')));
     const cards = make('div', null, 'console-priority-grid');
     attention.append(attentionHead, cards);
 
@@ -746,9 +739,9 @@
     home.append(top, flow, mobileSlot, directoryPanel, more);
     content.replaceChildren(home);
 
-    // 「最近使用」按最后一次更新时间倒序；已经出现在上面两段的（要你处理 /
+    // 「最近使用」按最后一次更新时间倒序；已经出现在上面两段的（待办 /
     // 正在运行）不在这里重复 —— 首屏同一件事只说一次。
-    const seenAbove = new Set([...urgent, ...executing].map(task => task.id));
+    const seenAbove = new Set([...todos, ...executing].map(task => task.id));
     const recentTasks = tasks
       .filter(task => task.status !== 'archived' && !seenAbove.has(task.id))
       .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -796,19 +789,24 @@
 
     function paintFlow() {
       const needle = needleNow();
-      const loud = urgent.filter(task => matchesTask(task, needle));
+      const loud = todos.filter(task => matchesTask(task, needle));
       cards.replaceChildren(...loud.slice(0, PRIORITY_CARD_MAX).map(task => {
         const error = taskStatus(task) === 'error';
         const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
+        // 相对时间让「等了多久」一眼可见；完整时刻留在 title 里。
+        const age = root.MultiCCFormat?.formatRelativeTime?.(todoAt(task)) || '';
+        const meta = make('small', [context.directoryName(task.dirId), age].filter(Boolean).join(' · '));
+        meta.title = todoAt(task) ? new Date(todoAt(task)).toLocaleString(getLocale()) : '';
+        const actions = make('div', null, 'console-priority-actions');
+        actions.append(action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)),
+          action(t('airTodoIgnore'), () => { void root.MultiCCAirTaskTodo?.toggleIgnore?.(task.id); }, 'console-priority-ignore'));
         card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
-          make('p', t(error ? 'airFailureHint' : 'airWaitingHint')),
-          make('small', context.directoryName(task.dirId)),
-          action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)));
+          make('p', t(error ? 'airFailureHint' : 'airWaitingHint')), meta, actions);
         return card;
       }));
       if (!loud.length) cards.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airNothingNeedsYou'));
       // 卡片张数仍按可用高度裁（fitPriorityCards）：卡片多了只显示前几行，
-      // 不让「需要你处理」把目录和「更多」顶出首屏。
+      // 不让「待办」把目录和「更多」顶出首屏。
       requestAnimationFrame(() => { if (cards.isConnected) fitPriorityCards(cards); });
 
       const runningNow = executing.filter(task => matchesTask(task, needle));
@@ -877,9 +875,8 @@
 
   }
 
-  // 「谁在等我」的整页：控制台那一格只放最近更新的几条，完整清单在这里。它和控制台
-  // 那一格用的是同一个 urgentTasks(data) —— 排序规则只有一份，所以两边不会把
-  // 「谁在前面」排成两个样子。
+  // 「待办」的整页：控制台那一格只放最早在等我的几条，完整清单在这里。它和控制台
+  // 那一格用的是同一个 todoTasks(data) —— 口径与「最早在前」的排序都只有一份。
   function renderAttention(context) {
     setActions([
       // 数据在外壳那份 /api/air 快照里，所以这一页没有自己的接口可打，刷新只能
@@ -887,7 +884,7 @@
       // 早退路径 —— 这里再强制重画一次，否则按钮按下去什么都不动。
       action(t('airAdminRefresh'), async () => { await context.refresh?.(); render('attention', context, true); }, '', keepsGlyph('↻')),
     ]);
-    const urgent = urgentTasks(context.data);
+    const urgent = todoTasks(context.data);
     const panel = make('section', null, 'admin-panel console-attention-page');
     const head = make('div', null, 'admin-panel-head');
     head.append(make('div'));
@@ -1588,7 +1585,7 @@
     modes: new Set(['overview', 'recent', 'attention', 'docs', 'memory', 'settings', ...Object.keys(legacyPanels)]),
     render,
     // The shell's console badge shows the same set the panel's first section does.
-    urgentTasks,
+    todoTasks,
     showAllTasks: () => { consoleFilter.view = 'all'; consoleFilter.status = 'all'; consoleFilter.query = ''; consoleFilter.dir = 'all'; },
     refresh: context => render(activeMode || 'overview', context, true),
     bindServiceDialog,

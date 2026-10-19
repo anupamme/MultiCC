@@ -167,6 +167,8 @@ function createPaths({ dataDir } = {}) {
     airPinsFile: path.join(root, 'air-pins.json'),
     // Air 任务「手动待办」：用户点「标记为待办」挑出来的任务，同 pins 跟着服务端走。
     airTodosFile: path.join(root, 'air-todos.json'),
+    // Air 任务「手动忽略」：用户已知晓、不想再进待办的任务（带忽略时刻的 stamp）。
+    airTodoIgnoresFile: path.join(root, 'air-todo-ignores.json'),
     orchestrationDbFile: path.join(root, 'orchestration.sqlite'),
     // Kept as the one-time migration source and explicit rollback export
     // target. Once orchestration.sqlite exists it is the sole live authority.

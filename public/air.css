@@ -717,8 +717,9 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
 /* Pin 开着的读法只有一种：这颗按钮被按下去的样子（aria-pressed 是给读屏的，
    这里给它同一条事实的像素）。 */
 #pin-task[aria-pressed="true"] { color: #176bc0; border-color: #cfe3f8; background: var(--blue-soft); }
-#todo-task { min-width: 38px; padding: 6px; color: #47647f; font-size: 16px; line-height: 1.2; }
+#todo-task, #ignore-task { min-width: 38px; padding: 6px; color: #47647f; font-size: 16px; line-height: 1.2; }
 #todo-task[aria-pressed="true"] { color: #a85a25; border-color: #f1d9c4; background: #fff6ee; }
+#ignore-task[aria-pressed="true"] { color: #8a6a3a; border-color: #e9ddc8; background: #fbf6ec; }
 #details-toggle, #refresh { font-size: 12px; }
 #refresh { min-width: 38px; padding: 7px; }
 #mobile-nav { display: none; }
@@ -1666,6 +1667,10 @@ dialog [role="alert"] { margin: 10px 0; color: #b34128; line-height: 1.6; white-
 .task-todo { flex: 0 0 auto; align-self: center; min-width: 30px; min-height: 30px; margin: 4px 0; padding: 4px 6px; color: #8a9aab; border-color: transparent; background: transparent; font-size: 13px; opacity: .7; }
 .task-todo:hover, .task-todo:focus-visible { color: #a85a25; border-color: #f1d9c4; background: #fff6ee; opacity: 1; }
 .task-todo[aria-pressed="true"] { color: #a85a25; opacity: 1; }
+/* 行尾的「忽略 / 取消忽略」：文字按钮，尺寸贴着待办那颗；已忽略时保持可见。 */
+.task-ignore { flex: 0 0 auto; align-self: center; min-height: 30px; margin: 4px 0 4px 2px; padding: 4px 7px; color: #8a9aab; border-color: transparent; background: transparent; font-size: 10px; opacity: .8; }
+.task-ignore:hover, .task-ignore:focus-visible { color: #8a6a3a; border-color: #e9ddc8; background: #fbf6ec; opacity: 1; }
+.task-ignore[aria-pressed="true"] { color: #8a6a3a; opacity: 1; }
 
 /* ── ⌘K 命令面板：目录和任务一起搜 ─────────────────────────────────────── */
 #palette-scrim { position: fixed; z-index: 50; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 0; background: rgba(32, 49, 70, .36); }
@@ -1797,7 +1802,7 @@ main { background: transparent; }
 /* 控制台那一页的正文（#console-center）走的还是下面这套 .admin-* 皮肤；页面外壳
    自己的尺寸在文件上半部分那一节里（和 #admin-center / #schedule-center 挨着），
    这里只管页面里面那些卡片。 */
-/* 控制台顶上那四张卡是过滤项（进行中 / 等我回复 / 今日完成 / 全部）：数字要大到
+/* 控制台顶上那四张卡是过滤项（进行中 / 待办 / 今日完成 / 全部）：数字要大到
    一眼读出，但整条带的高度上限（桌面 84px、手机 80px）仍写在 test-air-console-cdp.js
    里 —— 只放大数字，内边距不动，省下的高度留给点开后的清单。 */
 .admin-stats { gap: 14px; }

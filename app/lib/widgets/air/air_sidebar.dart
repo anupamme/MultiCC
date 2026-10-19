@@ -113,7 +113,9 @@ class AirSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final directory = _directory;
-    final urgentCount = airUrgentTasks(data?.tasks ?? const []).length;
+    // 侧栏入口上那个数字就是控制台「待办」分区里的条数：同一份 airTaskTodo，
+    // 忽略掉的任务两边一起消失。
+    final todoCount = airTodoTasks(data?.tasks ?? const []).length;
     return Drawer(
       width: width,
       elevation: 0,
@@ -190,9 +192,9 @@ class AirSidebar extends StatelessWidget {
                     semanticKey: 'air-nav-console',
                     icon: Icons.dashboard_customize_outlined,
                     label: '控制台',
-                    // 控制台第一个分区就是「谁在等我」，入口上挂同一个数字 ——
+                    // 控制台第一个分区就是「待办」，入口上挂同一个数字 ——
                     // 一处定义，两处显示（同 Web 的 `#console-badge`）。
-                    badge: urgentCount > 0 ? '$urgentCount' : null,
+                    badge: todoCount > 0 ? '$todoCount' : null,
                     onTap: onOpenConsole,
                   ),
                   _NavRow(

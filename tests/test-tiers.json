@@ -1270,6 +1270,15 @@
       ]
     },
     {
+      "path": "tests/test-air-todo-ignores.js",
+      "tier": "other",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:task-first"
+      ]
+    },
+    {
       "path": "tests/test-air-todos.js",
       "tier": "other",
       "lane": "deterministic",

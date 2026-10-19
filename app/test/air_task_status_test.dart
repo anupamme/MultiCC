@@ -18,6 +18,8 @@ AirTask _task({
   Map<String, dynamic> resource = const {},
   AirWorktreeChanges? worktreeChanges,
   int updatedAt = 0,
+  bool manualTodo = false,
+  bool todoIgnored = false,
 }) => AirTask(
   id: id,
   dirId: dirId,
@@ -31,6 +33,8 @@ AirTask _task({
   goalState: goalState,
   resource: resource,
   worktreeChanges: worktreeChanges,
+  manualTodo: manualTodo,
+  todoIgnored: todoIgnored,
 );
 
 void main() {
@@ -411,6 +415,66 @@ void main() {
       expect(snapshot.isTodo('t2'), isTrue);
       expect(snapshot.tasks.map((t) => t.manualTodo), [false, true]);
       expect(AirSnapshot.fromJson(const {'tasks': []}).taskTodos, isEmpty);
+    });
+
+    test('忽略的进不了待办，也不进「在等我」；但异常口径不受影响', () {
+      final todo = AirDirectoryTaskFilter.todo;
+      final ignoredWaiting = _task(runState: 'waiting', todoIgnored: true);
+      final ignoredError = _task(runState: 'error', todoIgnored: true);
+      final ignoredManual = _task(todoIgnored: true, manualTodo: true);
+      expect(todo.matches(ignoredWaiting), isFalse);
+      expect(todo.matches(ignoredError), isFalse);
+      expect(todo.matches(ignoredManual), isFalse, reason: '忽略压过手动标记');
+      expect(airNeedsAttention(ignoredWaiting), isFalse);
+      expect(airNeedsAttention(ignoredError), isFalse);
+      expect(
+        airUrgentTasks([ignoredWaiting, ignoredError]).map((t) => t.id),
+        isEmpty,
+      );
+      // 「已忽略」档只收这些任务，别处按原口径照旧。
+      final ignored = AirDirectoryTaskFilter.ignored;
+      expect(ignored.matches(ignoredWaiting), isTrue);
+      expect(ignored.matches(_task(runState: 'waiting')), isFalse);
+      // 但「异常」不受忽略影响：忽略只让任务不进待办，故障本身还在。
+      final error = AirDirectoryTaskFilter.error;
+      expect(error.matches(ignoredError), isTrue);
+      expect(error.matches(_task(runState: 'error')), isTrue);
+      expect(error.matches(ignoredWaiting), isFalse);
+    });
+
+    test('待办清单最早的消息时间在前，同一时间按 id 稳定', () {
+      final rows = airTodoTasks([
+        _task(id: 'new', runState: 'waiting', updatedAt: 300),
+        _task(id: 'old', runState: 'error', updatedAt: 100),
+        _task(id: 'mid', runState: 'waiting', updatedAt: 200),
+        _task(id: 'b', runState: 'waiting', updatedAt: 150),
+        _task(id: 'a', runState: 'waiting', updatedAt: 150),
+        _task(id: 'ignored', runState: 'error', updatedAt: 50, todoIgnored: true),
+        _task(id: 'idle', runState: 'idle', updatedAt: 25),
+      ]);
+      // 最老的先来；忽略的和不构成待办的不出现。
+      expect(rows.map((t) => t.id).toList(), ['old', 'a', 'b', 'mid', 'new']);
+    });
+
+    test('快照的 taskTodoIgnored 回填到每一行上，缺省时空清单兼容旧服务', () {
+      final snapshot = AirSnapshot.fromJson(const {
+        'directories': [],
+        'taskTodoIgnored': ['t2'],
+        'tasks': [
+          {'id': 't1', 'dirId': 'd1', 'title': 'a', 'status': 'active'},
+          {'id': 't2', 'dirId': 'd1', 'title': 'b', 'status': 'active'},
+        ],
+      });
+      expect(snapshot.taskTodoIgnored, ['t2']);
+      expect(snapshot.isTodoIgnored('t2'), isTrue);
+      expect(snapshot.tasks.map((t) => t.todoIgnored), [false, true]);
+      final legacy = AirSnapshot.fromJson(const {
+        'tasks': [
+          {'id': 't1', 'dirId': 'd1', 'title': 'a', 'status': 'active'},
+        ],
+      });
+      expect(legacy.taskTodoIgnored, isEmpty);
+      expect(legacy.tasks.single.todoIgnored, isFalse);
     });
   });
 }

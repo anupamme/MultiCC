@@ -65,6 +65,7 @@
  .console-priority-card.error h3 { grid-column:1; }
  .console-priority-card.error p,.console-priority-card.error small { display:none; }
  .console-priority-card.error button { grid-column:2; grid-row:1/3; font-size:12px; }
+.console-priority-card.error .console-priority-actions { grid-column:2; grid-row:1/3; }
  .console-priority-card:nth-child(n+3) { display:none; }
  .console-flow { gap:14px; }
  .console-flow .console-running, .console-flow .console-recent { padding:12px 14px; }

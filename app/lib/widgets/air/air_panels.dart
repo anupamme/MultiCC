@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../services/air_service.dart';
 import '../../services/attachment_picker.dart';
+import '../../i18n.dart';
 import '../../services/settings_service.dart';
 import '../../theme.dart';
 import '../../utils/cli_display.dart';
@@ -530,7 +531,7 @@ class AirDirectoryStats extends StatelessWidget {
         .length;
     const filters = [
       AirDirectoryTaskFilter.running,
-      AirDirectoryTaskFilter.waiting,
+      AirDirectoryTaskFilter.todo,
       AirDirectoryTaskFilter.error,
       AirDirectoryTaskFilter.today,
       AirDirectoryTaskFilter.all,
@@ -541,7 +542,9 @@ class AirDirectoryStats extends StatelessWidget {
           key: ValueKey('air-stat-${filter.name}'),
           label: switch (filter) {
             AirDirectoryTaskFilter.running => '进行中',
-            AirDirectoryTaskFilter.waiting => '等我回复',
+            // 「待办」和目录首页点开的清单同源：数字与列表都走
+            // [AirDirectoryTaskFilter.todo.matches]（= airTaskTodo）。
+            AirDirectoryTaskFilter.todo => t('airTodoFilter'),
             AirDirectoryTaskFilter.error => '异常',
             AirDirectoryTaskFilter.today => '今日完成',
             AirDirectoryTaskFilter.all => '全部',
@@ -556,7 +559,7 @@ class AirDirectoryStats extends StatelessWidget {
           },
           tone: switch (filter) {
             AirDirectoryTaskFilter.running => _StatTone.green,
-            AirDirectoryTaskFilter.waiting => _StatTone.amber,
+            AirDirectoryTaskFilter.todo => _StatTone.amber,
             AirDirectoryTaskFilter.error => _StatTone.red,
             AirDirectoryTaskFilter.today => _StatTone.blue,
             AirDirectoryTaskFilter.all => _StatTone.purple,
