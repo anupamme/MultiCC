@@ -60,8 +60,9 @@
     return { items: list.slice(start, start + PAGE_SIZE), page, pages, total: list.length };
   }
 
-  function paint(rows) {
-    const state = view(rows);
+  function paint(rows, remote) {
+    const state = remote ? { ...remote, items: rows } : view(rows);
+    if (remote) { page = state.page; pages = state.pages; }
     // 分页与否决定面板是「撑满一屏、表头钉住」还是「按内容自然高度」——这一条
     // 挂在面板自己身上，CSS 那一档只写 `.is-paged`。
     const panel = el('directory-task-panel');
@@ -117,7 +118,7 @@
   scheduleMeasure();
 
   root.MultiCCAirTaskPager = {
-    PAGE_SIZE, reset, view, paint, measure,
+    PAGE_SIZE, reset, view, paint, measure, currentPage: () => page,
     bind: handler => { onChange = handler; },
   };
 })(typeof window !== 'undefined' ? window : null);

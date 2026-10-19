@@ -151,6 +151,7 @@ test('needs-me and manual-to-do stay separate, and one state-driven action repla
     assert.deepEqual(toggles, ['tsk-idle']);
     await pick('todo');
     assert.ok(await page.waitFor(`document.querySelectorAll('#directory-task-list .directory-task-row').length===3`));
+    assert.ok(await page.waitFor(`document.querySelector('#directory-task-list')?.textContent.includes('空闲的活')`));
     assert.ok((await titles()).includes('空闲的活'));
     await pick('all');
     await clickRowAction('空闲的活');

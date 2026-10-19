@@ -52,6 +52,8 @@ function createWorkspaceRuntime(options) {
   const summaries = new Map();
   const queueStatuses = new Map();
   const metaClients = new Set();
+  const observers = new Set();
+  let airSync = null;
 
   const sessionState = createSessionStateService({
     clock,
@@ -81,6 +83,7 @@ function createWorkspaceRuntime(options) {
   }
 
   function broadcastRaw(dirId, payload) {
+    for (const observer of observers) { try { observer(dirId, payload); } catch (_) {} }
     const scoped = clients.get(dirId);
     if (scoped) broadcastClients(scoped, payload);
     if (metaClients.size > 0) broadcastClients(metaClients, { ...payload, dirId });
@@ -245,7 +248,8 @@ function createWorkspaceRuntime(options) {
     return true;
   }
 
-  function attachMeta(socket) {
+  function attachMeta(socket, url) {
+    if (url?.searchParams.get('air') === '1' && airSync) return airSync.attach(socket, url);
     metaClients.add(socket);
     socket.isAlive = true;
     socket.on('pong', () => { socket.isAlive = true; });
@@ -280,6 +284,9 @@ function createWorkspaceRuntime(options) {
     hydrateQueueStatuses,
     attachWorkspace,
     attachMeta,
+    subscribe: listener => { observers.add(listener); return () => observers.delete(listener); },
+    setAirSync: runtime => { airSync = runtime; },
+    close: () => { const drained = airSync?.close(); observers.clear(); return drained; },
   });
 }
 

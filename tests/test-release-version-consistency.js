@@ -271,13 +271,14 @@ test('core runner covers every selected path and expands declared variants', () 
   // claude-sdk 那个真起子进程+假上游（isolated）；secret-tools 只用 127.0.0.1:0
   // 的进程内服务与 .example.com 字符串。318 + 10 = 328，deterministic 279，
   // isolated 26，flutter 23，commands 308。
-  assert.equal(core.length, 328, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 328);
+  // 补齐已在 HEAD 的逐卡缓存契约，以及本次首页摘要/游标契约：两个 deterministic core。
+  assert.equal(core.length, 330, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 330);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 279);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 281);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 26);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 23,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -287,8 +288,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 308,
-    '305 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 310,
+    '307 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

@@ -1201,6 +1201,24 @@
       ]
     },
     {
+      "path": "tests/test-air-sync-http.js",
+      "tier": "flow",
+      "lane": "isolated",
+      "owner": "npm:test:task-first",
+      "entrypoints": [
+        "npm:test:task-first"
+      ]
+    },
+    {
+      "path": "tests/test-air-sync.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:task-first",
+      "entrypoints": [
+        "npm:test:task-first"
+      ]
+    },
+    {
       "path": "tests/test-air-task-band-cdp.js",
       "tier": "flow",
       "lane": "cdp",
@@ -3142,6 +3160,11 @@
       "entrypoints": [
         "npm:test:provider-router"
       ]
+    },
+    {
+      "path": "tests/test-global-proxy.js",
+      "tier": "flow",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-handoff-env.js",
