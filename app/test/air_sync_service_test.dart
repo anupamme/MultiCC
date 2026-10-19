@@ -16,7 +16,7 @@ class _Host {
   final calls = <Uri>[];
   final tasks = <String, Map<String, dynamic>>{};
   String epoch = 'boot-a';
-  int revision = 1, syncStatus = 200;
+  int revision = 1, syncStatus = 200, pageStatus = 200;
   Completer<void>? pageGate, ticketGate;
   bool legacy = false;
   String get cursor => '$epoch:$revision';
@@ -105,6 +105,7 @@ class _Host {
           };
         }
       } else if (uri.path == '/api/air/page') {
+        request.response.statusCode = pageStatus;
         final requestedCursor = cursor;
         final page = int.tryParse(uri.queryParameters['page'] ?? '') ?? 1;
         final limit = int.parse(
@@ -211,6 +212,67 @@ void main() {
       );
       expect(sync.snapshot!.count('total'), 1278);
       expect(host.calls.where((u) => u.path == '/api/air'), isEmpty);
+    },
+  );
+
+  test(
+    'live updates retain page rows while revalidating, including failures and manual invalidation',
+    () async {
+      final sync = await host.client();
+      await sync.refresh();
+      await until(() => sync.status == 'live');
+      await until(() => sync.page('list', {'page': 2}) != null);
+      final cached = sync.page('list', {'page': 2})!;
+      host.pageGate = Completer<void>();
+      host.revision++;
+      host.push();
+      await until(() => sync.snapshot!.cursor == host.cursor);
+      expect(sync.page('list', {'page': 2})?.ids, cached.ids);
+      expect(sync.snapshot!.taskOf('t20'), isNotNull);
+      // Repeated builds coalesce the background read and retain the same rows.
+      for (var i = 0; i < 10; i++) {
+        expect(sync.page('list', {'page': 2})?.page, 2);
+      }
+      await until(
+        () => host.calls.where((u) => u.path == '/api/air/page').length == 2,
+      );
+      host.pageGate!.complete();
+      host.pageGate = null;
+      await until(() => !identical(sync.page('list', {'page': 2}), cached));
+      host.pageStatus = 503;
+      sync.invalidate();
+      expect(sync.page('list', {'page': 2})?.ids, cached.ids);
+      await until(
+        () => host.calls.where((u) => u.path == '/api/air/page').length == 3,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final calls = host.calls.length;
+      expect(sync.page('list', {'page': 2})?.ids, cached.ids);
+      expect(
+        host.calls.length,
+        calls,
+        reason: 'failed reads retain rows and back off',
+      );
+      // A different query must never show rows from the old query.
+      expect(sync.page('list', {'page': 3}), isNull);
+    },
+  );
+
+  test(
+    'same-epoch bootstrap retains loaded rows until their pages are revalidated',
+    () async {
+      final sync = await host.client();
+      await sync.refresh();
+      await until(() => sync.page('list', {'page': 2}) != null);
+      final ids = sync.page('list', {'page': 2})!.ids;
+      await sync.refresh(fresh: true);
+      expect(sync.page('list', {'page': 2})?.ids, ids);
+      expect(sync.snapshot!.taskOf('t20'), isNotNull);
+      sync.pause();
+      host.epoch = 'boot-b';
+      await sync.resume();
+      expect(sync.page('list', {'page': 2}), isNull);
+      expect(sync.snapshot!.taskOf('t20'), isNull);
     },
   );
 

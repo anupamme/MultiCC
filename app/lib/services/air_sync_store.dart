@@ -21,9 +21,14 @@ class AirSyncStore {
       return;
     }
     metadata = Map.of(response)..remove('tasks');
+    final sameEpoch = epoch(next) == epoch(cursor);
     cursor = next;
-    rows.clear();
-    _versions.clear();
+    // Bootstrap is partial. Same-epoch reconnects must retain rows referenced by
+    // visible pages; trim() removes them once those pages have been refreshed.
+    if (!sameEpoch) {
+      rows.clear();
+      _versions.clear();
+    }
     _recent.clear();
     put(response['tasks'] as List? ?? [], next, recent: true);
   }

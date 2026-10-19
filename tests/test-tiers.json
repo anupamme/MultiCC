@@ -90,6 +90,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/air_live_list_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/air_mobile_navigation_test.dart",
       "tier": "flow",
       "lane": "flutter"
