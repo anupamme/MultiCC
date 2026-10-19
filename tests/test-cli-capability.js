@@ -291,3 +291,17 @@ test('no call site re-derives the lanes from an inline CLI-name array', () => {
   }
   assert.deepEqual(offenders, [], `lanes must come from src/cli/cli-capability.js, not from an inline array at: ${offenders.join(', ')}`);
 });
+
+
+test('Pi is a providerless per-turn CLI with its own install artifact', () => {
+  assert.equal(protocolOf('pi'), 'pi-json');
+  assert.equal(protocolFamilyOf('pi'), null);
+  assert.equal(isResident('pi'), false);
+  assert.equal(cancelStopsProcess('pi'), true);
+  assert.equal(DISPLAY.pi.providerless, true);
+  assert.equal(displayNameOf('pi'), 'Pi');
+  assert.equal(offersIn('pi', 'chat'), true);
+  assert.equal(offersIn('pi', 'terminal'), true);
+  assert.equal(updateOf('pi').package, '@earendil-works/pi-coding-agent');
+  assert.equal(updateOf('pi').command, 'npm install -g @earendil-works/pi-coding-agent');
+});

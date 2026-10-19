@@ -101,3 +101,13 @@ test('vendor login flows map each vendor-auth CLI to a whitelisted login termina
   assert.equal(cliForLoginFlow('codex-login'), null, 'codex/claude login flows stay hardcoded in create-record');
   assert.equal(cliForLoginFlow('bogus'), null);
 });
+
+
+test('Pi local credentials do not acquire a MultiCC provider route', () => {
+  assert.equal(providers.appTypeForCli('pi'), null);
+  assert.deepEqual(providers.appTypesForCli('pi'), []);
+  assert.equal(providers.providerSupportsCli({ apiFormat: 'anthropic' }, 'pi'), false);
+  assert.deepEqual(providers.resolveSpawnEnv({ cli: 'pi', provider: 'stale-provider' }).env, {});
+  const base = { PI_CODING_AGENT_DIR: '/pi-config', OPENAI_API_KEY: 'fixture-local-key' };
+  assert.deepEqual(providers.buildChildEnv(base, { cli: 'pi' }).env, base);
+});

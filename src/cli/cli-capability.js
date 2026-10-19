@@ -48,6 +48,7 @@ const CAPABILITIES = Object.freeze({
   // first CLI on this lane; gemini and grok ride the same bridge (acp.js).
   opencode: Object.freeze({ protocol: 'acp', lifecycle: 'per-turn', cancel: 'process' }),
   gemini: Object.freeze({ protocol: 'acp', lifecycle: 'per-turn', cancel: 'process' }),
+  pi: Object.freeze({ protocol: 'pi-json', lifecycle: 'per-turn', cancel: 'process' }),
   commandcode: Object.freeze({ protocol: 'command-code-json', lifecycle: 'per-turn', cancel: 'process' }),
   grok: Object.freeze({ protocol: 'acp', lifecycle: 'per-turn', cancel: 'process' }),
 });
@@ -65,6 +66,7 @@ const FAMILIES = Object.freeze({
   gemini: 'acp',
   grok: 'acp',
   commandcode: null,
+  pi: null,
 });
 
 // ── Display facts: the CLI catalogue ───────────────────────────────────────
@@ -251,6 +253,15 @@ const CLIS = deepFreeze({
     providerless: true,
     update: { package: '@google/gemini-cli', command: 'npm install -g @google/gemini-cli' },
     lanes: { chat: [{ id: 'gemini', engine: 'gemini acp' }], terminal: [{ id: 'gemini' }] },
+  },
+  pi: {
+    name: 'Pi',
+    colour: '#8b5cf6',
+    mark: 'P',
+    // Pi owns its provider/model configuration and authentication locally.
+    providerless: true,
+    update: { package: '@earendil-works/pi-coding-agent', command: 'npm install -g @earendil-works/pi-coding-agent' },
+    lanes: { chat: [{ id: 'pi', engine: 'pi --mode json' }], terminal: [{ id: 'pi' }] },
   },
   commandcode: {
     name: 'Command Code',

@@ -533,7 +533,7 @@ function createCliSwitchRuntime(options) {
     claude: 'CLAUDE_CMD', codex: 'CODEX_CMD', 'codex-exp': 'CODEX_CMD',
     opencode: 'OPENCODE_CMD', zcode: 'ZCODE_CMD', kimi: 'KIMI_CMD',
     qoder: 'QODER_CMD', codebuddy: 'CODEBUDDY_CMD', dsh: 'DSH_CMD',
-    gemini: 'GEMINI_CMD', grok: 'GROK_CMD', commandcode: 'COMMAND_CODE_CMD',
+    gemini: 'GEMINI_CMD', grok: 'GROK_CMD', commandcode: 'COMMAND_CODE_CMD', pi: 'PI_CMD',
   });
 
   // 「升级就要升 multicc 检测/派生的那个二进制」: 检测与 spawn 都过同一个解析器

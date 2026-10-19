@@ -89,6 +89,18 @@ String? _dropdownValue(WidgetTester tester, Key key) =>
 
 void main() {
   group('CLI capability matrix', () {
+    test('Pi native configuration and thinking levels', () {
+      expect(tryParseCli('pi'), SessionCli.pi);
+      expect(SessionCli.pi.name, 'pi');
+      expect(SessionCli.pi.displayName, 'Pi');
+      expect(SessionCli.pi.supportsProvider, isFalse);
+      expect(SessionCli.pi.supportsAgent, isFalse);
+      expect(SessionCli.pi.supportsSubagent, isFalse);
+      expect(SessionCli.pi.supportsEffort, isTrue);
+      expect(SessionCli.pi.effortOptions, ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+      expect(modelShortNameForCli(SessionCli.pi, ''), '默认（跟随 Pi 配置）');
+    });
+
     test('matches server-side agent, subagent and effort support', () {
       expect(SessionCli.claude.supportsAgent, isTrue);
       expect(SessionCli.claude.supportsSubagent, isTrue);
@@ -271,6 +283,22 @@ void main() {
       // 面板上别的车道的卡片会写「Claude Agent SDK」，所以这里钉的是自己那几行。
       expect(find.text('ZCode Agent'), findsNothing);
       expect(find.text('OpenCode Agent'), findsNothing);
+    });
+
+    testWidgets('Pi exposes native models and all thinking levels', (tester) async {
+      await tester.pumpWidget(_host(RunConfigSheet(
+        cli: SessionCli.pi,
+        providers: const [],
+        provider: '',
+        model: 'openai/gpt-5',
+        effort: 'off',
+      )));
+      expect(find.byKey(const Key('run-providerless-note')), findsOneWidget);
+      for (final effort in SessionCli.pi.effortOptions) {
+        expect(find.byKey(Key('run-effort-$effort')), findsOneWidget);
+      }
+      expect(find.text('使用 Pi 自己的账号'), findsWidgets);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets(

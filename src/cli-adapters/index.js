@@ -16,6 +16,7 @@ const { createDshAdapter } = require('./dsh');
 const { createGeminiAdapter } = require('./gemini');
 const { createCommandCodeAdapter } = require('./command-code');
 const { createGrokAdapter } = require('./grok');
+const { createPiAdapter } = require('./pi');
 
 function createCliAdapters(deps) {
   const commands = resolveCliCommands({ isWindows: deps.isWindows });
@@ -93,6 +94,7 @@ function createCliAdapters(deps) {
     createGeminiAdapter({ cmd: commands.gemini, routerMcpNode, routerMcpScript }),
     createCommandCodeAdapter({ cmd: commands.commandcode, routerMcpNode, routerMcpScript }),
     createGrokAdapter({ cmd: commands.grok, routerMcpNode, routerMcpScript }),
+    createPiAdapter({ cmd: commands.pi, routerMcpNode, routerMcpScript }),
   ]);
 
   return { commands, registry };

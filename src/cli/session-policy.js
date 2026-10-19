@@ -11,6 +11,7 @@ const CODEX_REASONING_LEVELS = new Set(['none', 'minimal', 'low', 'medium', 'hig
 // at `xhigh`. Keep the tiers in persisted state and normalize only at the wire
 // boundary, using the model that will actually handle the turn.
 const CODEX_REASONING_56_LEVELS = new Set(['max', 'ultra']);
+const PI_THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 const OPENCODE_VARIANTS = new Set(['minimal', 'low', 'medium', 'high', 'max']);
 const QODER_REASONING_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const CODEBUDDY_REASONING_LEVELS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
@@ -160,6 +161,7 @@ function createSessionPolicy(options) {
       || CODEX_REASONING_LEVELS.has(normalized)
       || CODEX_REASONING_56_LEVELS.has(normalized)
       || OPENCODE_VARIANTS.has(normalized)
+      || PI_THINKING_LEVELS.has(normalized)
       ? normalized
       : undefined;
   }
@@ -170,6 +172,7 @@ function createSessionPolicy(options) {
       return CODEX_REASONING_LEVELS.has(effort) || CODEX_REASONING_56_LEVELS.has(effort);
     }
     if (cli === 'opencode') return OPENCODE_VARIANTS.has(effort);
+    if (cli === 'pi') return PI_THINKING_LEVELS.has(effort);
     if (cli === 'zcode' || cli === 'kimi' || cli === 'dsh'
       || cli === 'gemini' || cli === 'grok' || cli === 'commandcode') return false;
     if (cli === 'qoder') return QODER_REASONING_LEVELS.has(effort);
@@ -250,6 +253,10 @@ function createSessionPolicy(options) {
     if (!session) return null;
     const cli = session.cli || 'claude';
     if (cli === 'codex' || cli === 'codex-exp') return codexReasoningLevel(session) || codexDefaultReasoningLevel();
+    if (cli === 'pi') {
+      const effort = normalizeEffort(session.effort);
+      return effort && PI_THINKING_LEVELS.has(effort) ? effort : null;
+    }
     if (cli === 'opencode') {
       const effort = normalizeEffort(session.effort);
       return effort && OPENCODE_VARIANTS.has(effort) ? effort : null;

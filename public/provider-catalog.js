@@ -214,6 +214,14 @@
       update: { package: '@google/gemini-cli', command: 'npm install -g @google/gemini-cli' },
       lanes: { chat: [{ id: 'gemini', engine: 'gemini acp' }], terminal: [{ id: 'gemini' }] },
     },
+    pi: {
+      name: 'Pi',
+      colour: '#8b5cf6',
+      mark: 'P',
+      providerless: true,
+      update: { package: '@earendil-works/pi-coding-agent', command: 'npm install -g @earendil-works/pi-coding-agent' },
+      lanes: { chat: [{ id: 'pi', engine: 'pi --mode json' }], terminal: [{ id: 'pi' }] },
+    },
     commandcode: {
       name: 'Command Code',
       colour: '#a599e9',

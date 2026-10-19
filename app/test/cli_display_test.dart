@@ -55,6 +55,11 @@ void main() {
     expect(cliDisplayName('kimi'), 'Kimi Code');
     expect(cliDisplayName('codebuddy'), 'WorkBuddy');
     expect(cliDisplayName('dsh'), 'DSH');
+    expect(cliDisplayName('pi'), 'Pi');
+    expect(cliEngine('pi'), 'pi --mode json');
+    expect(cliProviderless('pi'), isTrue);
+    expect(cliOffersIn('pi', 'chat'), isTrue);
+    expect(cliOffersIn('pi', 'terminal'), isTrue);
     expect(cliDisplayName('gemini'), 'Gemini');
     expect(cliDisplayName('grok'), 'Grok');
   });
@@ -113,13 +118,13 @@ void main() {
     expect(cliReplacedBy('mystery-cli'), isNull);
   });
 
-  test('the five vendor-auth CLIs are the providerless set', () {
+  test('native-account CLIs are the providerless set', () {
     final providerless = kCliDisplays.entries
         .where((e) => e.value.providerless)
         .map((e) => e.key)
         .toList()
       ..sort();
-    expect(providerless, ['codebuddy', 'dsh', 'gemini', 'grok', 'qoder']);
+    expect(providerless, ['codebuddy', 'commandcode', 'gemini', 'pi', 'qoder']);
   });
 
   test('a lane answers its family name, and the family table is the only structure', () {

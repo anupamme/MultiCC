@@ -495,3 +495,16 @@ test('commandcode and grok pickers read the live catalog and keep the vendor gro
     delete require.cache[modulePath];
   }
 });
+
+
+test('Pi follows native settings and never offers a stale managed provider model', () => {
+  const config = state({ cli: 'pi' });
+  assert.equal(providerCatalog.cliDisplayName('pi'), 'Pi');
+  assert.equal(providerCatalog.cliProviderless('pi'), true);
+  assert.deepEqual(ai.buildModelChoices('relay', config), ['', '__custom__']);
+  assert.equal(ai.modelChoiceLabel('', '', config), '默认（跟随 Pi 配置）');
+  assert.equal(ai.effortLabel('pi'), 'Thinking Level');
+  assert.deepEqual(ai.effortOptions('pi').map(item => item.value),
+    ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+  assert.equal(ai.effortShortName('pi', 'off'), 'Off');
+});

@@ -40,6 +40,10 @@
     Object.freeze({ value: 'xhigh', label: 'Extra high' }),
     Object.freeze({ value: 'max', label: 'Max' }),
   ]);
+  const PI_THINKING_OPTIONS = Object.freeze([
+    Object.freeze({ value: '', label: 'Default', desc: 'Follow Pi settings' }),
+    ...['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].map(value => Object.freeze({ value, label: value })),
+  ]);
   const QODER_MODEL_OPTIONS = Object.freeze(['', 'auto', 'ultimate', 'performance', 'efficient', 'lite']);
   const CODEBUDDY_REASONING_OPTIONS = Object.freeze([
     Object.freeze({ value: '', label: 'Default', desc: 'Follow WorkBuddy settings' }),
@@ -142,6 +146,7 @@
   function effortOptions(cli) {
     if (isCodexCli(cli)) return CODEX_REASONING_OPTIONS;
     if (cli === 'opencode') return OPENCODE_VARIANT_OPTIONS;
+    if (cli === 'pi') return PI_THINKING_OPTIONS;
     if (cli === 'qoder') return QODER_REASONING_OPTIONS;
     if (cli === 'codebuddy') return CODEBUDDY_REASONING_OPTIONS;
     if (isClaudeCli(cli)) return EFFORT_OPTIONS;
@@ -151,6 +156,7 @@
   function effortLabel(cli) {
     if (isCodexCli(cli)) return 'Reasoning Level';
     if (cli === 'opencode') return 'Variant';
+    if (cli === 'pi') return 'Thinking Level';
     if (cli === 'qoder' || cli === 'codebuddy') return 'Reasoning Effort';
     return 'Effort';
   }
@@ -158,6 +164,7 @@
   function effortShortName(cli, effort) {
     const value = effort || defaultEffort(cli);
     if (cli === 'zcode') return '';
+    if (cli === 'pi') return value ? ({ off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high' })[value] || value : '';
     if (cli === 'opencode') return value ? `Variant ${value}` : '';
     if (isCodexCli(cli) || cli === 'qoder' || cli === 'codebuddy') {
       return ({
@@ -296,6 +303,7 @@
 
   function buildModelChoices(providerId, state) {
     nudgeModelCatalog(state);
+    if (state && state.cli === 'pi') return ['', '__custom__'];
     const tiers = providerAliasTiers(providerId, state);
     if (tiers.length) return [...tiers.map(([tier]) => tier), '__custom__'];
     const options = providerModelOptions(providerId, state);
@@ -524,6 +532,7 @@
       if (state && state.cli === 'qoder') return localized(state, 'aiConfigDefaultFollowQoder', '默认（跟随 Qoder CN 设置）');
       if (state && state.cli === 'codebuddy') return localized(state, 'aiConfigDefaultFollowWorkBuddy', '默认（跟随 WorkBuddy 设置）');
       if (state && state.cli === 'dsh') return localized(state, 'aiConfigDefaultFollowDsh', '默认（跟随 DSH 配置）');
+      if (state && state.cli === 'pi') return localized(state, 'aiConfigDefaultFollowPi', '默认（跟随 Pi 配置）');
       if (state && state.cli === 'gemini') return localized(state, 'aiConfigDefaultFollowGemini', '默认（跟随 Gemini 配置）');
       if (state && state.cli === 'commandcode') return '默认（DeepSeek Flash）';
       if (state && state.cli === 'grok') return localized(state, 'aiConfigDefaultFollowGrok', '默认（跟随 Grok 配置）');

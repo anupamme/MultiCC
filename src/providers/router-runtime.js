@@ -162,7 +162,9 @@ function createProviderRouterRuntime(options = {}) {
     // CPR's generic Codex materializer copies provider/global auth.json before
     // an attempt route exists. Official OAuth is a host-only credential, so
     // select MultiCC's credential-free relay home at this earliest boundary.
-    const result = hostOwnsOfficialCodexHome(binding)
+    // Pi owns its local provider credentials. CPR has no Pi materializer yet;
+    // keep unknown-CLI fallback behavior outside this lane.
+    const result = binding.cli === 'pi' || hostOwnsOfficialCodexHome(binding)
       ? legacy.resolveSpawnEnv(toLegacyProviderView(binding))
       : port.resolveSpawn(binding);
     return withKeyAccount(result, session, binding.cli);
@@ -172,7 +174,7 @@ function createProviderRouterRuntime(options = {}) {
     const binding = createBinding(session, overrides);
     // Shadow comparisons are intentionally limited to summary/model/spawn.
     // Child-env construction can materialize Codex state, so it stays legacy.
-    const result = mode === 'shadow' || hostOwnsOfficialCodexHome(binding)
+    const result = mode === 'shadow' || binding.cli === 'pi' || hostOwnsOfficialCodexHome(binding)
       ? legacy.buildChildEnv(base, toLegacyProviderView(binding), extra)
       : port.buildChildEnv(base, binding, extra);
     return withKeyAccount(result, session, binding.cli);

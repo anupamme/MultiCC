@@ -26,6 +26,7 @@ List<String> runModelChoices(
   String provider,
   List<Map<String, dynamic>> providers,
 ) {
+  if (cli == SessionCli.pi) return const [''];
   if (cli == SessionCli.qoder) {
     return QoderModelsService.options().map((option) => option.key).toList();
   }
@@ -97,6 +98,7 @@ String runModelOptionLabel(
   String model,
   List<Map<String, dynamic>> providers,
 ) {
+  if (model.isEmpty && cli == SessionCli.pi) return '默认（跟随 Pi 配置）';
   if (model.isEmpty) return '线路默认';
   if (cli.isCodexFamily) return CodexModelsService.labelFor(model);
   Map? aliasMap;
@@ -119,6 +121,9 @@ String runLineName(String id, List<Map<String, dynamic>> providers) =>
 /// 分段控件可画（一档等于没得选）。空列表 = 这条车道不暴露推理强度。
 List<(String value, String label)> effortRungsFor(SessionCli cli) {
   if (!cli.supportsEffort) return const [];
+  if (cli == SessionCli.pi) {
+    return const [('', '默认'), ('off', '关闭'), ('minimal', '最低'), ('low', '低'), ('medium', '中'), ('high', '高'), ('xhigh', '最高')];
+  }
   final opts = cli.effortOptions.where((e) => e.isNotEmpty).toList();
   if (opts.isEmpty) return const [];
   String pick(List<String> prefer) {
@@ -159,6 +164,7 @@ String effortChipLabel(SessionCli cli, String? effort) {
   final value = (effort == null || effort.isEmpty) ? cli.defaultEffort : effort;
   return switch (value) {
     '' || 'default' => '默认',
+    'off' => '关闭',
     'minimal' => '最低',
     'low' => '低',
     'medium' => '中',

@@ -18,6 +18,8 @@ const scenarios = [
   ['codex', 'completed', false], ['codex', 'failed', true], ['codex', 'unknown', true],
   ['codex', 'late-exit-error', true], ['claude', 'completed', false], ['claude', 'failed', true],
   ['opencode', 'completed', false], ['opencode', 'tool-stop', true],
+  ['pi', 'completed', false], ['pi', 'failed', true], ['pi', 'unknown', true],
+  ['pi', 'late-exit-error', true],
 ];
 const write = (kind, data) => fs.writeFileSync(path.join(dataDir, kind + '.json'), JSON.stringify({
   __multiccSchema: { kind, version: 1, writtenAt: new Date().toISOString() }, data,
@@ -26,7 +28,7 @@ write('sessions', []);
 write('directories', []);
 const scenarioFile = path.join(root, 'scenario');
 const commands = {};
-for (const cli of ['codex', 'claude', 'opencode']) {
+for (const cli of ['codex', 'claude', 'opencode', 'pi']) {
   const file = path.join(root, `fake-${cli}.cjs`);
   commands[cli.toUpperCase() + '_CMD'] = file;
   fs.writeFileSync(file, `#!/usr/bin/env node
@@ -38,7 +40,16 @@ const emit = event => process.stdout.write(JSON.stringify(event) + '\\n');
 const rpc = message => emit({ jsonrpc: '2.0', ...message });
 function reply() {
   const text = 'native-answer:' + cli + ':' + mode;
-  if (cli === 'codex') {
+  if (cli === 'pi') {
+    emit({ type: 'session', version: 3, id: '11111111-1111-4111-8111-111111111111' });
+    const message = { role: 'assistant', content: [{ type: 'text', text }],
+      stopReason: mode === 'failed' ? 'error' : 'stop',
+      errorMessage: mode === 'failed' ? 'mock provider failed' : undefined,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } };
+    emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: text } });
+    emit({ type: 'message_end', message });
+    if (mode !== 'unknown') emit({ type: 'agent_end', messages: [message], willRetry: false });
+  } else if (cli === 'codex') {
     emit({ type: 'thread.started', thread_id: 'thread-' + mode });
     emit({ type: 'item.completed', item: { type: 'agent_message', text } });
     if (mode !== 'unknown') emit({ type: mode === 'failed' ? 'turn.failed' : 'turn.completed', usage: {}, error: mode === 'failed' ? { message: 'failure' } : undefined });
@@ -126,6 +137,7 @@ async function stop() {
       cwd: path.join(__dirname, '..'), env: { ...process.env, ...commands,
         PORT: String(port), HOST: '127.0.0.1', NODE_ENV: 'test', ACCESS_TOKEN: 'completion-test',
         MULTICC_DATA_DIR: dataDir, MULTICC_MEMORY_ROOT: path.join(dataDir, 'memories'),
+        PI_CODING_AGENT_DIR: path.join(root, 'pi-agent'),
         MULTICC_ENV_FILE: path.join(root, 'test.env'), MULTICC_TASK_SHELLS: '0', ASR_LOCAL: 'off',
         // Fake turns must not launch the runner's real Chrome for quota checks.
         // An explicit unavailable binary prevents fallback to installed browsers
