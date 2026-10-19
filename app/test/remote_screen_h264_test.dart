@@ -154,6 +154,35 @@ void main() {
     session.dispose();
   });
 
+  test('帧被原生解码器压小后，指针坐标按编码尺寸（屏幕逻辑点）放大回去', () async {
+    final incoming = StreamController<Uint8List>();
+    final sent = <Uint8List>[];
+    final decoder = _RecordingDecoder();
+    addTearDown(incoming.close);
+    final session = RemoteScreenH264(
+      incoming: incoming.stream,
+      send: sent.add,
+      decoder: decoder,
+    );
+    unawaited(session.run());
+    await Future<void>.delayed(Duration.zero);
+    incoming.add(_config(1470, 956));
+    await Future<void>.delayed(Duration.zero);
+    // iOS/Android 解码器：1470×956 压成 1280×832。
+    decoder.emit(Uint8List(1280 * 832 * 4), 1280, 832);
+    await Future<void>.delayed(Duration.zero);
+    sent.clear();
+
+    session.pointerEvent(1, 640, 416); // 帧缓冲正中 → 屏幕正中 (735,478)
+    session.pointerEvent(0, 1279, 831); // 右下角 → (1469,955)
+    session.pointerEvent(0, 0, 0);
+    expect(sent[0], [5, 1, 735 >> 8, 735 & 255, 478 >> 8, 478 & 255]);
+    expect(sent[1], [5, 0, 1469 >> 8, 1469 & 255, 955 >> 8, 955 & 255]);
+    expect(sent[2], [5, 0, 0, 0, 0, 0]);
+
+    session.dispose();
+  });
+
   test('解码帧回填 BGRA 画面并向服务报 live 帧', () async {
     final incoming = StreamController<Uint8List>();
     final sent = <Uint8List>[];
