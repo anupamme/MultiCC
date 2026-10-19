@@ -921,6 +921,8 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
 .directory-git-files { border: 1px solid #f0d9c8; border-radius: 11px; background: #fdf7f1; }
 .directory-git-files summary { padding: 8px 11px; color: #9a6b1f; font-size: 10.5px; cursor: pointer; }
 .directory-git-files ul { margin: 0; padding: 2px 12px 10px 26px; color: #6d5a45; font-size: 10.5px; line-height: 1.7; word-break: break-all; }
+.directory-git-file-open { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; word-break: break-all; }
+.directory-git-file-open:hover { color: #3682bc; text-decoration: underline; }
 .directory-git-empty { padding: 18px; color: #8a9aab; font-size: 11px; text-align: center; }
 .directory-git-empty.error { color: #a6533c; }
 /* The new-task composer is the composer module (composer.css) in its panel

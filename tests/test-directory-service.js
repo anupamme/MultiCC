@@ -225,13 +225,13 @@ function makeFakes({ dirs = [], sessions = [], fsDirs = new Set(), fsFiles = new
       && r.data.files[1].status === ' M' && r.data.files[1].path === 'src/app.js'
       && r.data.files[2].status === '??' && r.data.files[2].path === 'new file.txt',
       'uncommitted: porcelain parsed (status + path with spaces)');
-    // Legacy-equivalence quirk (pre-existing upstream bug, deliberately kept):
-    // the whole porcelain output is .trim()ed, so a FIRST line starting with a
-    // space (' M …') loses its leading status char and its path is mis-sliced.
+    // A first line that starts with a space (' M …') must keep its status
+    // column and its full path (the output used to be .trim()ed, which turned
+    // 'air-todos.json' into 'ir-todos.json').
     fakes.git.statusPorcelain = async () => ' M src/app.js\n';
     const r2 = await fakes.svc.uncommitted('d1');
-    ok(r2.ok && r2.data.files[0].status === 'M ' && r2.data.files[0].path === 'rc/app.js',
-      'uncommitted: first-line leading-space mangling preserved (legacy equivalence)');
+    ok(r2.ok && r2.data.files[0].status === ' M' && r2.data.files[0].path === 'src/app.js',
+      'uncommitted: first-line leading-space status keeps its full path');
   }
 
   // ── commitAll ──

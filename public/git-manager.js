@@ -165,5 +165,41 @@
     void loadLog();
   }
 
-  window.MultiCCGitManager = Object.freeze({ open });
+  // One uncommitted file of the main checkout: its working-tree diff (vs HEAD)
+  // in a small modal, so the list can be read without leaving the page.
+  function openWorkingFile({ dirId, api, t, file }) {
+    if (!dirId || !file || document.querySelector('.git-manager')) return;
+    // Renames render as "old → new"; the diff is addressed by the new path.
+    const filePath = String(file.path).split(' → ').pop();
+    const dialog = element('dialog', null, 'git-manager git-manager-single');
+    dialog.setAttribute('aria-label', filePath);
+    const shell = element('div', null, 'git-manager-shell');
+    const header = element('header', null, 'git-manager-header');
+    const close = element('button', '×', 'git-manager-close');
+    close.type = 'button';
+    close.setAttribute('aria-label', t('close'));
+    header.append(element('strong', `${file.status || 'M'}  ${filePath}`), close);
+    const pane = element('section', null, 'git-manager-pane git-manager-diff');
+    pane.append(element('p', t('airGitDiffReading'), 'git-manager-message'));
+    shell.append(header, pane);
+    dialog.append(shell);
+    document.body.append(dialog);
+    close.onclick = () => dialog.close();
+    dialog.onclose = () => dialog.remove();
+    dialog.showModal();
+    api(`/api/git/directory-file-diff?dirId=${encodeURIComponent(dirId)}&path=${encodeURIComponent(filePath)}`)
+      .then(result => {
+        if (!dialog.isConnected) return;
+        pane.replaceChildren(
+          ...(result.truncated ? [element('p', t('airGitDiffTruncated'), 'git-manager-warning')] : []),
+          element('pre', result.error ? t('airGitDiffFailed', { msg: result.error })
+            : (result.patch || t('airGitFileNoDiff')), 'git-manager-patch'));
+      })
+      .catch(error => {
+        if (dialog.isConnected) pane.replaceChildren(element('p',
+          t('airGitDiffFailed', { msg: error.message }), 'git-manager-message error'));
+      });
+  }
+
+  window.MultiCCGitManager = Object.freeze({ open, openWorkingFile });
 })();

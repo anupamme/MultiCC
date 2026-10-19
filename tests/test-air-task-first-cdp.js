@@ -154,6 +154,7 @@ test('Air task-first console, management views, roles, configuration, artifacts 
       ? { ok: true, dirId: value.dirId, considered: 3, attempted: 3, hibernated: 3, failed: 0, skipped: 0 }
       : { ok: true, dirId: value.dirId, considered: 3, attempted: 3, hibernated: 0, failed: 0, skipped: 3 });
   };
+  routes['/api/git/directory-file-diff'] = () => json({ path: 'README.md', patch: '@@ -1 +1 @@\n-旧\n+脏文件改动', truncated: false, error: null, untracked: false });
   routes['/api/git/log'] = () => json({ repoPath: '/projects/multicc', commits: [
     { hash: 'c2'.repeat(20), short: 'c2c2c2c', author: 'green', date: '2026-09-17T10:00:00+08:00', subject: 'Air 目录首页加 Git 状态', refs: 'HEAD -> main' },
     { hash: 'c1'.repeat(20), short: 'c1c1c1c', author: 'green', date: '2026-09-16T09:00:00+08:00', subject: '上一条提交', refs: '' },
@@ -748,10 +749,16 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     assert.ok(await page.waitFor(`document.querySelector('.directory-git-files')?.open === true`));
     assert.equal(await page.evaluate(`[...document.querySelectorAll('.directory-git-files li')].map(li=>li.textContent).join('|')`),
       'M  README.md|??  notes/scratch.md', '点开后列出全部脏文件');
+    // 清单里的文件名是按钮：点开就地看这个文件的改动（走 directory-file-diff）。
+    await page.evaluate(`document.querySelector('.directory-git-files li button').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.git-manager-single .git-manager-patch')?.textContent.includes('+脏文件改动')`));
+    assert.equal(await page.evaluate(`document.querySelector('.git-manager-single header strong').textContent`), 'M  README.md');
+    await page.evaluate(`document.querySelector('.git-manager-single .git-manager-close').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.git-manager')===null`));
     await page.evaluate(`${dirtyChip}.click()`);
     assert.ok(await page.waitFor(`document.querySelector('.directory-git-files')?.open === false`));
     assert.equal(await page.evaluate(`document.querySelector('.git-manager')===null`), true, 'Git 管理器默认关闭');
-    await page.evaluate(`document.getElementById('directory-git').querySelector('.directory-git-actions button').click()`);
+    await page.evaluate(`document.getElementById('directory-git').querySelector('.directory-git-actions button.subtle').click()`);
     assert.ok(await page.waitFor(`document.querySelectorAll('.git-manager-commits .git-manager-row').length===2`));
     await page.evaluate(`document.querySelector('.git-manager-commits .git-manager-row').click()`);
     assert.ok(await page.waitFor(`document.querySelectorAll('.git-manager-files .git-manager-file').length===1`));
@@ -760,7 +767,7 @@ test('Air task-first console, management views, roles, configuration, artifacts 
     await page.evaluate(`document.querySelector('.git-manager-close').click()`);
     assert.ok(await page.waitFor(`!document.querySelector('.git-manager')`));
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-    await page.evaluate(`document.getElementById('directory-git').querySelector('.directory-git-actions button').click()`);
+    await page.evaluate(`document.getElementById('directory-git').querySelector('.directory-git-actions button.subtle').click()`);
     assert.ok(await page.waitFor(`document.querySelectorAll('.git-manager-commits .git-manager-row').length===2`));
     await page.evaluate(`document.querySelector('.git-manager-commits .git-manager-row').click()`);
     assert.ok(await page.waitFor(`document.querySelector('.git-manager')?.dataset.step==='files' && document.querySelector('.git-manager-commits').offsetHeight===0 && document.querySelectorAll('.git-manager-files .git-manager-file').length===1`));

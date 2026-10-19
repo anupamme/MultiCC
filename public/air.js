@@ -842,7 +842,15 @@
       files.append(node('summary', t('airGitDirtySummary', { n: dirty.length })));
       const fileList = node('ul');
       const shown = dirty.slice(0, 50);
-      for (const file of shown) fileList.append(node('li', `${file.status || 'M'}  ${file.path}`));
+      for (const file of shown) {
+        const view = node('button', `${file.status || 'M'}  ${file.path}`, 'directory-git-file-open');
+        view.type = 'button';
+        view.title = t('airGitFileViewTip');
+        view.onclick = () => window.MultiCCGitManager?.openWorkingFile({ dirId: directoryId, api, t, file });
+        const li = node('li');
+        li.append(view);
+        fileList.append(li);
+      }
       if (dirty.length > shown.length) fileList.append(node('li', t('airGitMoreFiles', { n: dirty.length - shown.length })));
       files.append(fileList);
       files.addEventListener('toggle', () => { directoryGitView.filesOpen = files.open; });
