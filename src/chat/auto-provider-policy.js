@@ -181,6 +181,9 @@ function chooseCandidate({
 function failoverSafety(decision, attempt) {
   const error = decision && decision.error;
   if (!error) return Object.freeze({ ok: false, reason: 'missing_error_decision' });
+  if (error.retryBudgetExhausted || decision?.reason === 'request_budget_exhausted') {
+    return Object.freeze({ ok: false, reason: 'request_budget_exhausted' });
+  }
   const httpStatus = Number(error.httpStatus);
   const upstream4xx = Number.isInteger(httpStatus) && httpStatus >= 400 && httpStatus <= 499;
   // A locally-owned cancellation must never be replayed, even if an adapter

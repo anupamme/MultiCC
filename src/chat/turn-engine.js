@@ -1863,7 +1863,7 @@ function createChatTurnEngine(deps) {
           provider: cs.cli,
           code: killReason,
           message: 'turn cancelled',
-        } : boundaryErrorEnvelope || runner.apiErrorRaw || proxyFailure || {
+        } : (runner.modelTimeoutStopping && proxyFailure) || boundaryErrorEnvelope || runner.apiErrorRaw || proxyFailure || {
           source: 'process_stderr',
           provider: cs.cli,
           code: killReason || (code !== 0 ? `process_exit_${code}` : 'empty_exit'),
@@ -2370,7 +2370,7 @@ function createChatTurnEngine(deps) {
       onRejected(err) {
         turnTiming.abort(sessionName, turn.turnId,
           `stream_ended_before_first_byte:${(err && err.code) || 'exit'}`);
-        if (!runner.killReason) {
+        if (!runner.killReason && !runner.modelTimeoutStopping) {
           runner.sawApiError = true;
           runner.apiErrorRaw = {
             source: 'anthropic_event',
@@ -2548,7 +2548,7 @@ function createChatTurnEngine(deps) {
         code: runner.killReason,
         message: 'turn cancelled',
       }
-      : boundaryErrorEnvelope || runner.apiErrorRaw || proxyFailure || {
+      : (runner.modelTimeoutStopping && proxyFailure) || boundaryErrorEnvelope || runner.apiErrorRaw || proxyFailure || {
         source: 'host_interruption',
         provider: persisted.cli || 'claude',
         code: 'stream_ended_without_result',

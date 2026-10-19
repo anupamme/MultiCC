@@ -1316,8 +1316,10 @@ function handleProxyUsage(event) {
     recordUsageObserved(tagged);
   }
 }
+const { recoverModelTimeout } = require('./src/chat/model-timeout-recovery');
 function handleProxyOutcome(event) {
   const outcome = providerAttemptRuntime.observeProxyOutcome(event);
+  recoverModelTimeout({ event, outcome, chatSessions, chatStream });
   if (outcome.accepted && outcome.failure?.httpStatus === 429) {
     limitRecorder.recordProviderFailure({
       sessionId: event.sessionId,
@@ -1332,10 +1334,8 @@ providerRouterRuntime.mountProtocolProxies(app, {
   protocols: ['claude'], authorizeProxyRequest: providerAttemptRuntime.authorizeProxyRequest, claudeProxy: { readOfficialCredential: arg => claudeAccountCredentials.readOfficialCredential(arg), recoverOfficialCredential: (arg, token) => claudeAccountCredentials.recoverOfficialCredential(arg, token) },
   onUsageObserved: handleProxyUsage,
   onProxyOutcome: handleProxyOutcome,
-  // A 409 here is a host decision, and it used to leave no trace at all.
   onRejected: event => logger.warn('provider_proxy_route_rejected', event),
   onActivity: event => { const bound = providerAttemptRuntime.onProxyActivity(event); if (bound) livenessRuntime.recordProxyActivity({ ...event, sessionId: bound.sessionId }); },
-  // Token-level delta + Claude 5h rate-limit sidecars: see src/chat/proxy-broadcast.js.
   ...createProxyBroadcasters(chatBroadcast, { resolveCli: name => (persistedSessions.get(name) || {}).cli, recordLimit: limitRecorder.recordSession, attemptRuntime: providerAttemptRuntime, audit: (id, event) => turnEventJournal.note(id, event) }),
 });
 app.use(express.json({ limit: '50mb' })); serviceRoutes.mountManagement(app);

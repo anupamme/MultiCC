@@ -1,5 +1,7 @@
 'use strict';
 
+const { withModelConnectWatch } = require('./model-connect-watch');
+
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { observeProxyRequest } = require('./proxy-outcome');
 const { createProxyStallWatch } = require('./proxy-stall-watch');
@@ -161,6 +163,13 @@ function createProviderProxyAdmission(options = {}) {
     return undefined;
   }
 
+  function onDelta(delta, route) {
+    const context = requestContext.getStore();
+    if ((['text', 'reasoning'].includes(delta?.type) && delta.text?.length)
+        || (delta?.type === 'tool' && delta.tool?.arguments?.length)) context?.stall?.noteProgress();
+    return options.onDelta?.(delta, route);
+  }
+
   function onUsageEvent(event) {
     const context = requestContext.getStore();
     const proxyOutcome = context ? context.observation.settle(event) : null;
@@ -227,7 +236,7 @@ function createProviderProxyAdmission(options = {}) {
 
   function invoke(handler, req, res, next) {
     const route = contextFor(req);
-    const context = { ...route, attemptScoped: !!route };
+    const context = { ...route, attemptScoped: !!route, response: res };
     context.observation = observeProxyRequest(protocol, req, res, (proxyOutcome, event) => {
       if (!context.attempt || typeof options.onOutcome !== 'function') return;
       // Transport events may fire outside AsyncLocalStorage. The closure owns
@@ -237,15 +246,17 @@ function createProviderProxyAdmission(options = {}) {
         providerId: context.providerId || context.mainProviderId,
         status: event.status, statusCode: event.statusCode, errorCode: event.errorCode,
         proxyOutcome,
+        requestDeadlineAt: context.stall?.deadlineAt(),
+        modelProgress: context.stall?.progressed(),
       });
     });
     // Idle watchdog for this one downstream response. It is created before the
     // adapter runs but installs itself only when the attempt that the adapter
-    // resolves carries a stall budget (Auto Provider routes) and this request is
+    // resolves carries a request budget and this request is
     // inference, so every other route keeps its response object untouched.
     context.stall = createProxyStallWatch({
       protocol, req, res, observation: context.observation,
-      setTimeout: options.setTimeout, clearTimeout: options.clearTimeout,
+      setTimeout: options.setTimeout, clearTimeout: options.clearTimeout, now: options.now,
       sessionId: context.sessionId, providerId: context.mainProviderId, role: context.role,
       onStall: detail => {
         reportRejection(options, {
@@ -262,7 +273,7 @@ function createProviderProxyAdmission(options = {}) {
     let result;
     try {
       const call = () => handler(req, res, next);
-      result = requestContext.run(context, call);
+      result = requestContext.run(context, () => withModelConnectWatch(context, call));
     } catch (error) {
       context.stall.dispose();
       return handleFailure(error, res, next, context);
@@ -311,12 +322,13 @@ function createProviderProxyAdmission(options = {}) {
       // The attempt is resolved immediately before the adapter dials upstream,
       // which is the moment the idle budget starts running: it covers "no first
       // byte at all" as well as "mid-stream silence".
-      context.stall?.arm(decision.attempt);
+      context.stall?.arm(role === 'main' ? decision.attempt : { ...decision.attempt, requestDeadlineAt: null });
+      if (role !== 'main') context.stall?.isolateRetryBudget();
     }
     return getProvider(appType, providerId);
   }
 
-  return Object.freeze({ app, getProvider: guardedGetProvider, onActivity, onUsageEvent });
+  return Object.freeze({ app, getProvider: guardedGetProvider, onActivity, onUsageEvent, onDelta });
 }
 
 module.exports = {

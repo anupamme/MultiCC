@@ -466,7 +466,7 @@ function createProviderRouterPort(options = {}) {
     if (protocols.includes('claude')) {
       const admission = authorizeProxyRequest ? createProviderProxyAdmission({
         protocol: 'claude', app, getProvider, authorizeProxyRequest,
-        onActivity: mountOptions.onActivity, onUsageEvent: common.onUsageEvent, onOutcome: mountOptions.onProxyOutcome,
+        onActivity: mountOptions.onActivity, onUsageEvent: common.onUsageEvent, onDelta: common.onDelta, onOutcome: mountOptions.onProxyOutcome,
         ...(onRejected ? { onRejected } : {}),
       }) : null;
       if (authorizeProxyRequest) app.use(
@@ -474,13 +474,13 @@ function createProviderRouterPort(options = {}) {
         createProviderProxyGuard({ protocol: 'claude', authorizeProxyRequest, ...(onRejected ? { onRejected } : {}) }),
       );
       const recovery = createClaudeOAuthProxyRecovery(admission ? admission.app : app,
-        { ...common, ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent } : {}), ...(mountOptions.claudeProxyPath ? { claudeProxyPath: String(mountOptions.claudeProxyPath) } : {}), ...(mountOptions.claudeProxy || {}) });
+        { ...common, ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent, onDelta: admission.onDelta } : {}), ...(mountOptions.claudeProxyPath ? { claudeProxyPath: String(mountOptions.claudeProxyPath) } : {}), ...(mountOptions.claudeProxy || {}) });
       mounted.claude = requireMethod(backend, 'mountClaudeProxy', mode === 'cpr' ? 'router' : 'legacy')(recovery.app, recovery.options);
     }
     if (protocols.includes('codex')) {
       const admission = authorizeProxyRequest ? createProviderProxyAdmission({
         protocol: 'codex', app, getProvider, authorizeProxyRequest,
-        onActivity: mountOptions.onActivity, onUsageEvent: common.onUsageEvent, onOutcome: mountOptions.onProxyOutcome,
+        onActivity: mountOptions.onActivity, onUsageEvent: common.onUsageEvent, onDelta: common.onDelta, onOutcome: mountOptions.onProxyOutcome,
         ...(onRejected ? { onRejected } : {}),
       }) : null;
       if (authorizeProxyRequest) app.use(
@@ -511,12 +511,12 @@ function createProviderRouterPort(options = {}) {
         // caller's options so the two cannot drift apart.
         genericHistoryNormalization: !historyHooks,
         getProvider: admission ? admission.getProvider : getProvider,
-        ...(admission ? { onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent } : {}),
+        ...(admission ? { onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent, onDelta: admission.onDelta } : {}),
         ...(mountOptions.codexProxyPath ? { codexProxyPath: String(mountOptions.codexProxyPath) } : {}),
       });
       mounted.codex = requireMethod(backend, 'mountCodexProxy', mode === 'cpr' ? 'router' : 'legacy')(
         admission ? admission.app : app,
-        { ...common, ...(historyHooks || {}), ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent } : {}), ...(mountOptions.codexProxyPath ? { codexProxyPath: String(mountOptions.codexProxyPath) } : {}), ...(mountOptions.codexProxy || {}) },
+        { ...common, ...(historyHooks || {}), ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent, onDelta: admission.onDelta } : {}), ...(mountOptions.codexProxyPath ? { codexProxyPath: String(mountOptions.codexProxyPath) } : {}), ...(mountOptions.codexProxy || {}) },
       );
     }
     return Object.freeze(mounted);

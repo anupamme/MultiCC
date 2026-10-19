@@ -199,6 +199,10 @@ function snapshot(record) {
     // The idle budget the proxy watchdog enforces for this physical route, and
     // whether it has already fired. A stalled attempt is not a route to replay.
     stallTimeoutMs: record.stallTimeoutMs,
+    requestTimeoutMs: record.requestTimeoutMs,
+    connectTimeoutMs: record.connectTimeoutMs,
+    requestDeadlineAt: record.requestDeadlineAt,
+    requestFailures: record.requestFailures,
     stalled: record.stalled === true,
     replayFence: record.replayFence,
     visibleOutputObserved: record.visibleOutputObserved,
@@ -671,6 +675,10 @@ function createProviderAttemptRuntime(options = {}) {
       proxyRouteToken,
       spawnKey,
       stallTimeoutMs: stallTimeoutBudget(input.stallTimeoutMs),
+      requestTimeoutMs: stallTimeoutBudget(input.requestTimeoutMs),
+      connectTimeoutMs: stallTimeoutBudget(input.connectTimeoutMs),
+      requestDeadlineAt: previous?.turnId === turnId ? previous.requestDeadlineAt : null,
+      requestFailures: previous?.turnId === turnId ? previous.requestFailures : 0,
       stalled: false,
       replayFence: continuation && previous ? previous.replayFence : 'none',
       visibleOutputObserved: !!(continuation && previous && previous.visibleOutputObserved),
@@ -1213,6 +1221,10 @@ function createProviderAttemptRuntime(options = {}) {
       return Object.freeze({ accepted: true, code: 'non_inference_request', failure: null });
     }
     if (clean(event.status).toLowerCase() !== 'error') {
+      if (proxyOutcome?.termination === 'completed') {
+        record.requestDeadlineAt = null;
+        record.requestFailures = 0;
+      }
       // A cleanly terminated inference request after an earlier transport stain
       // is host-observed proof that the upstream recovered inside this attempt.
       // Mark (never delete) the stain: the close/commit adjudicators still
@@ -1245,8 +1257,23 @@ function createProviderAttemptRuntime(options = {}) {
         && record.proxyFailure) {
       return Object.freeze({ accepted: true, code: null, failure: record.proxyFailure });
     }
+    // 只有公共请求看门狗提供预算；未托管的旧调用保持原有错误策略。
+    const budgeted = Number.isFinite(event.requestDeadlineAt) && event.requestDeadlineAt > 0
+      && (proxyOutcome?.termination === 'upstream_failure' || httpStatus >= 500
+        || httpStatus === 408 || httpStatus === 429);
+    if (budgeted) {
+      record.requestDeadlineAt = event.requestDeadlineAt;
+      record.requestFailures = (record.requestFailures || 0) + 1;
+    }
+    if (event.modelProgress === true) {
+      record.visibleOutputObserved = true;
+      if (record.replayFence === 'none') record.replayFence = 'visible_output';
+    }
     record.proxyFailure = Object.freeze({
       source: 'proxy_response',
+      ...(budgeted ? { requestDeadlineAt: record.requestDeadlineAt,
+        retryBudgetExhausted: record.requestFailures > 1 || Number(now()) >= record.requestDeadlineAt } : {}),
+      ...(event.modelProgress === true ? { partialOutput: true } : {}),
       provider: record.cli,
       providerId: record.providerId,
       providerName: record.providerName,
@@ -1262,7 +1289,7 @@ function createProviderAttemptRuntime(options = {}) {
     // and every later request for this attempt must be refused instead of
     // re-dialed. The failure above stays the stronger evidence, so the teardown
     // that follows cannot overwrite it with DOWNSTREAM_DISCONNECT.
-    if (isProxyStallCode(record.proxyFailure.code)) {
+    if (isProxyStallCode(record.proxyFailure.code) || record.proxyFailure.retryBudgetExhausted) {
       record.stalled = true;
       auditOnly(sessionId, {
         type: 'provider_attempt_stalled', operation: 'proxy_outcome',

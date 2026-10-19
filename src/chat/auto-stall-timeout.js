@@ -1,14 +1,8 @@
 'use strict';
 
-// Auto Provider only fails over when a physical attempt ERRORS. A silently
-// stalled upstream never errors: the CLI's own stream idle timeout is measured
-// in hundreds of seconds and then re-dials the same stalled line, so the pool
-// never gets a turn. The host therefore gives every AUTO inference route its own
-// idle budget and retires the attempt when the upstream goes quiet.
-//
-// Non-Auto sessions keep today's behaviour exactly: the budget is 0 (off), so
-// no watchdog is ever armed for them.
-const DEFAULT_AUTO_STALL_TIMEOUT_MS = 120_000;
+// 保留旧配置入口；所有托管会话现在使用公共模型请求策略。
+const { resolveModelRequestPolicy } = require('./model-request-policy');
+const DEFAULT_AUTO_STALL_TIMEOUT_MS = 300_000;
 const MIN_AUTO_STALL_TIMEOUT_MS = 15_000;
 const MAX_AUTO_STALL_TIMEOUT_MS = 600_000;
 
@@ -35,7 +29,7 @@ function isAutoProviderSession(session) {
 }
 
 function resolveAutoStallTimeoutMs(session, env = process.env) {
-  return isAutoProviderSession(session) ? autoStallTimeoutFromEnv(env) : 0;
+  return resolveModelRequestPolicy(session || {}, env).stallTimeoutMs;
 }
 
 module.exports = {

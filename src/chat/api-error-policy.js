@@ -55,7 +55,7 @@ const NETWORK_CODES = new Set([
 const TIMEOUT_CODES = new Set([
   'etimedout', 'timeout', 'connect_timeout', 'read_timeout', 'overall_timeout',
   'deadline_exceeded', 'und_err_connect_timeout', 'headers_timeout',
-  'watchdog', 'stream_idle_timeout',
+  'watchdog', 'stream_idle_timeout', 'model_request_deadline', 'model_connect_timeout',
   'response_stalled_mid_stream', 'response_stalled_before_response',
 ]);
 const CONTEXT_CODES = new Set([
@@ -636,6 +636,8 @@ function normalizeApiError(raw = {}, context = {}, deps = {}) {
     code: code || null,
     httpStatus,
     retryable,
+    requestDeadlineAt: Number(raw.requestDeadlineAt) || null,
+    retryBudgetExhausted: raw.retryBudgetExhausted === true || code === 'model_request_deadline',
     retryAfterMs,
     safeToRetry,
     phase,
@@ -677,6 +679,9 @@ function decideApiErrorPolicy(rawError, context = {}, deps = {}) {
   error = withMaxAttempts(error, maxAttempts);
   const nextAttempt = error.attempt + 1;
 
+  if (error.retryBudgetExhausted || (error.requestDeadlineAt && now >= error.requestDeadlineAt)) {
+    return Object.freeze({ action: 'fail_fast', reason: 'request_budget_exhausted', budgetExhaustedBy: 'request', error, attempt: error.attempt, delayMs: 0 });
+  }
   if (error.category === 'cancel_shutdown') {
     return Object.freeze({ action: 'fail_fast', reason: 'cancelled_or_shutdown', error, attempt: error.attempt, delayMs: 0 });
   }
@@ -718,7 +723,7 @@ function decideApiErrorPolicy(rawError, context = {}, deps = {}) {
     rate_limit: 2_000,
     provider_transient: 1_000,
     network: 1_000,
-    timeout: 1_500,
+    timeout: 3_000,
     unknown: 1_000,
   };
   const base = bases[error.category] || 1_000;
@@ -727,6 +732,9 @@ function decideApiErrorPolicy(rawError, context = {}, deps = {}) {
     ? Math.floor(Math.max(0, Math.min(0.999999, Number(random()) || 0)) * Math.min(1_000, exponential / 2))
     : 0;
   const delayMs = error.retryAfterMs == null ? exponential + jitter : error.retryAfterMs;
+  if (error.requestDeadlineAt && now + delayMs >= error.requestDeadlineAt) {
+    return Object.freeze({ action: 'fail_fast', reason: 'request_budget_exhausted', budgetExhaustedBy: 'request', error, attempt: error.attempt, delayMs: 0 });
+  }
   return Object.freeze({
     action: 'retry',
     reason: error.retryAfterMs == null ? 'bounded_backoff' : 'server_retry_after',
