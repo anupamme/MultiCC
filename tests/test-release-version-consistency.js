@@ -264,15 +264,22 @@ test('core runner covers every selected path and expands declared variants', () 
   //     段、未鉴权 Grok 列表可服务但不进缓存、兜底列表不缓存。完全 hermetic：
   //     fixture 文本 + mkdtemp 里的假 CLI 脚本，不碰网络/端口/真账号。
   // 317 + 1 = 318，deterministic 271，commands 299。
-  assert.equal(core.length, 318, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 318);
+  // 2026-10-18 v2.6.3 发版复核：+10 core（4 个新登记的保险箱/热词用例 +
+  // 以往漏登记、本次补齐 lane 的 4 个 + 2 个 flutter）。四个保险箱用例把
+  // 「spawn 时固定的环境」钉死：条目变化只在回合边界换进程，后台任务在跑时顺延
+  // 而不是拒绝回合。三个走 injection 的（deterministic、不 spawn 不起服务）、
+  // claude-sdk 那个真起子进程+假上游（isolated）；secret-tools 只用 127.0.0.1:0
+  // 的进程内服务与 .example.com 字符串。318 + 10 = 328，deterministic 279，
+  // isolated 26，flutter 23，commands 308。
+  assert.equal(core.length, 328, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 328);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 271);
-  assert.equal(core.filter(entry => entry.lane === 'isolated').length, 25);
-  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 22,
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 279);
+  assert.equal(core.filter(entry => entry.lane === 'isolated').length, 26);
+  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 23,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
 
   const expectedPaths = core.flatMap(entry => Array.from(
@@ -280,8 +287,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 299,
-    '296 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 308,
+    '305 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],
