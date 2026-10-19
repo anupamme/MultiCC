@@ -36,6 +36,7 @@ class AppColors {
   static const dsh = Color(0xFF2b44d6); // DeepSeek Harness brand (blue)
   static const gemini = Color(0xFF4285f4); // Gemini brand (Google blue)
   static const commandcode = Color(0xFFa599e9);
+  static const pi = Color(0xFF8b5cf6);
   static const grok = Color(0xFF8c8f96); // Grok brand (graphite)
   static const kimi = Color(0xFF0f8f8f); // Kimi Code brand (teal; the web's dark-theme hex is #13c2c2)
   static const amber = Color(0xFFa85a25);

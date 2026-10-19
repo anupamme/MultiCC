@@ -416,6 +416,7 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
     if (_pickedCli == SessionCli.codebuddy) {
       return CodebuddyModelsService.options();
     }
+    if (_pickedCli == SessionCli.pi) return const [MapEntry('', '默认（跟随 Pi 配置）')];
     if (_pickedCli == SessionCli.dsh) return kDshModelOptions;
     if (_pickedCli == SessionCli.gemini) return kGeminiModelOptions;
     if (_pickedCli == SessionCli.commandcode) {
@@ -1102,6 +1103,8 @@ class CreateSessionDialogState extends State<CreateSessionDialog> {
                         ? 'Gemini 模型 ID'
                         : _pickedCli == SessionCli.grok
                         ? 'Grok 模型 ID'
+                        : _pickedCli == SessionCli.pi
+                        ? 'Pi 模型 ID（provider/model 或 model）'
                         : t('codexModelIdHint'),
                   ),
                   autofocus: true,

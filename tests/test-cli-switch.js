@@ -27,7 +27,7 @@ function test(name, fn) {
 console.log('\nCross-CLI state tests');
 
 test('supported CLI set covers every chat adapter', () => {
-  assert.deepStrictEqual(SUPPORTED_CHAT_CLIS, ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'zcode', 'qoder', 'kimi', 'codebuddy', 'dsh', 'gemini', 'grok', 'commandcode']);
+  assert.deepStrictEqual(SUPPORTED_CHAT_CLIS, ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'zcode', 'qoder', 'kimi', 'codebuddy', 'dsh', 'gemini', 'grok', 'commandcode', 'pi']);
 });
 
 test('legacy active fields migrate into the current CLI state', () => {
@@ -418,7 +418,9 @@ test('every file-backed CLI probe finds its own store layout and only reports go
     assert.strictEqual(check('codebuddy', { cliSessionId: U(32) }), false);
 
     // No verified layout => unknown, and path-escaping ids are never trusted.
-    for (const cli of ['zcode', 'kimi', 'gemini', 'grok']) {
+    // Pi can put sessions in project/global settings or PI_CODING_AGENT_SESSION_DIR.
+    // Until the probe resolves that full chain, a missing default store proves nothing.
+    for (const cli of ['zcode', 'kimi', 'gemini', 'grok', 'pi']) {
       assert.strictEqual(check(cli, { cliSessionId: U(10) }), null, cli);
     }
     for (const bad of ['../x', 'a/b', '..', '\\x00y']) {
@@ -467,6 +469,23 @@ test('switch clears both ids when a stream-id lane\'s transcript is gone', () =>
   let probed = false;
   activateCliState({ ...session, cli: 'codex' }, 'claude', { fresh: true, nativeSessionExists: () => { probed = true; return false; } });
   assert.strictEqual(probed, false);
+});
+
+
+
+test('switching to Pi preserves its native context and strips stale provider bindings', () => {
+  const session = { cli: 'claude', kind: 'chat', provider: 'claude-provider', cliStates: {
+    pi: { cliSessionId: 'pi-id', model: 'provider/model', effort: 'off', provider: 'stale-provider',
+      providerSelection: { mode: 'auto' }, subagent: { providerId: 'sub', model: 'small' } },
+  } };
+  activateCliState(session, 'pi');
+  assert.strictEqual(session.cli, 'pi');
+  assert.strictEqual(session.cliSessionId, 'pi-id');
+  assert.strictEqual(session.effort, 'off');
+  assert.strictEqual(session.provider, null);
+  assert.strictEqual(session.providerSelection, null);
+  assert.strictEqual(session.subagent, null);
+  assert.strictEqual(session.streaming, false);
 });
 
 console.log(`\n${passed} passed`);

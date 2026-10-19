@@ -25,6 +25,9 @@
 //   dsh                 ~/.dsh/sessions/<slug>/<id>/ (the id is the directory)
 // zcode, kimi, gemini and grok have no layout verified against real ids (see
 // native-session-guard.js), so they stay "unknown" instead of guessing.
+// Pi also stays unknown: its default timestamp_uuid.jsonl store is known, but
+// sessionDir can be overridden by project/global settings and environment.
+// A scan of ~/.pi/agent/sessions alone cannot establish that a session is gone.
 
 const fs = require('node:fs');
 const os = require('node:os');

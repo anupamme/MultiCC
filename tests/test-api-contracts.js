@@ -373,3 +373,11 @@ test('chat worktree guidance treats sync API as manual and permits safe Agent se
   assert.strictEqual(buildSubagentProviderHint(null), '');
   assert.match(buildSubagentProviderHint({ providerId: 'p', model: 'm' }), /Sub-agent provider configured.*p \/ m/);
 });
+
+test('Pi sessions retain their CLI identity through the public contract', () => {
+  const dto = toSessionDto({ id: 'pi-contract', dirId: 'directory-contract', cli: 'pi', kind: 'chat',
+    model: 'provider/model', effort: 'off', cliSessionId: 'private-native-id' });
+  assert.equal(dto.cli, 'pi');
+  assertValid('session.schema.json', dto);
+  assert.equal(serialized(dto).includes('private-native-id'), false);
+});

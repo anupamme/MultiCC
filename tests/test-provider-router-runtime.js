@@ -720,3 +720,17 @@ test('server is a thin runtime consumer and keeps CC-Switch import read-only', (
   assert.equal(/providerRouterRuntime\.[A-Za-z]*(?:takeover|restore)/i.test(server), false);
   assert.equal(/providerRouterRuntime\.[A-Za-z]*(?:takeover|restore)/i.test(providerRoutes), false);
 });
+
+
+test('Pi keeps local configuration outside CPR unknown-CLI materialization', () => {
+  for (const mode of ['legacy', 'shadow', 'cpr']) {
+    const calls = [];
+    const runtime = createProviderRouterRuntime({ mode, providers: fakeProviders(calls), router: fakeRouter(calls), ...HOST });
+    const session = { id: 'pi-session', cli: 'pi', model: 'provider/model' };
+    assert.deepEqual(runtime.resolveSpawnEnv(session).env, {});
+    assert.deepEqual(runtime.buildChildEnv({ PI_CODING_AGENT_DIR: '/pi-config' }, session, { EXTRA: 'yes' }).env,
+      { PI_CODING_AGENT_DIR: '/pi-config', EXTRA: 'yes' });
+    assert.equal(calls.some(call => call.method === 'cprResolveSpawnEnv' || call.method === 'cprBuildChildEnv'), false);
+    assert.equal(calls.filter(call => call.method === 'legacyResolveSpawnEnv').length, 1);
+  }
+});

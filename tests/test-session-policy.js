@@ -356,3 +356,21 @@ test('managed Codex defaults never borrow the old DeepSeek local config or repor
   assert.equal(policy.effectiveSessionModel(session), null);
   assert.equal(policy.effectiveSessionModel({ cli: 'codex' }), 'deepseek-flash', 'native route still uses its own config');
 });
+
+
+test('Pi thinking levels remain native and never inherit Claude defaults', t => {
+  const home = tempHome(t);
+  writeJson(path.join(home, '.claude', 'settings.json'), { model: 'claude-only', effort: 'high' });
+  const policy = createHarness(home);
+  assert.equal(policy.effectiveSessionModel({ cli: 'pi' }), null);
+  assert.equal(policy.effectiveSessionEffort({ cli: 'pi' }), null);
+  for (const effort of ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+    assert.equal(policy.normalizeEffort(effort), effort);
+    assert.equal(policy.validEffortForCli('pi', effort), true);
+    assert.equal(policy.effectiveSessionEffort({ cli: 'pi', effort }), effort);
+  }
+  for (const effort of ['none', 'max', 'ultra', 'ultracode']) {
+    assert.equal(policy.validEffortForCli('pi', effort), false);
+    assert.equal(policy.effectiveSessionEffort({ cli: 'pi', effort }), null);
+  }
+});

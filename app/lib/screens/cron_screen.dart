@@ -436,11 +436,11 @@ class _CronEditorState extends State<_CronEditor> {
     MapEntry('0 9 1 * *', '每月 1 号 9:00'),
   ];
 
-  /// This picker's curated five, with the two lanes by family: a scheduled task is a
+  /// This picker's curated CLIs, with the two lanes by family: a scheduled task is a
   /// chat session, so it runs the promoted resident lane (claude-exp / codex-exp) —
   /// the one-shot `claude -p` / `codex exec` commands belong to the terminal. A rule
   /// already bound to one of those still lists its own lane (see [_cronClis]).
-  static const _cliChoices = <String>['claude-exp', 'codex-exp', 'opencode', 'zcode', 'qoder'];
+  static const _cliChoices = <String>['claude-exp', 'codex-exp', 'opencode', 'zcode', 'qoder', 'pi'];
 
   List<String> get _cronClis => _cliChoices.contains(_cli)
       ? _cliChoices

@@ -199,6 +199,7 @@ test('switching to vendor-auth CLIs (codebuddy / dsh / gemini / grok) passes the
       gemini: { available: true },
       grok: { available: true },
       commandcode: { available: true },
+      pi: { available: true },
     },
   });
   const res1 = await invoke({ body: { cli: 'codebuddy' } });
@@ -223,6 +224,10 @@ test('switching to vendor-auth CLIs (codebuddy / dsh / gemini / grok) passes the
   const resCommandCode = await invoke({ body: { cli: 'commandcode' } });
   assert.equal(resCommandCode.statusCode, 200);
   assert.equal(session.cli, 'commandcode');
+  const resPi = await invoke({ body: { cli: 'pi' } });
+  assert.equal(resPi.statusCode, 200);
+  assert.equal(resPi.body.cli, 'pi');
+  assert.equal(session.cli, 'pi');
   const res3 = await invoke({ body: { cli: 'workbuddy' } });
   assert.equal(res3.statusCode, 400);
   assert.equal(res3.body.error, `cli must be one of: ${SUPPORTED_CHAT_CLIS.join(', ')}`);
@@ -442,6 +447,7 @@ test('install-specs returns the static official command table', async () => {
     gemini: { auto: true, command: 'npm install -g @google/gemini-cli', display: 'npm install -g @google/gemini-cli' },
     grok: { auto: true, command: 'npm install -g @xai-official/grok', display: 'npm install -g @xai-official/grok' },
     commandcode: { auto: true, command: 'npm install -g command-code', display: 'npm install -g command-code' },
+    pi: { auto: true, command: 'npm install -g @earendil-works/pi-coding-agent', display: 'npm install -g @earendil-works/pi-coding-agent' },
   });
   assert.equal(res.body.specs['claude-exp'], undefined);
   assert.equal(res.body.specs['codex-exp'], undefined);

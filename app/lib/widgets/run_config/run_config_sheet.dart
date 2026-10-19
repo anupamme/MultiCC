@@ -1105,6 +1105,21 @@ abstract class RunConfigSheetBase extends State<RunConfigSheet> {
           style: TextStyle(color: AppColors.faint, fontSize: 12),
         ),
         const SizedBox(height: 5),
+        if (_cli == SessionCli.pi)
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (var i = 0; i < rungs.length; i += 1)
+                _segmentedButton(
+                  key: Key('run-effort-${rungs[i].$1}'),
+                  label: rungs[i].$2,
+                  selected: i == index,
+                  onTap: () => setState(() => _effort = rungs[i].$1),
+                ),
+            ],
+          )
+        else
         Row(
           children: [
             for (var i = 0; i < rungs.length; i += 1) ...[

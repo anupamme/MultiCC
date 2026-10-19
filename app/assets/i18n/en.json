@@ -1310,6 +1310,7 @@
   "usageContextSelection": "{kept} retained · {omitted} omitted",
   "usageContextRetained": "Previously injected; not resent this turn",
   "aiConfigDefaultFollowDsh": "Default (follows DSH config)",
+  "aiConfigDefaultFollowPi": "Default (follow Pi settings)",
   "aiConfigDefaultFollowGemini": "Default (follows Gemini config)",
   "aiConfigDefaultFollowGrok": "Default (follows Grok config)",
   "aiConfigDefaultFollowProvider": "Default (follows the Provider)",

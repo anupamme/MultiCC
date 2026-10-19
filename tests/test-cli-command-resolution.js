@@ -62,6 +62,7 @@ try {
     GEMINI_CMD: '/custom/gemini',
     GROK_CMD: '/custom/grok',
     COMMAND_CODE_CMD: '/custom/command-code',
+    PI_CMD: '/custom/pi',
   };
   assert.deepStrictEqual(resolveCliCommands({
     isWindows: false,
@@ -82,6 +83,7 @@ try {
     gemini: '/custom/gemini',
     grok: '/custom/grok',
     commandcode: '/custom/command-code',
+    pi: '/custom/pi',
   }, 'explicit command overrides are returned verbatim');
 
   const engineOverride = path.join(root, 'custom-zcode.cjs');
@@ -123,7 +125,7 @@ try {
     homeDir: path.join(root, 'missing-home'),
     logger: silentLogger(),
   }), {
-    claude: 'claude', 'claude-exp': process.execPath, codex: 'codex', 'codex-exp': 'codex', opencode: 'opencode', zcode: 'zcode', qoder: 'qoderclicn', kimi: 'kimi', codebuddy: 'codebuddy', dsh: 'dsh', gemini: 'gemini', grok: 'grok', commandcode: 'command-code',
+    claude: 'claude', 'claude-exp': process.execPath, codex: 'codex', 'codex-exp': 'codex', opencode: 'opencode', zcode: 'zcode', qoder: 'qoderclicn', kimi: 'kimi', codebuddy: 'codebuddy', dsh: 'dsh', gemini: 'gemini', grok: 'grok', commandcode: 'command-code', pi: 'pi',
   }, 'POSIX fallback names remain stable when no executable exists');
   assert.deepStrictEqual(resolveCliCommands({
     isWindows: true,
@@ -132,7 +134,7 @@ try {
     homeDir: path.join(root, 'missing-home'),
     logger: silentLogger(),
   }), {
-    claude: 'claude.exe', 'claude-exp': process.execPath, codex: 'codex.exe', 'codex-exp': 'codex.exe', opencode: 'opencode.exe', zcode: 'zcode.exe', qoder: 'qoderclicn.exe', kimi: 'kimi.exe', codebuddy: 'codebuddy.exe', dsh: 'dsh.exe', gemini: 'gemini.cmd', grok: 'grok.cmd', commandcode: 'command-code.cmd',
+    claude: 'claude.exe', 'claude-exp': process.execPath, codex: 'codex.exe', 'codex-exp': 'codex.exe', opencode: 'opencode.exe', zcode: 'zcode.exe', qoder: 'qoderclicn.exe', kimi: 'kimi.exe', codebuddy: 'codebuddy.exe', dsh: 'dsh.exe', gemini: 'gemini.cmd', grok: 'grok.cmd', commandcode: 'command-code.cmd', pi: 'pi.cmd',
   }, 'Windows fallback names remain stable when no executable exists');
 
   // resolveCodex 的候选顺序是策略而不是随手排的: 官方 curl 安装脚本(BIN_DIR 默认

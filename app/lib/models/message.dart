@@ -483,6 +483,7 @@ enum SessionCli {
   gemini,
   grok,
   commandcode,
+  pi,
 }
 
 /// Interactive TUI terminal, or stream-json chat.
@@ -512,6 +513,8 @@ SessionCli? tryParseCli(String? s) {
       return SessionCli.gemini;
     case 'commandcode':
       return SessionCli.commandcode;
+    case 'pi':
+      return SessionCli.pi;
     case 'grok':
       return SessionCli.grok;
     default:
@@ -539,6 +542,7 @@ extension SessionCliX on SessionCli {
     SessionCli.gemini => 'gemini',
     SessionCli.grok => 'grok',
     SessionCli.commandcode => 'commandcode',
+    SessionCli.pi => 'pi',
     SessionCli.claude => 'claude',
   };
 
@@ -606,6 +610,7 @@ extension SessionCliX on SessionCli {
     SessionCli.gemini => '',
     SessionCli.grok => '',
     SessionCli.commandcode => '',
+    SessionCli.pi => 'Thinking Level',
   };
 
   String get defaultEffort => switch (this) {
@@ -621,6 +626,7 @@ extension SessionCliX on SessionCli {
     SessionCli.gemini => '',
     SessionCli.grok => '',
     SessionCli.commandcode => '',
+    SessionCli.pi => '',
   };
 
   List<String> get effortOptions => switch (this) {
@@ -679,6 +685,7 @@ extension SessionCliX on SessionCli {
     SessionCli.gemini => const [],
     SessionCli.grok => const [],
     SessionCli.commandcode => const [],
+    SessionCli.pi => const ['', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh'],
   };
 }
 
@@ -784,6 +791,9 @@ String claudeModelShortName(String? model) {
 
 String modelShortNameForCli(SessionCli cli, String? model) {
   if (cli.isClaudeFamily) return claudeModelShortName(model);
+  if (cli == SessionCli.pi && (model == null || model.isEmpty)) {
+    return '默认（跟随 Pi 配置）';
+  }
   if (cli == SessionCli.qoder) {
     for (final option in kQoderModelOptions) {
       if (option.key == (model ?? '')) return option.value;
@@ -838,15 +848,18 @@ String modelDisplayName(SessionCli cli, String? model, {Map? aliasMap}) {
 String effortShortNameForCli(SessionCli cli, String? effort) {
   if (!cli.supportsEffort) return '';
   final v = (effort == null || effort.isEmpty) ? cli.defaultEffort : effort;
-  if ((cli == SessionCli.opencode || cli == SessionCli.codebuddy) &&
+  if ((cli == SessionCli.opencode || cli == SessionCli.codebuddy || cli == SessionCli.pi) &&
       v.isEmpty) {
     return 'Default';
   }
   if (cli.isCodexFamily ||
+      cli == SessionCli.pi ||
       cli == SessionCli.opencode ||
       cli == SessionCli.qoder ||
       cli == SessionCli.codebuddy) {
     switch (v) {
+      case 'off':
+        return 'Off';
       case 'minimal':
         return 'Minimal';
       case 'low':
@@ -1560,6 +1573,8 @@ class Directory {
   final int zcodeChatCount;
   final int qoderTerminalCount;
   final int qoderChatCount;
+  final int piTerminalCount;
+  final int piChatCount;
   final DirectoryPushState? pushState;
 
   Directory({
@@ -1577,6 +1592,8 @@ class Directory {
     this.zcodeChatCount = 0,
     this.qoderTerminalCount = 0,
     this.qoderChatCount = 0,
+    this.piTerminalCount = 0,
+    this.piChatCount = 0,
     this.pushState,
   });
 
@@ -1600,6 +1617,8 @@ class Directory {
       zcodeChatCount: (counts['zcode_chat'] as num?)?.toInt() ?? 0,
       qoderTerminalCount: (counts['qoder_terminal'] as num?)?.toInt() ?? 0,
       qoderChatCount: (counts['qoder_chat'] as num?)?.toInt() ?? 0,
+      piTerminalCount: (counts['pi_terminal'] as num?)?.toInt() ?? 0,
+      piChatCount: (counts['pi_chat'] as num?)?.toInt() ?? 0,
       pushState: json['pushState'] is Map
           ? DirectoryPushState.fromJson(
               (json['pushState'] as Map).cast<String, dynamic>(),
@@ -1618,7 +1637,9 @@ class Directory {
       zcodeTerminalCount +
       zcodeChatCount +
       qoderTerminalCount +
-      qoderChatCount;
+      qoderChatCount +
+      piTerminalCount +
+      piChatCount;
 }
 
 class DirectoryPushState {

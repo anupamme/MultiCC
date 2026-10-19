@@ -239,6 +239,12 @@ const Map<String, CliFamily> kCliFamilies = <String, CliFamily>{
         'chat': <CliLane>[CliLane('gemini', engine: 'gemini acp')],
         'terminal': <CliLane>[CliLane('gemini')],
       }),
+  'pi': CliFamily('Pi', AppColors.pi, mark: 'P', providerless: true,
+      update: CliUpdate(package: '@earendil-works/pi-coding-agent', command: 'npm install -g @earendil-works/pi-coding-agent'),
+      lanes: <String, List<CliLane>>{
+        'chat': <CliLane>[CliLane('pi', engine: 'pi --mode json')],
+        'terminal': <CliLane>[CliLane('pi')],
+      }),
   'commandcode': CliFamily('Command Code', AppColors.commandcode, mark: '⌘', providerless: true,
       update: CliUpdate(package: 'command-code', command: 'npm install -g command-code'),
       lanes: <String, List<CliLane>>{

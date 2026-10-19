@@ -35,6 +35,7 @@ const TRUSTED_TEXT_SOURCES = new Set([
   'gemini_event',
   'grok_event',
   'commandcode_event',
+  'pi_event',
   'process_stderr',
   'aux_http',
   'host_interruption',
@@ -200,7 +201,7 @@ function sanitizeMessage(value, fallback = 'Upstream API request failed', maxLen
 // — the error text would land in the transcript as if it were partial output.
 // "Codex Exp" is the resident lane's former name, kept for text that persisted
 // under it.
-const ERROR_ONLY_PREFIX_RE = /^(?:api\s*error|failed to authenticate|error:|codex\s*(?:exec\s*|exp\s*)?(?:error|出错)|claude\s*(?:error|出错)|opencode\s*(?:error|出错)|qoder\s*(?:error|出错)|zcode\s*(?:error|出错)|kimi\s*(?:error|出错)|codebuddy\s*(?:error|出错)|dsh\s*(?:error|出错)|gemini\s*(?:error|出错)|grok\s*(?:error|出错)|stream disconnected|connection (?:closed|reset|refused)|request (?:failed|timed out)|rate limit|overloaded|internal server error|service unavailable|timeout|timed out)/i;
+const ERROR_ONLY_PREFIX_RE = /^(?:api\s*error|failed to authenticate|error:|codex\s*(?:exec\s*|exp\s*)?(?:error|出错)|claude\s*(?:error|出错)|opencode\s*(?:error|出错)|qoder\s*(?:error|出错)|zcode\s*(?:error|出错)|kimi\s*(?:error|出错)|codebuddy\s*(?:error|出错)|dsh\s*(?:error|出错)|gemini\s*(?:error|出错)|grok\s*(?:error|出错)|pi\s*(?:error|出错)|stream disconnected|connection (?:closed|reset|refused)|request (?:failed|timed out)|rate limit|overloaded|internal server error|service unavailable|timeout|timed out)/i;
 
 function isErrorOnlyText(value) {
   const text = String(value || '').trim();
@@ -258,6 +259,7 @@ function envelopeSourceFor(provider) {
   if (name === 'gemini') return 'gemini_event';
   if (name === 'grok') return 'grok_event';
   if (name === 'commandcode') return 'commandcode_event';
+  if (name === 'pi') return 'pi_event';
   return 'claude_result';
 }
 
