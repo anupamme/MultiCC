@@ -701,7 +701,7 @@
     paintDirectoryGit();
   }
 
-  // 面板收缩（手机上这张卡占半屏）：偏好记在本机，所有目录共用。
+  // 面板收缩（手机上这张卡占半屏，多数时候用户并不看这里）：默认收起；点开后偏好记在本机，所有目录共用。
   const GIT_COLLAPSE_KEY = 'multicc.air.gitPanelCollapsed';
   function applyGitCollapsed(collapsed) {
     const body = $('directory-git-body');
@@ -715,8 +715,8 @@
   {
     const toggle = $('directory-git-toggle');
     if (toggle) {
-      let collapsed = false;
-      try { collapsed = localStorage.getItem(GIT_COLLAPSE_KEY) === '1'; } catch (_) { /* 无存储就不记 */ }
+      let collapsed = true;
+      try { collapsed = localStorage.getItem(GIT_COLLAPSE_KEY) !== '0'; } catch (_) { /* 无存储就不记 */ }
       applyGitCollapsed(collapsed);
       toggle.onclick = () => {
         collapsed = !collapsed;
