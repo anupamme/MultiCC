@@ -141,3 +141,19 @@ test('artifact publisher records explicit binary-source associations without tur
   assert.equal(requests[0].permanent, undefined);
   assert.match(requests[0].url, /^\/artifacts\/[^/]+\/final.mp4$/);
 });
+
+test('dot-prefixed nested references retain source artifacts through cleanup', t => {
+  const { permanentArtifactIds } = require('../src/artifact-retention');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-dot-relative-artifacts-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const now = Date.now(), old = now - 8 * DAY_MS;
+  for (const id of ['final', 'input', 'unrelated']) artifactDir(root, id, old);
+  fs.mkdirSync(path.join(root, 'final', 'assets'));
+  fs.writeFileSync(path.join(root, 'final', 'assets', 'main.css'), 'body{background:url(./../../input/image.png)}');
+  const kept = permanentArtifactIds([{ url: '/artifacts/final/index.html', permanent: true }], [root]);
+  assert.deepEqual([...kept].sort(), ['final', 'input']);
+  for (const id of fs.readdirSync(root)) fs.utimesSync(path.join(root, id), new Date(old), new Date(old));
+  assert.equal(createCleanup({ artifactsDir: root, now: () => now, log() {} })(7 * DAY_MS, kept), 1);
+  assert.equal(fs.existsSync(path.join(root, 'input')), true);
+  assert.equal(fs.existsSync(path.join(root, 'unrelated')), false);
+});
