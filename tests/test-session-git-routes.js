@@ -113,6 +113,7 @@ test('mountRoutes installs the Git routes once per app', () => {
   assert.deepEqual([...fixture.app.routes.keys()].sort(), [
     'GET /api/git/commit-diff',
     'GET /api/git/commit-files',
+    'GET /api/git/directory-file-diff',
     'GET /api/git/directory-status',
     'GET /api/git/log',
     'GET /api/sessions/:id/diff',
@@ -128,7 +129,7 @@ test('mountRoutes installs the Git routes once per app', () => {
 test('every Git route is registered through the shared async error boundary', () => {
   let wrapped = 0;
   createFixture({ asyncHandler: handler => { wrapped += 1; return handler; } });
-  assert.equal(wrapped, 11);
+  assert.equal(wrapped, 12);
 });
 
 test('production host delegates the complete Git route surface through narrow ports', () => {
@@ -520,6 +521,58 @@ test('directory-status reports unpushed commits and main-checkout dirty files', 
   });
   // The worktree subtree never reads as a pending change of the main checkout.
   assert.equal(response.body.dirtyFiles.some(file => file.path.includes('.multicc-worktrees')), false);
+});
+
+test('directory-status keeps the first letter of the first dirty path (runGit trims unless raw)', async () => {
+  const fixture = createFixture({
+    implementations: {
+      // Mirrors the real runGit: stdout is trimmed unless the caller passes raw.
+      gitRunQueued: async (repo, args, options = {}) => {
+        if (args[0] === 'rev-parse' && args.includes('HEAD')) return 'main';
+        if (args[0] === 'rev-parse') throw new Error('no upstream');
+        if (args[0] === 'status') {
+          const out = ' M air-todos.json\n?? notes/scratch.md\n';
+          return options.raw === true ? out : out.trim();
+        }
+        return '';
+      },
+    },
+  });
+  const response = await invoke(fixture.app.routes.get('GET /api/git/directory-status'), {
+    query: { dirId: 'd1' },
+  });
+  assert.deepEqual(response.body.dirtyFiles, [
+    { status: 'M', path: 'air-todos.json' },
+    { status: '??', path: 'notes/scratch.md' },
+  ]);
+});
+
+test('directory-file-diff returns the working-tree patch, untracked files as all-added', async () => {
+  const fixture = createFixture({
+    readFile: async () => Buffer.from('hello\nworld\n'),
+    implementations: {
+      gitRunQueued: async (repo, args) => {
+        if (args[0] === 'diff') return args.includes('tracked.js') ? 'diff --git a/tracked.js b/tracked.js\n@@ -1 +1 @@\n-a\n+b' : '';
+        if (args.includes('ls-files')) return 'fresh.txt\0';
+        return '';
+      },
+    },
+  });
+  const route = fixture.app.routes.get('GET /api/git/directory-file-diff');
+  const tracked = await invoke(route, { query: { dirId: 'd1', path: 'tracked.js' } });
+  assert.equal(tracked.statusCode, 200);
+  assert.match(tracked.body.patch, /^diff --git a\/tracked\.js/);
+  assert.equal(tracked.body.untracked, false);
+  const fresh = await invoke(route, { query: { dirId: 'd1', path: 'fresh.txt' } });
+  assert.equal(fresh.body.untracked, true);
+  assert.match(fresh.body.patch, /\+\+\+ b\/fresh\.txt/);
+  assert.match(fresh.body.patch, /@@ -0,0 \+1,2 @@\n\+hello\n\+world$/);
+  for (const bad of ['', '-rf', '../etc/passwd', '/etc/passwd', 'a/../b']) {
+    const rejected = await invoke(route, { query: { dirId: 'd1', path: bad } });
+    assert.equal(rejected.statusCode, 400, `rejects ${JSON.stringify(bad)}`);
+  }
+  assert.equal((await invoke(route, { query: { dirId: 'nope', path: 'x' } })).statusCode, 404);
+  assert.equal((await invoke(route, { query: { path: 'x' } })).statusCode, 400);
 });
 
 test('directory-status falls back to the base branch without an upstream', async () => {

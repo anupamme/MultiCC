@@ -39,3 +39,7 @@
   .git-manager:not([data-step="files"]) .git-manager-files,
   .git-manager:not([data-step="diff"]) .git-manager-diff { display: none; }
 }
+
+.git-manager-single { height: auto; max-height: min(780px, calc(100dvh - 40px)); }
+.git-manager-single .git-manager-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.git-manager-single .git-manager-diff { flex: 1; min-height: 120px; }

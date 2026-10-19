@@ -952,6 +952,58 @@ function createSessionGitRuntime(rawDeps) {
     // checkout itself looks like — commits not pushed, and files changed
     // outside any session worktree. Session worktrees each have merge-status;
     // the checkout they all merge into had nothing watching it.
+    // Working-tree diff of one file in the directory's main checkout, for the
+    // "uncommitted files" list: tracked files diff against HEAD, untracked ones
+    // render as an all-added patch (git diff cannot see them).
+    app.get('/api/git/directory-file-diff', async (req, res) => {
+      const { dirId, path: filePath } = req.query;
+      if (!dirId || typeof dirId !== 'string') return res.status(400).json({ error: 'dirId required' });
+      const dir = deps.directories.get(dirId);
+      if (!dir) return res.status(404).json({ error: 'directory not found' });
+      if (!deps.existsSync(dir.path)) return res.status(404).json({ error: 'repo path missing' });
+      if (typeof filePath !== 'string' || !filePath || filePath.length > 4096
+        || filePath.startsWith('-') || path.isAbsolute(filePath) || filePath.split('/').includes('..')) {
+        return res.status(400).json({ error: 'invalid path' });
+      }
+      const patchCap = 256 * 1024;
+      let patch = '';
+      let truncated = false;
+      let error = null;
+      let untracked = false;
+      try {
+        patch = await deps.gitRunQueued(dir.path, ['diff', '--no-color', 'HEAD', '--', filePath],
+          { maxBuffer: 512 * 1024 + 16 * 1024 });
+      } catch (cause) {
+        // A repo with no commits has no HEAD: fall back to the index diff.
+        try {
+          patch = await deps.gitRunQueued(dir.path, ['diff', '--no-color', '--', filePath],
+            { maxBuffer: 512 * 1024 + 16 * 1024 });
+        } catch (_) { error = errorText(cause); }
+      }
+      if (!patch && !error) {
+        const untrackedPaths = await listUntrackedFiles(deps.gitRunQueued, dir.path);
+        if (untrackedPaths.includes(filePath)) {
+          untracked = true;
+          const buffer = await deps.readFile(path.join(dir.path, filePath)).catch(() => null);
+          if (buffer) {
+            if (isProbablyBinary(buffer)) {
+              patch = `Binary files /dev/null and b/${filePath} differ`;
+            } else {
+              const lines = buffer.toString('utf8').split(/\r?\n/);
+              if (lines.length && lines[lines.length - 1] === '') lines.pop();
+              patch = [
+                `diff --git a/${filePath} b/${filePath}`, 'new file mode 100644', 'index 0000000..0000000',
+                '--- /dev/null', `+++ b/${filePath}`, `@@ -0,0 +1,${lines.length} @@`,
+                ...lines.map(line => `+${line}`),
+              ].join('\n');
+            }
+          }
+        }
+      }
+      if (patch.length > patchCap) { patch = patch.slice(0, patchCap); truncated = true; }
+      return res.json({ path: filePath, patch, truncated, error, untracked });
+    });
+
     app.get('/api/git/directory-status', async (req, res) => {
       const dirId = req.query.dirId;
       if (!dirId || typeof dirId !== 'string') return res.status(400).json({ error: 'dirId required' });
@@ -986,7 +1038,9 @@ function createSessionGitRuntime(rawDeps) {
         }
         const dirtyFiles = [];
         try {
-          const status = await deps.gitRunQueued(dir.path, ['status', '--porcelain'], { maxBuffer: 256 * 1024 });
+          // raw: runGit trims by default, which eats the leading space of " M file" and
+          // makes slice(3) chop the first letter of the first path.
+          const status = await deps.gitRunQueued(dir.path, ['status', '--porcelain'], { maxBuffer: 256 * 1024, raw: true });
           for (const line of String(status).split('\n')) {
             if (line.length < 4) continue;
             const filePath = line.slice(3).replace(/ -> /, ' → ');

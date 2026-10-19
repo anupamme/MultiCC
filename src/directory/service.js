@@ -264,7 +264,8 @@ function createDirectoryService({ repo, git, sessions, events, fsPort, helpers, 
     const d = repo.get(id);
     if (!d) return err('not_found', 'directory not found');
     try {
-      const out = (await git.statusPorcelain(d.path)).trim();
+      // trimEnd only: a leading " M" space is part of the XY column.
+      const out = (await git.statusPorcelain(d.path)).trimEnd();
       const files = out ? out.split('\n').filter(Boolean).map(line => ({
         // xy status (e.g. " M", "??", "A ") + path. --porcelain never quotes
         // paths unless they contain special chars, so split once from index 2.
