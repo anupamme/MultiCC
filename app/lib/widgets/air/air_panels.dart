@@ -416,6 +416,32 @@ class AirTaskTile extends StatelessWidget {
               Row(
                 children: [
                   AirTaskStatusBadge(task: task, fontSize: 10.5),
+                  // 被忽略的任务仍留在「异常 / 等待回复」清单里：那颗小标说明
+                  // 「它只是不再进『等我处理』」，不是故障已经被处理掉了。
+                  if (task.todoIgnored) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      key: ValueKey('air-task-ignored-${task.id}'),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.faint.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(
+                          AppColors.radiusPill,
+                        ),
+                      ),
+                      child: Text(
+                        t('airTodoIgnoredBadge'),
+                        style: const TextStyle(
+                          color: AppColors.muted,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                   // 手动标记的待办（运行态那三类已经由徽标自己说了）。
                   if (task.manualTodo) ...[
                     const SizedBox(width: 6),
@@ -531,7 +557,7 @@ class AirDirectoryStats extends StatelessWidget {
         .length;
     const filters = [
       AirDirectoryTaskFilter.running,
-      AirDirectoryTaskFilter.todo,
+      AirDirectoryTaskFilter.needsMe,
       AirDirectoryTaskFilter.error,
       AirDirectoryTaskFilter.today,
       AirDirectoryTaskFilter.all,
@@ -542,9 +568,9 @@ class AirDirectoryStats extends StatelessWidget {
           key: ValueKey('air-stat-${filter.name}'),
           label: switch (filter) {
             AirDirectoryTaskFilter.running => '进行中',
-            // 「待办」和目录首页点开的清单同源：数字与列表都走
-            // [AirDirectoryTaskFilter.todo.matches]（= airTaskTodo）。
-            AirDirectoryTaskFilter.todo => t('airTodoFilter'),
+            // 「等我处理」和目录首页点开的清单同源：数字与列表都走
+            // [AirDirectoryTaskFilter.needsMe.matches]（= airTaskNeedsMe）。
+            AirDirectoryTaskFilter.needsMe => t('airNeedsMeFilter'),
             AirDirectoryTaskFilter.error => '异常',
             AirDirectoryTaskFilter.today => '今日完成',
             AirDirectoryTaskFilter.all => '全部',
@@ -559,7 +585,7 @@ class AirDirectoryStats extends StatelessWidget {
           },
           tone: switch (filter) {
             AirDirectoryTaskFilter.running => _StatTone.green,
-            AirDirectoryTaskFilter.todo => _StatTone.amber,
+            AirDirectoryTaskFilter.needsMe => _StatTone.amber,
             AirDirectoryTaskFilter.error => _StatTone.red,
             AirDirectoryTaskFilter.today => _StatTone.blue,
             AirDirectoryTaskFilter.all => _StatTone.purple,

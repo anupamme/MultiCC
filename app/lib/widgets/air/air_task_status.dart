@@ -30,7 +30,11 @@ bool airTaskDoneToday(AirTask task, [DateTime? now]) {
 }
 
 /// Shared by directory counters and their result list (same rules as Web).
+///
+/// [needsMe] 是系统汇总口径（等待回复 / 异常 / 需要交互 / 手动待办，排除归档与
+/// 已忽略）；[todo] 只表示用户手动标记的待办。两者在筛选下拉里并列，互不包含。
 enum AirDirectoryTaskFilter {
+  needsMe('等我处理'),
   todo('待办'),
   open('进行中与待处理'),
   running('运行中'),
@@ -41,14 +45,14 @@ enum AirDirectoryTaskFilter {
   achieved('完成目标'),
   interact('需要交互'),
   all('全部记录'),
-  archived('已归档'),
-  ignored('已忽略');
+  archived('已归档');
 
   const AirDirectoryTaskFilter(this.label);
   final String label;
 
   bool matches(AirTask task) => switch (this) {
-    todo => airTaskTodo(task),
+    needsMe => airTaskNeedsMe(task),
+    todo => task.manualTodo,
     open => task.status != 'done' && task.status != 'archived',
     running => airTaskRunning(task),
     waiting => airTaskStatus(task) == CanonicalStatus.waiting,
@@ -63,16 +67,15 @@ enum AirDirectoryTaskFilter {
           task.goalState == 'interact',
     all => true,
     archived => task.status == 'archived',
-    ignored => task.todoIgnored,
   };
 }
 
-/// 「待办」：需要我接手的四类任务放在一起 —— 等待用户输入（waiting）、出错
+/// 「等我处理」：需要我接手的四类任务放在一起 —— 等待用户输入（waiting）、出错
 /// （error）、执行成功但需要交互（succeeded + goalState=interact），以及手动标记
 /// 为待办的（[AirTask.manualTodo]）。归档的和用户手动忽略的都不算；手动标记的
 /// 任务即便已经完成也留着，直到用户自己取消。Web 对应
 /// `public/air-task-todo.js` 的 `isTodo`。
-bool airTaskTodo(AirTask task) {
+bool airTaskNeedsMe(AirTask task) {
   if (task.status == 'archived') return false;
   // 用户说了「这条先别提醒我」：忽略压过运行态和手动标记，直到服务端因为新
   // 动静（或用户取消忽略）把它从忽略清单里拿掉。统计、徽标都走这一条判定。
@@ -82,6 +85,60 @@ bool airTaskTodo(AirTask task) {
   return status == CanonicalStatus.waiting ||
       status == CanonicalStatus.error ||
       (status == CanonicalStatus.succeeded && task.goalState == 'interact');
+}
+
+/// 旧名保留：大量调用点与测试仍按「待办」称呼这份汇总口径。新代码请用
+/// [airTaskNeedsMe]（汇总叫「等我处理」，手动标记才叫「待办」）。
+bool airTaskTodo(AirTask task) => airTaskNeedsMe(task);
+
+/// 任务行上唯一那颗动作按钮该做什么。优先级：
+/// 已忽略（取消忽略）> 手动标记（取消待办）> 随状态的动作 > 标记待办。
+/// 忽略与手动待办在服务端是两份独立清单，这里只决定先展示哪一个。
+enum AirTaskAction {
+  unignore,
+  unmarkTodo,
+  ignoreError,
+  ignoreWaiting,
+  markAchieved,
+  markTodo,
+}
+
+AirTaskAction airTaskPrimaryAction(AirTask task) {
+  if (task.todoIgnored) return AirTaskAction.unignore;
+  if (task.manualTodo) return AirTaskAction.unmarkTodo;
+  final status = airTaskStatus(task);
+  if (status == CanonicalStatus.error) return AirTaskAction.ignoreError;
+  if (status == CanonicalStatus.waiting) return AirTaskAction.ignoreWaiting;
+  if (status == CanonicalStatus.succeeded && task.goalState == 'interact') {
+    return AirTaskAction.markAchieved;
+  }
+  return AirTaskAction.markTodo;
+}
+
+extension AirTaskActionPresentation on AirTaskAction {
+  String get labelKey => switch (this) {
+    AirTaskAction.unignore => 'airTodoUnignore',
+    AirTaskAction.unmarkTodo => 'airTodoUnmark',
+    AirTaskAction.ignoreError => 'airTodoIgnoreError',
+    AirTaskAction.ignoreWaiting => 'airTodoIgnoreWaiting',
+    AirTaskAction.markAchieved => 'airTodoMarkAchieved',
+    AirTaskAction.markTodo => 'airTodoMark',
+  };
+
+  IconData get icon => switch (this) {
+    AirTaskAction.unignore => Icons.visibility_rounded,
+    AirTaskAction.unmarkTodo => Icons.flag_rounded,
+    AirTaskAction.ignoreError || AirTaskAction.ignoreWaiting =>
+      Icons.visibility_off_outlined,
+    AirTaskAction.markAchieved => Icons.check_circle_outline_rounded,
+    AirTaskAction.markTodo => Icons.outlined_flag_rounded,
+  };
+
+  /// 走 `/api/air/todos/ignore` 的三种动作（忽略 / 取消忽略）。
+  bool get usesIgnoreEndpoint =>
+      this == AirTaskAction.unignore ||
+      this == AirTaskAction.ignoreError ||
+      this == AirTaskAction.ignoreWaiting;
 }
 
 StatusSpec airTaskSpec(AirTask task) =>
@@ -198,21 +255,24 @@ Set<String> airRunningDirectories(Iterable<AirTask> tasks) => {
     if (airTaskRunning(task)) task.dirId,
 };
 
-/// 控制台「待办」分区的完整清单，也是侧栏徽标、统计格和移动工作区卡片的唯一
-/// 来源。Web 的 `todoTasks(data)` 与它是同一份口径。
+/// 控制台「等我处理」分区的完整清单，也是侧栏徽标、统计格和移动工作区卡片的
+/// 唯一来源。Web 的 `todoTasks(data)` 与它是同一份口径。
 ///
 /// 顺序是**最早的消息时间在前**（`lastMessageAt`，没有消息时间才退回
-/// `updatedAt`）：待办不是「最近发生了什么」，而是「哪件事等我最久」——先处理
-/// 老问题才不会再压出新的。同一条时间戳再按 id 兜底，两次渲染的顺序因此稳定。
-List<AirTask> airTodoTasks(Iterable<AirTask> tasks) {
+/// `updatedAt`）：等我处理不是「最近发生了什么」，而是「哪件事等我最久」——先
+/// 处理老问题才不会再压出新的。同一条时间戳再按 id 兜底，两次渲染的顺序因此稳定。
+List<AirTask> airNeedsMeTasks(Iterable<AirTask> tasks) {
   int todoAt(AirTask task) =>
       task.lastMessageAt > 0 ? task.lastMessageAt : task.updatedAt;
-  return tasks.where(airTaskTodo).toList()
+  return tasks.where(airTaskNeedsMe).toList()
     ..sort((a, b) {
       final byTime = todoAt(a).compareTo(todoAt(b));
       return byTime != 0 ? byTime : a.id.compareTo(b.id);
     });
 }
+
+/// 旧名保留：历史调用点与测试仍按「待办清单」称呼这份汇总清单。
+List<AirTask> airTodoTasks(Iterable<AirTask> tasks) => airNeedsMeTasks(tasks);
 
 /// 任务行的第二层信息：状态徽标已经说了「在不在跑」，这里补记录类型、阶段和
 /// 资源去向（同 Web 的 `taskDetail`）。

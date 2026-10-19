@@ -258,8 +258,8 @@
    * 算出来的名次抹掉。除了不排序，其余筛选一字不差 —— 状态与目录的口径只有这一份。
    */
   function filterTasks(tasks, filter = {}, directoryName = () => '', { keepOrder = false } = {}) {
-    // 旧的「等待回复」档已并入待办（同一份 isTodo）：遗留的 waiting 值回落到 todo。
-    const status = filter.status === 'waiting' ? 'todo' : filter.status || 'open';
+    // 旧的「等待回复」档已并入「等我处理」（needsMe）：遗留的 waiting 值回落到 needs。
+    const status = filter.status === 'waiting' ? 'needs' : filter.status || 'open';
     const dir = filter.dir || 'all';
     const needle = String(filter.query || '').trim().toLowerCase();
     // 状态口径与目录概览的统计卡同源：taskStatus 是权威判定（archived/done 生命周期
@@ -276,18 +276,18 @@
                   : status === 'running' ? isRunning(task)
                     : status === 'waiting' ? taskStatus(task) === 'waiting'
                       : status === 'error' ? taskStatus(task) === 'error'
-                        // 待办：等输入 / 出错 / 需要交互 / 手动标记，判定只在 air-task-todo.js 一处。
-                        : status === 'todo' ? !!root.MultiCCAirTaskTodo?.isTodo(task)
-                          // 已忽略：用户主动压下去、还能从这里取回的那批。
-                          : status === 'ignored' ? !!root.MultiCCAirTaskTodo?.isIgnored?.(task.id)
+                        // 等我处理：等输入 / 出错 / 需要交互 / 手动标记，判定只在 air-task-todo.js 一处。
+                        : status === 'needs' ? !!root.MultiCCAirTaskTodo?.needsMe(task)
+                          // 待办：只列用户手动标记的（不含系统判出来的三类）。
+                          : status === 'todo' ? !!root.MultiCCAirTaskTodo?.isManualTodo(task)
                           : !['done', 'archived'].includes(task.status))
       .filter(task => dir === 'all' || task.dirId === dir);
     if (keepOrder) return rows;
     // 本地过滤按标题（和目录名）匹配：它仍是即时反馈，也是全文检索不可用时的退路。
     const matched = !needle ? rows
       : rows.filter(task => `${task.title || ''} ${directoryName(task.dirId)}`.toLowerCase().includes(needle));
-    // 待办默认「最早的消息时间在前」：放得最久的那条先处理。
-    return status === 'todo'
+    // 等我处理 / 待办默认「最早的消息时间在前」：放得最久的那条先处理。
+    return status === 'needs' || status === 'todo'
       ? matched.sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')))
       : matched.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
   }
@@ -355,11 +355,9 @@
     if (snippet) copy.append(snippet);
     body.append(copy, make('time', task.updatedAt ? new Date(task.updatedAt).toLocaleString(getLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''));
     row.append(body);
-    // 「全部」那格的清单可以删，也就可以就地标记 / 取消待办、忽略 / 取消忽略。
-    const todo = options.deletable ? root.MultiCCAirTaskTodo?.rowButton(task) : null;
+    // 行尾只有一颗动词按钮：忽略 / 取消忽略、标记 / 取消待办、标记达成随状态换。
+    const todo = root.MultiCCAirTaskTodo?.rowButton(task);
     if (todo) row.append(todo);
-    const ignore = root.MultiCCAirTaskTodo?.ignoreButton?.(task);
-    if (ignore) row.append(ignore);
     if (options.deletable && context.deleteTask) {
       const remove = action(t('airAdminDelete'), async event => {
         event.stopPropagation();
@@ -372,14 +370,14 @@
     return row;
   }
 
-  // 「待办」：跨所有目录、需要我接手的任务，判定只在 air-task-todo.js 一处 ——
+  // 「等我处理」：跨所有目录、需要我接手的任务，判定只在 air-task-todo.js 一处 ——
   // 等回答 / 出错 / 跑完要交互 / 手动标记，归档与手动忽略的不算。正在跑的不算：
   // 它在跑，不需要我做任何事。排序按最后消息时间从早到晚：先处理放得最久的那条。
   // 这张清单同时喂首页卡片、侧栏「控制台」徽标与统计卡，三处不会各说各话。
   const todoAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
   function todoTasks(data) {
     return (data?.tasks || [])
-      .filter(task => root.MultiCCAirTaskTodo?.isTodo(task))
+      .filter(task => root.MultiCCAirTaskTodo?.needsMe(task))
       .sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')));
   }
 
@@ -444,8 +442,8 @@
     const directories = data?.directories || [];
     const active = tasks.filter(task => task.status !== 'done' && task.status !== 'archived');
     const executing = tasks.filter(isRunning).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
-    // 「待办」一格是 isTodo 全集；「异常」必须独立于忽略开关：从全部非归档任务里
-    // 按 taskStatus 取，被手动忽略的出错任务仍留在异常计数与列表里（忽略只管待办）。
+    // 「等我处理」一格是 needsMe 全集；「异常」必须独立于忽略开关：从全部非归档任务里
+    // 按 taskStatus 取，被手动忽略的出错任务仍留在异常计数与列表里（忽略只管等我处理）。
     const todos = todoTasks(data);
     const failed = tasks.filter(task => taskStatus(task) === 'error')
       .sort((a, b) => todoAt(a) - todoAt(b) || String(a.id || '').localeCompare(String(b.id || '')));
@@ -464,7 +462,7 @@
     const stats = make('div', null, 'admin-stats console-filter-tabs');
     const tiles = [
       ['running', t('airAdminTileRunning'), executing.length, running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
-      ['todo', t('airTodoFilter'), todos.length, todos.length ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), todos.length ? 'amber' : ''],
+      ['needs', t('airNeedsMeFilter'), todos.length, todos.length ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), todos.length ? 'amber' : ''],
       ['error', t('airAdminTileError'), failed.length, failed.length ? t('airAdminTileErrorDetail') : t('airAdminTileErrorNone'), failed.length ? 'red' : ''],
       ['today', t('airAdminTileToday'), finished.length, t('airAdminTileTodayDetail'), 'blue'],
       ['all', t('airAdminTileAll'), active.length, t('airAdminTileAllDetail', { n: tasks.length }), 'purple'],
@@ -517,7 +515,7 @@
     const statusPick = make('select');
     statusPick.id = 'console-task-status';
     statusPick.setAttribute('aria-label', t('airAdminFilterByStatus'));
-    for (const [value, text] of [['todo', t('airTodoFilter')], ['ignored', t('airTodoIgnoredFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
+    for (const [value, text] of [['needs', t('airNeedsMeFilter')], ['todo', t('airTodoFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
       const option = make('option', text);
       option.value = value;
       statusPick.append(option);
@@ -584,8 +582,8 @@
       try { visits = JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}') || {}; } catch (_) {}
       const messageAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
       const sortAt = task => consoleFilter.sort === 'visit' ? Number(visits[task.id] || 0) : messageAt(task);
-      // 待办按「最早的消息时间在前」；其余清单仍是最近动过的在前。
-      const direction = consoleFilter.status === 'todo' ? -1 : 1;
+      // 等我处理 / 待办按「最早的消息时间在前」；其余清单仍是最近动过的在前。
+      const direction = consoleFilter.status === 'needs' || consoleFilter.status === 'todo' ? -1 : 1;
       return rows.sort((a, b) => direction * (sortAt(b.task) - sortAt(a.task))
         || direction * (messageAt(b.task) - messageAt(a.task))
         || String(a.task.id).localeCompare(String(b.task.id)));
@@ -620,7 +618,7 @@
     // 四个固定过滤项的清单：口径就是上面那几格数字用的同一份数组，数字和清单不会分叉。
     const fixedLists = {
       running: [executing, 'airAdminNoRunningTasks'],
-      todo: [todos, 'airAdminNoAttentionTasks'],
+      needs: [todos, 'airAdminNoAttentionTasks'],
       error: [failed, 'airAdminNoErrorTasks'],
       today: [finished, 'airAdminNoDoneToday'],
     };
@@ -797,16 +795,18 @@
         const age = root.MultiCCFormat?.formatRelativeTime?.(todoAt(task)) || '';
         const meta = make('small', [context.directoryName(task.dirId), age].filter(Boolean).join(' · '));
         meta.title = todoAt(task) ? new Date(todoAt(task)).toLocaleString(getLocale()) : '';
+        const flags = root.MultiCCAirTaskTodo?.mark(task);
+        if (flags) meta.append(flags);
         const actions = make('div', null, 'console-priority-actions');
-        actions.append(action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)),
-          action(t('airTodoIgnore'), () => { void root.MultiCCAirTaskTodo?.toggleIgnore?.(task.id); }, 'console-priority-ignore'));
+        const todoAction = root.MultiCCAirTaskTodo?.rowButton?.(task, 'console-priority-ignore');
+        actions.append(action(t(error ? 'airOpenFailure' : 'airOpenReply'), () => navigate(task.dirId, task.id)), ...(todoAction ? [todoAction] : []));
         card.append(statusBadge(task), make('h3', task.title || t('airAdminUntitledTask')),
           make('p', t(error ? 'airFailureHint' : 'airWaitingHint')), meta, actions);
         return card;
       }));
       if (!loud.length) cards.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airNothingNeedsYou'));
       // 卡片张数仍按可用高度裁（fitPriorityCards）：卡片多了只显示前几行，
-      // 不让「待办」把目录和「更多」顶出首屏。
+      // 不让「等我处理」把目录和「更多」顶出首屏。
       requestAnimationFrame(() => { if (cards.isConnected) fitPriorityCards(cards); });
 
       const runningNow = executing.filter(task => matchesTask(task, needle));

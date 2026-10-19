@@ -113,9 +113,9 @@ class AirSidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final directory = _directory;
-    // 侧栏入口上那个数字就是控制台「待办」分区里的条数：同一份 airTaskTodo，
-    // 忽略掉的任务两边一起消失。
-    final todoCount = airTodoTasks(data?.tasks ?? const []).length;
+    // 侧栏入口上那个数字就是控制台「等我处理」分区里的条数：同一份
+    // airTaskNeedsMe，被忽略的任务两边一起消失。
+    final todoCount = airNeedsMeTasks(data?.tasks ?? const []).length;
     return Drawer(
       width: width,
       elevation: 0,

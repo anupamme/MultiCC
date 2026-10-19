@@ -20,7 +20,7 @@ class AirMobileWorkspace extends StatefulWidget {
     this.recent = false,
     this.initialFilter,
     this.setupNotice,
-    this.onToggleTodo,
+    this.onTaskAction,
   });
   final AirSnapshot? data;
   final String? directoryId;
@@ -37,8 +37,8 @@ class AirMobileWorkspace extends StatefulWidget {
   final AirDirectoryTaskFilter? initialFilter;
   final Widget? setupNotice;
 
-  /// 长按任务行：切换「手动待办」（同目录任务列表，见 toggleAirTaskTodo）。
-  final ValueChanged<AirTask>? onToggleTodo;
+  /// 长按任务行：执行这条任务当前状态的唯一动作（见 [airTaskPrimaryAction]）。
+  final ValueChanged<AirTask>? onTaskAction;
 
   @override
   State<AirMobileWorkspace> createState() => _AirMobileWorkspaceState();
@@ -53,11 +53,12 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   /// 控制台卡片当前那一格；null = 最近任务（同 Web `air-mobile.js` 的 consoleView）。
   AirDirectoryTaskFilter? _consoleFilter;
 
-  /// 状态格：「待办」打头（等待输入、出错、需要交互和手动标记的都在这一格，见
-  /// airTaskTodo），「今日完成」紧随其后，手机宽度不用横滑就能点到（同 Web
-  /// MOBILE_FILTERS）。判定都走 [AirDirectoryTaskFilter.matches]，与目录首页、
-  /// 桌面控制台同口径。
+  /// 状态格：「等我处理」打头（等待输入、出错、需要交互和手动标记的都在这一格，
+  /// 见 airTaskNeedsMe），「待办」只收手动标记，「今日完成」紧随其后，手机宽度
+  /// 不用横滑就能点到（同 Web MOBILE_FILTERS）。判定都走
+  /// [AirDirectoryTaskFilter.matches]，与目录首页、桌面控制台同口径。
   static const _statusFilters = [
+    (AirDirectoryTaskFilter.needsMe, 'airNeedsMeFilter'),
     (AirDirectoryTaskFilter.todo, 'airTodoFilter'),
     (AirDirectoryTaskFilter.today, 'airAdminTileToday'),
     (AirDirectoryTaskFilter.running, 'airAdminTileRunning'),
@@ -69,8 +70,8 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   /// 新建、这台手机没点开过的任务会被挤到底，而快照里的 tasks 本身是从旧到新排的。
   List<AirTask> get _rows => _rowsOf(withPins: true);
 
-  /// 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），按待办口径
-  /// 取等我最久的那几条（见 [airTodoTasks]）。
+  /// 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），按「等我处理」
+  /// 口径取等我最久的那几条（见 [airNeedsMeTasks]）。
   List<AirTask> _rowsOf({required bool withPins}) {
     final data = widget.data;
     final all = (data?.tasks ?? <AirTask>[])
@@ -96,9 +97,9 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   Widget _task(AirTask task) => AirTaskTile(
     task: task,
     onTap: () => widget.onOpenTask(task),
-    onLongPress: widget.onToggleTodo == null
+    onLongPress: widget.onTaskAction == null
         ? null
-        : () => widget.onToggleTodo!(task),
+        : () => widget.onTaskAction!(task),
     showTime: true,
     trailing: widget.data?.isPinned(task.id) == true
         ? const Icon(Icons.push_pin_rounded, size: 16, color: AppColors.accent)
@@ -115,9 +116,9 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
           (t) => widget.directoryId == null || t.dirId == widget.directoryId,
         )
         .toList();
-    // 与控制台「待办」同一份口径：等回答 / 出错 / 需要交互 / 手动标记，
+    // 与控制台「等我处理」同一份口径：等回答 / 出错 / 需要交互 / 手动标记，
     // 排除归档与被忽略，最早的消息在前。
-    final todo = airTodoTasks(scoped);
+    final needsMe = airNeedsMeTasks(scoped);
     final recentAll = _rowsOf(withPins: false);
     final consoleRows = _consoleFilter == null
         ? recentAll
@@ -196,7 +197,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
           ] else ...[
             if (widget.setupNotice != null) widget.setupNotice!,
             const SizedBox(height: 20),
-            if (todo.isNotEmpty)
+            if (needsMe.isNotEmpty)
               Container(
                 key: const ValueKey('air-mobile-todo-card'),
                 decoration: BoxDecoration(
@@ -210,20 +211,20 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                     Padding(
                       padding: const EdgeInsets.all(14),
                       child: Text(
-                        t('airAdminAttention'),
+                        t('airNeedsMeFilter'),
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
-                    ...todo.take(3).map(_task),
-                    if (todo.length > 3)
+                    ...needsMe.take(3).map(_task),
+                    if (needsMe.length > 3)
                       TextButton(
                         key: const ValueKey('air-mobile-todo-all'),
-                        // 带着「待办」这一格进最近任务页：数量、清单和点开的
-                        // 是同一份清单，不会显示成「全部任务」。
+                        // 带着「等我处理」这一格进最近任务页：数量、清单和点开
+                        // 的是同一份清单，不会显示成「全部任务」。
                         onPressed: () =>
-                            widget.onRecent(AirDirectoryTaskFilter.todo),
+                            widget.onRecent(AirDirectoryTaskFilter.needsMe),
                         child: Text(
-                          '${t('airAdminFilterAll')} · ${todo.length}',
+                          '${t('airAdminFilterAll')} · ${needsMe.length}',
                         ),
                       ),
                   ],

@@ -214,8 +214,8 @@
   const taskMessageAt = task => Number(task?.lastMessageAt || task?.updatedAt || 0);
   const taskVisitAt = task => Number(taskVisitedAt[task?.id] || 0);
   const taskSortAt = task => directoryTaskSort === 'visit' ? taskVisitAt(task) : taskMessageAt(task);
-  const compareDirectoryTasks = (a, b) => (directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskSortAt(b) - taskSortAt(a))
-    || (directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskMessageAt(b) - taskMessageAt(a))
+  const compareDirectoryTasks = (a, b) => (directoryTaskFilter.status === 'needs' || directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskSortAt(b) - taskSortAt(a))
+    || (directoryTaskFilter.status === 'needs' || directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskMessageAt(b) - taskMessageAt(a))
     || String(a?.id || '').localeCompare(String(b?.id || ''));
   // 目录首页那份任务列表（`#directory-task-list`）的排序：用户 pin 住的那几条
   // 照 pin 顺序排最前，其余保持 [tasks] 原有的相对顺序。与侧栏
@@ -554,11 +554,11 @@
     const dir = data?.directories.find(directory => directory.id === directoryId);
     const tasks = (data?.tasks || []).filter(task => task.dirId === directoryId);
     // 统计口径与 filterTasks 完全同源：运行中/异常按 taskStatus（archived/done 生命
-    // 周期优先；异常含被手动忽略的），待办按 air-task-todo 的 isTodo。点击卡片 = 按该
+    // 周期优先；异常含被手动忽略的），等我处理按 air-task-todo 的 needsMe。点击卡片 = 按该
     // 档筛选，两者不可能再出现「卡片 2 个、列表 29 个」的分叉。
     const taskStatusOf = task => window.MultiCCAirAdmin?.taskStatus?.(task) || 'unknown';
     const running = tasks.filter(isRunningTask);
-    const todos = tasks.filter(task => window.MultiCCAirTaskTodo?.isTodo(task));
+    const todos = tasks.filter(task => window.MultiCCAirTaskTodo?.needsMe(task));
     const errored = tasks.filter(task => taskStatusOf(task) === 'error');
     // 与控制台共用同一份「今日完成」判定：本轮成功或旧生命周期 done，并且更新时间
     // 落在本地今天。判定导出自 air-admin，避免两处各算一次后在零点/旧记录上分叉。
@@ -585,7 +585,7 @@
     };
     $('directory-stats').replaceChildren(
       stat(t('airAdminTileRunning'), running.length, '', 'green', 'running'),
-      stat(t('airTodoFilter'), todos.length, '', 'amber', 'todo'),
+      stat(t('airNeedsMeFilter'), todos.length, '', 'amber', 'needs'),
       stat(t('airAdminTileError'), errored.length, '', 'red', 'error'),
       stat(t('airAdminTileToday'), finishedToday.length, t('airAdminTileTodayDetail'), 'blue', 'today'),
       stat(t('airAdminTileAll'), tasks.length, t('airDirArchiveWorktrees', {
@@ -1563,7 +1563,7 @@
     applyTaskTitleEditing(selectedTask || null);
     $('directory-memo').hidden = !dir || mode !== 'tasks' || !!taskId;
     for (const id of ['quick-merge', 'quick-auto-commit', 'quick-share', 'pin-task',
-      'todo-task', 'ignore-task', 'details-toggle', 'chat-more']) $(id).hidden = !taskId;
+      'todo-task', 'details-toggle', 'chat-more']) $(id).hidden = !taskId;
     paintPinButton(); window.MultiCCAirTaskTodo?.paintHeader(taskId);
     $('task-state').disabled = !taskId;
     if (!taskId) { $('task-state').classList.remove('attention'); $('task-state').removeAttribute('title'); }

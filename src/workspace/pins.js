@@ -106,15 +106,6 @@ function createTaskIdListRuntime(rawDeps, spec) {
     pinned = normalizePins(taskIds, limit).filter(id => !known || known.has(id));
     try { persist(); }
     catch (error) { pinned = previous; throw error; }
-    // 清单本身已经落盘，关联钩子（如「标记待办清除忽略」）失败只影响另一份
-    // 文件，不该把这次点击变成 500。
-    if (typeof deps.onAdded === 'function') {
-      for (const id of pinned) {
-        if (previous.includes(id)) continue;
-        try { deps.onAdded(id); }
-        catch (e) { logger.warn(`[multicc/${kind}] onAdded hook failed for ${id}: ${e.message}`); }
-      }
-    }
     return read();
   }
 

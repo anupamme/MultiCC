@@ -151,14 +151,13 @@ function mountAirRoutes(app, deps) {
         file: deps.todosFile || (deps.pinsFile ? require('node:path').join(require('node:path').dirname(deps.pinsFile), 'air-todos.json') : undefined),
         listTaskIds: () => boardTasks().map(task => task.id),
         logger: deps.logger || console,
-        // 标记为待办与「手动忽略」互斥：加进待办就清掉它的忽略。
-        onAdded: taskId => todoIgnores().clear(taskId),
       });
     }
     return todoRuntime;
   };
-  // 手动忽略（./todo-ignores.js）：读时按「任务还在、且忽略之后没有新 updatedAt」
-  // 剪枝，所以 listTasks 给的是完整任务（带 updatedAt），不是 id 数组。
+  // 手动忽略（./todo-ignores.js）：只对「出错 / 等待回复」这两类待办来源有意义。
+  // 类别和「这一次问题何时发生」都由下面 projectRunStateOf / todoProblemOf 折出，
+  // 与快照里 tasks[].runState 是同一份口径（客户端只读不推）。
   let todoIgnoreRuntime = null;
   const todoIgnores = () => {
     if (!todoIgnoreRuntime) {
@@ -167,17 +166,41 @@ function mountAirRoutes(app, deps) {
       todoIgnoreRuntime = createAirTodoIgnoreRuntime({
         file: deps.todoIgnoresFile || sibling(deps.todosFile) || sibling(deps.pinsFile),
         listTasks: () => boardTasks(),
+        problemOf: task => todoProblemOf(task, Date.now()),
         readTodos: () => todos().read(),
-        // 忽略一个任务时把它从手动待办里移除（两者互斥）。
-        onIgnored: taskId => {
-          const current = todos().read();
-          if (current.includes(taskId)) todos().replace(current.filter(id => id !== taskId));
-        },
         logger: deps.logger || console,
       });
     }
     return todoIgnoreRuntime;
   };
+  // 与 /api/air 快照 tasks[].runState 完全相同的折叠：排队事件写下的乐观值先按
+  // 会话受理物证自愈，再把陈旧的 worker 声明投影回会话真实状态。这一份口径同时
+  // 给快照和「手动忽略」用，杜绝两处各自猜一个状态。
+  function projectRunStateOf(task, now) {
+    const hasTurnState = sessionId => core.sessionHasTurn(deps.records.get(sessionId));
+    return core.deadDispatchClaim(task, core.taskRunSessionIds(task).some(hasTurnState), now)
+      ? 'idle'
+      : (core.staleWorkerClaim(task, deps.getSessionRunState, now) || task.runState || null);
+  }
+
+  // 待办来源类别 + 「这一次问题什么时候开始」。出错/等待的落判都会写
+  // taskState.endedAt（state-machine 的 dispatchStateAction），等待还有
+  // pendingUserInput.createdAt 兜底。这些字段只随状态变更动；改名、移动、已读、
+  // 生命周期调整只会推大 task.updatedAt，不能拿来判「新的一次」。
+  function todoProblemOf(task, now) {
+    const runState = projectRunStateOf(task, now);
+    const kind = runState === 'error' ? 'error' : runState === 'waiting' ? 'waiting' : null;
+    if (!kind) return { kind: null, occurredAt: 0 };
+    const sessionId = task.chatSessionId || task.sessionId || null;
+    const taskState = (sessionId && deps.records.get(sessionId)?.taskState) || {};
+    const pending = taskState.pendingUserInput || null;
+    const occurredAt = Number(taskState.endedAt)
+      || Number(pending && pending.createdAt)
+      || Number(taskState.lastTurnEndedAt)
+      || 0;
+    return { kind, occurredAt: occurredAt > 0 ? occurredAt : 0 };
+  }
+
   /** 独立任务列表与 pin 共用同一可见集合；会话内尚未隔离的任务只保留消息归属。 */
   function boardTasks() {
     const board = deps.getBoard?.() || {};
@@ -301,8 +324,7 @@ function mountAirRoutes(app, deps) {
     // 与任务板同一条自愈规则（见 task-board/view.js 的 deadDispatchClaim /
     // sessionHasTurn）：派发时写下的乐观 runState，如果名下会话拿不出受理物证，
     // 就证明这一轮从没被受理过 —— 不把这类卡片继续报成「执行中」（否则它会挂在
-    // 控制台上直到天荒地老）。
-    const hasTurnState = sessionId => core.sessionHasTurn(deps.records.get(sessionId));
+    // 控制台上直到天荒地老）。折叠本身在 projectRunStateOf，与「手动忽略」共用。
     const projectNow = Date.now();
     const admission = deps.admission.snapshot();
     lap('admissionMs');
@@ -355,8 +377,7 @@ function mountAirRoutes(app, deps) {
         // active/done/archived 三个人为的生命周期取值，「执行中」根本不在里面。
         // 客户端只读它，不推断它。
         // 自愈：证明这一轮从没被受理过的卡片按空闲投影，而不是永久「执行中」。
-        runState: core.deadDispatchClaim(t, core.taskRunSessionIds(t).some(hasTurnState), projectNow)
-          ? 'idle' : (core.staleWorkerClaim(t, deps.getSessionRunState, projectNow) || t.runState || null),
+        runState: projectRunStateOf(t, projectNow),
         // ✅ 那一格的子状态（达成目标 / 需要交互，读不到就是 null = 老样子的「执行
         // 成功」）。判定在服务端 classify 落盘时做完（src/classify/vocab.js
         // goalStateForClassify），客户端只读不推；它只配 succeeded 用，别的状态一律

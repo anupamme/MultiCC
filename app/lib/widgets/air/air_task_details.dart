@@ -6,6 +6,7 @@ import '../../theme.dart';
 import '../../utils/status_presentation.dart';
 import 'air_role_editor.dart';
 import 'air_task_actions.dart';
+import 'air_task_status.dart';
 
 /// 等用户回答的那个词。状态词只有一份（`utils/status_presentation.dart` 的
 /// `airLabelKey` 列，Air 面与徽标共用），所以交付卡里那几处「等待回答」不再手写：
@@ -479,7 +480,11 @@ class AirTaskDetailsPanel extends StatefulWidget {
     this.onTaskMoved,
     this.onTaskRemoved,
     this.todo = false,
+    this.todoIgnored = false,
+    this.task,
     this.onToggleTodo,
+    this.onToggleIgnore,
+    this.onMarkAchieved,
   });
 
   final String taskId;
@@ -512,9 +517,22 @@ class AirTaskDetailsPanel extends StatefulWidget {
   /// 打开面板那一刻它是否被手动标记为待办（清单在宿主的快照里，不在详情接口里）。
   final bool todo;
 
+  /// 打开面板那一刻它是否被忽略（同一份快照）。
+  final bool todoIgnored;
+
+  /// 宿主手里的任务行快照：详情按钮的动作（忽略异常 / 忽略等待 / 标记达成…）
+  /// 要靠它的运行状态与 goalState 才判得出来。
+  final AirTask? task;
+
   /// 「标记为待办 / 取消待办」：宿主负责写服务端并刷新快照，返回是否成功。
   /// 不传就不出这颗按钮。
   final Future<bool> Function()? onToggleTodo;
+
+  /// 「忽略 / 取消忽略」（异常 / 等待回复）。不传就不出这颗按钮。
+  final Future<bool> Function()? onToggleIgnore;
+
+  /// 「标记达成」（需要交互）。不传就不出这颗按钮。
+  final Future<bool> Function()? onMarkAchieved;
 
   @override
   State<AirTaskDetailsPanel> createState() => _AirTaskDetailsPanelState();
@@ -526,12 +544,47 @@ class _AirTaskDetailsPanelState extends State<AirTaskDetailsPanel> {
   bool _loading = true;
   bool _working = false;
   late bool _todo = widget.todo;
+  late bool _ignored = widget.todoIgnored;
+  late String? _goalState = widget.task?.goalState;
 
   @override
   void initState() {
     super.initState();
     _load();
   }
+
+  /// 详情里那颗唯一的动作按钮：优先级同任务行（已忽略 > 手动待办 > 状态动作 >
+  /// 标记待办）。没有快照行时退回「标记 / 取消待办」这一对，老调用点行为不变。
+  AirTaskAction get _action {
+    final task = widget.task;
+    if (task == null) {
+      return _todo ? AirTaskAction.unmarkTodo : AirTaskAction.markTodo;
+    }
+    return airTaskPrimaryAction(
+      task.copyWith(
+        manualTodo: _todo,
+        todoIgnored: _ignored,
+        goalState: _goalState,
+      ),
+    );
+  }
+
+  bool get _actionAvailable => switch (_action) {
+    AirTaskAction.unignore ||
+    AirTaskAction.ignoreError ||
+    AirTaskAction.ignoreWaiting => widget.onToggleIgnore != null,
+    AirTaskAction.markAchieved => widget.onMarkAchieved != null,
+    AirTaskAction.markTodo || AirTaskAction.unmarkTodo =>
+      widget.onToggleTodo != null,
+  };
+
+  VoidCallback? get _onAction => switch (_action) {
+    AirTaskAction.unignore ||
+    AirTaskAction.ignoreError ||
+    AirTaskAction.ignoreWaiting => _toggleIgnore,
+    AirTaskAction.markAchieved => _markAchieved,
+    AirTaskAction.markTodo || AirTaskAction.unmarkTodo => _toggleTodo,
+  };
 
   Future<void> _toggleTodo() async {
     final toggle = widget.onToggleTodo;
@@ -542,6 +595,30 @@ class _AirTaskDetailsPanelState extends State<AirTaskDetailsPanel> {
     setState(() {
       _working = false;
       if (ok) _todo = !_todo;
+    });
+  }
+
+  Future<void> _toggleIgnore() async {
+    final toggle = widget.onToggleIgnore;
+    if (toggle == null || _working) return;
+    setState(() => _working = true);
+    final ok = await toggle();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      if (ok) _ignored = !_ignored;
+    });
+  }
+
+  Future<void> _markAchieved() async {
+    final mark = widget.onMarkAchieved;
+    if (mark == null || _working) return;
+    setState(() => _working = true);
+    final ok = await mark();
+    if (!mounted) return;
+    setState(() {
+      _working = false;
+      if (ok) _goalState = 'achieved';
     });
   }
 
@@ -805,8 +882,8 @@ class _AirTaskDetailsPanelState extends State<AirTaskDetailsPanel> {
             (directory) => directory.id != widget.dirId,
           ),
           busy: _working,
-          todo: _todo,
-          onTodo: widget.onToggleTodo == null ? null : _toggleTodo,
+          action: _action,
+          onAction: _actionAvailable ? _onAction : null,
           onArchive: _toggleArchive,
           onMove: _moveTask,
           onDelete: _deleteTask,
@@ -1026,12 +1103,13 @@ class _LifecycleActions extends StatelessWidget {
     required this.onArchive,
     required this.onMove,
     required this.onDelete,
-    this.todo = false,
-    this.onTodo,
+    this.action = AirTaskAction.markTodo,
+    this.onAction,
   });
 
-  final bool todo;
-  final VoidCallback? onTodo;
+  /// 当前该显示哪一颗动作：随任务状态变化（同任务行的唯一按钮）。
+  final AirTaskAction action;
+  final VoidCallback? onAction;
   final bool archived;
   final bool readOnly;
   final bool canMove;
@@ -1048,16 +1126,18 @@ class _LifecycleActions extends StatelessWidget {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        if (onTodo != null)
+        if (onAction != null)
           OutlinedButton.icon(
             key: const ValueKey('air-details-todo'),
-            onPressed: busy ? null : onTodo,
+            onPressed: busy ? null : onAction,
             icon: Icon(
-              todo ? Icons.flag_rounded : Icons.outlined_flag_rounded,
+              action.icon,
               size: 17,
-              color: todo ? AppColors.warning : null,
+              color: action == AirTaskAction.unmarkTodo
+                  ? AppColors.warning
+                  : null,
             ),
-            label: Text(t(todo ? 'airTodoUnmark' : 'airTodoMark')),
+            label: Text(t(action.labelKey)),
           ),
         OutlinedButton.icon(
           key: const ValueKey('air-details-archive'),

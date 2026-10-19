@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../i18n.dart';
 import '../../services/air_service.dart';
 import '../../theme.dart';
+import 'air_task_status.dart';
 
 Set<String> _taskDeleteRisks(Object error) {
   if (error is! AirTaskActionException) return const {};
@@ -12,6 +13,18 @@ Set<String> _taskDeleteRisks(Object error) {
             code == 'task_workspace_dirty' || code == 'task_workspace_unmerged',
       )
       .toSet();
+}
+
+/// 任务动作失败时给人看的那句话。服务端对「当前状态不能这么做」回的是错误码
+/// （`todo_ignore_not_applicable` / `mark_achieved_not_applicable`），直接显示码
+/// 等于什么都没说；其余错误仍保留原文。
+String airTaskActionErrorMessage(Object error) {
+  final raw = error.toString().replaceFirst('Exception: ', '');
+  if (raw.contains('todo_ignore_not_applicable') ||
+      raw.contains('mark_achieved_not_applicable')) {
+    return t('airTodoErrNotApplicable');
+  }
+  return raw;
 }
 
 /// 标记 / 取消「手动待办」，并用一条 SnackBar 回执。清单在服务端
@@ -46,7 +59,55 @@ Future<bool> toggleAirTaskTodo({
   } catch (error) {
     if (!context.mounted) return false;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      SnackBar(content: Text(airTaskActionErrorMessage(error))),
+    );
+    return false;
+  }
+}
+
+/// 标记 / 取消同一条任务上的任意一个手动动作，供非乐观更新的宿主使用：
+/// 手动待办走 `/api/air/todos/toggle`，忽略 / 取消忽略走 `/api/air/todos/ignore`，
+/// 标记达成走 `/api/air/tasks/mark-achieved`。动作由 [airTaskPrimaryAction] 决定
+/// （调用方要想按指定动作执行就传 [action]）。
+Future<bool> runAirTaskAction({
+  required BuildContext context,
+  required AirService service,
+  required AirTask task,
+  AirTaskAction? action,
+  Future<void> Function()? onChanged,
+}) async {
+  final chosen = action ?? airTaskPrimaryAction(task);
+  try {
+    if (chosen.usesIgnoreEndpoint) {
+      await service.toggleTaskTodoIgnore(task.id);
+    } else if (chosen == AirTaskAction.markAchieved) {
+      await service.markTaskAchieved(task.id);
+    } else {
+      await service.toggleTaskTodo(task.id);
+    }
+    if (onChanged != null && context.mounted) await onChanged();
+    if (!context.mounted) return true;
+    final message = switch (chosen) {
+      AirTaskAction.unignore => t('airTodoUnignoredDone'),
+      AirTaskAction.ignoreError || AirTaskAction.ignoreWaiting =>
+        t('airTodoIgnoredDone'),
+      AirTaskAction.markAchieved => t('airTodoMarkAchievedDone'),
+      AirTaskAction.markTodo => t('airTodoMarked', {'title': task.title}),
+      AirTaskAction.unmarkTodo => t('airTodoUnmarked', {'title': task.title}),
+    };
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    return true;
+  } catch (error) {
+    if (!context.mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(airTaskActionErrorMessage(error))),
     );
     return false;
   }

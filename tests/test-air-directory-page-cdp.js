@@ -227,12 +227,12 @@ test('the directory home shares one scroll layer, shows a compact sticky heading
     await page.evaluate(`(() => { const i=document.getElementById('directory-task-search'); i.value=''; i.dispatchEvent(new Event('input')); })()`);
     assert.ok(await page.waitFor(`document.querySelectorAll('#directory-task-list .directory-task-row').length===20`));
 
-    // 统计卡那档 quickFilter 照旧：点「待办」= 按 isTodo 筛，且回到第一页。
+    // 统计卡那档 quickFilter：第二格现在是「等我处理」= needsMe，且回到第一页。
     await page.evaluate(`document.getElementById('directory-task-next').click()`);
     assert.ok(await page.waitFor(`document.getElementById('directory-task-page').textContent==='第 2 / 3 页'`));
     await page.evaluate(`document.querySelectorAll('#directory-stats .directory-stat')[1].click()`);
     assert.ok(await page.waitFor(`document.querySelectorAll('#directory-task-list .directory-task-row').length===3`));
-    assert.equal(await page.evaluate(`document.getElementById('directory-task-status').value`), 'todo', '卡片与状态那格同一份筛选');
+    assert.equal(await page.evaluate(`document.getElementById('directory-task-status').value`), 'needs', '卡片与状态那格同一份筛选');
     assert.equal(await page.evaluate(`document.getElementById('directory-task-page').textContent`), '第 1 / 1 页');
     // 收尾：退回「全部记录」，免得影响下面输入框那段。
     await page.evaluate(`(() => { const s=document.getElementById('directory-task-status'); s.value='open'; s.dispatchEvent(new Event('change')); })()`);

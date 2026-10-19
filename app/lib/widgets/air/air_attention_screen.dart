@@ -5,23 +5,23 @@ import '../../services/air_service.dart';
 import '../../theme.dart';
 import 'air_panels.dart';
 
-/// 「待办」的整页。
+/// 「等我处理」的整页。
 ///
 /// 控制台那一格只放最近更新的几条，完整清单在这里。对应 Web `public/air-admin.js`
 /// 的 `renderAttention`（`?view=attention`）：同一份清单、同一个顺序、同一句总数。
 ///
-/// 清单由调用方用 `airTodoTasks` 取好再传进来 —— 和 Web 两边共用同一份
-/// 「算不算待办」的判定，所以控制台那一格和这一页不可能排成两个样子。
+/// 清单由调用方用 `airNeedsMeTasks` 取好再传进来 —— 和 Web 两边共用同一份
+/// 「算不算等我处理」的判定，所以控制台那一格和这一页不可能排成两个样子。
 class AirAttentionScreen extends StatelessWidget {
   const AirAttentionScreen({
     super.key,
     required this.tasks,
     required this.directoryName,
     required this.onOpenTask,
-    this.onToggleTodo,
+    this.onTaskAction,
   });
 
-  /// 已经按「最早的消息在前」排好的完整待办清单（`airTodoTasks` 的返回值）。
+  /// 已经按「最早的消息在前」排好的完整清单（`airNeedsMeTasks` 的返回值）。
   final List<AirTask> tasks;
 
   /// 跨目录的清单要把「它在哪个目录」写在行上。
@@ -30,8 +30,9 @@ class AirAttentionScreen extends StatelessWidget {
   /// 点开一条任务。这一页只是清单，点走之后由宿主持平后面那层控制台。
   final ValueChanged<AirTask> onOpenTask;
 
-  /// 长按任务行：切换「手动待办」（同其余任务列表）。
-  final ValueChanged<AirTask>? onToggleTodo;
+  /// 长按任务行 / 行内动作：执行这条任务当前状态的唯一动作（见
+  /// [airTaskPrimaryAction]）。
+  final ValueChanged<AirTask>? onTaskAction;
 
   @override
   Widget build(BuildContext context) {
@@ -116,9 +117,9 @@ class AirAttentionScreen extends StatelessWidget {
                       directoryName: directoryName(task.dirId),
                       showTime: true,
                       onTap: () => onOpenTask(task),
-                      onLongPress: onToggleTodo == null
+                      onLongPress: onTaskAction == null
                           ? null
-                          : () => onToggleTodo!(task),
+                          : () => onTaskAction!(task),
                     ),
                   ),
                 if (tasks.isEmpty) const _Empty('没有正在等我的任务。'),

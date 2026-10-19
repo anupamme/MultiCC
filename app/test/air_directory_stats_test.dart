@@ -22,7 +22,7 @@ AirTask task(
 );
 
 void main() {
-  // 统计格的「待办」标签来自词典（airTodoFilter）。
+  // 统计格的「等我处理」标签来自词典（airNeedsMeFilter）。
   setUpAll(() => I18n.init('zh'));
 
   final now = DateTime.now();
@@ -52,12 +52,14 @@ void main() {
       expect(tasks.where(AirDirectoryTaskFilter.all.matches).length, 6);
       expect(tasks.where(AirDirectoryTaskFilter.open.matches).length, 4);
       expect(tasks.where(AirDirectoryTaskFilter.archived.matches).length, 1);
-      // 「待办」和目录统计格同源：等待 + 出错，归档的不算。
-      expect(tasks.where(AirDirectoryTaskFilter.todo.matches).length, 2);
+      // 「等我处理」和目录统计格同源：等待 + 出错，归档的不算。
+      expect(tasks.where(AirDirectoryTaskFilter.needsMe.matches).length, 2);
+      // 「待办」只收手动标记；这批任务一条都没标。
+      expect(tasks.where(AirDirectoryTaskFilter.todo.matches), isEmpty);
     },
   );
 
-  test('被忽略的异常：不在待办里，但仍在异常口径里', () {
+  test('被忽略的异常：不在等我处理里，但仍在异常口径里', () {
     final ignoredError = AirTask(
       id: 'ignored-error',
       dirId: 'd',
@@ -69,9 +71,12 @@ void main() {
       runState: 'error',
       todoIgnored: true,
     );
-    expect(AirDirectoryTaskFilter.todo.matches(ignoredError), isFalse);
+    expect(AirDirectoryTaskFilter.needsMe.matches(ignoredError), isFalse);
     expect(AirDirectoryTaskFilter.error.matches(ignoredError), isTrue);
-    expect([ignoredError].where(AirDirectoryTaskFilter.todo.matches), isEmpty);
+    expect(
+      [ignoredError].where(AirDirectoryTaskFilter.needsMe.matches),
+      isEmpty,
+    );
     expect(
       [ignoredError].where(AirDirectoryTaskFilter.error.matches).length,
       1,
@@ -130,7 +135,7 @@ void main() {
       await tester.pumpAndSettle();
       for (final filter in [
         AirDirectoryTaskFilter.running,
-        AirDirectoryTaskFilter.todo,
+        AirDirectoryTaskFilter.needsMe,
         AirDirectoryTaskFilter.error,
         AirDirectoryTaskFilter.today,
         AirDirectoryTaskFilter.all,
@@ -138,10 +143,10 @@ void main() {
         await tester.tap(find.byKey(ValueKey('air-stat-${filter.name}')));
         expect(selected, filter);
       }
-      for (final label in ['进行中', '待办', '异常', '今日完成', '全部']) {
+      for (final label in ['进行中', '等我处理', '异常', '今日完成', '全部']) {
         expect(find.text(label), findsOneWidget);
       }
-      // 进行中 1 · 待办 2 · 异常 1 · 今日完成 2 · 全部 6
+      // 进行中 1 · 等我处理 2 · 异常 1 · 今日完成 2 · 全部 6
       expect(find.text('1'), findsNWidgets(2));
       expect(find.text('2'), findsNWidgets(2));
       expect(find.text('6'), findsOneWidget);
@@ -153,7 +158,7 @@ void main() {
     });
   }
 
-  testWidgets('目录统计格：待办数字 = airTaskTodo；被忽略的异常只退出待办', (tester) async {
+  testWidgets('目录统计格：等我处理数字 = airTaskNeedsMe；被忽略的异常只退出汇总', (tester) async {
     final waiting = task('waiting', runState: 'waiting');
     final ignoredError = AirTask(
       id: 'ignored-error',
@@ -178,13 +183,13 @@ void main() {
       of: find.byKey(ValueKey('air-stat-$id')),
       matching: find.text(text),
     );
-    expect(tileText('todo', '待办'), findsOneWidget);
+    expect(tileText('needsMe', '等我处理'), findsOneWidget);
     expect(
-      tileText('todo', '${airTodoTasks(rows).length}'),
+      tileText('needsMe', '${airNeedsMeTasks(rows).length}'),
       findsOneWidget,
-      reason: '统计格与 airTodoTasks 同一份口径',
+      reason: '统计格与 airNeedsMeTasks 同一份口径',
     );
-    expect(tileText('todo', '1'), findsOneWidget);
+    expect(tileText('needsMe', '1'), findsOneWidget);
     expect(
       rows.where(AirDirectoryTaskFilter.error.matches).length,
       1,

@@ -1663,6 +1663,8 @@ dialog [role="alert"] { margin: 10px 0; color: #b34128; line-height: 1.6; white-
    说出来（桌面那边页头那排 tab 已经把话说完了，但这几行也带着标记并不冲突）。 */
 .task-pin { font-size: 9px; line-height: 1; }
 .task-todo-mark { margin-left: 4px; font-size: 9px; line-height: 1; }
+.task-todo-flags { display: inline-flex; align-items: center; gap: 2px; }
+.task-ignored-badge { margin-left: 4px; padding: 0 4px; border: 1px solid #e9ddc8; border-radius: 6px; color: #8a6a3a; background: #fbf6ec; font-size: 9px; line-height: 14px; white-space: nowrap; }
 /* 行尾的「待办」开关：借 `.task-delete` 的尺寸，中性灰；标记后换成暖色 🚩。 */
 .task-todo { flex: 0 0 auto; align-self: center; min-width: 30px; min-height: 30px; margin: 4px 0; padding: 4px 6px; color: #8a9aab; border-color: transparent; background: transparent; font-size: 13px; opacity: .7; }
 .task-todo:hover, .task-todo:focus-visible { color: #a85a25; border-color: #f1d9c4; background: #fff6ee; opacity: 1; }
