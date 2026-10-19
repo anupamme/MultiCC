@@ -11,7 +11,14 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { resolveCliCommands } = require('../cli-adapters/commands');
 
-const CODEX_MODELS_TTL_MS = 60 * 1000;
+// 15 minutes, not 60 seconds: the account catalog changes at most a few times
+// a year, while every picker open used to pay a full app-server spawn (1.2s+)
+// once the one-minute TTL lapsed. The hourly syncIfDue nudge still refreshes.
+const CODEX_MODELS_TTL_MS = 15 * 60 * 1000;
+// A models_cache.json Codex refreshed within this window is served
+// synchronously while a CLI discovery runs in the background (the disk file is
+// the one Codex itself maintains, fetched_at included).
+const CODEX_MODELS_DISK_FRESH_MS = 60 * 60 * 1000;
 const CODEX_MODELS_STALE_MAX_MS = 15 * 60 * 1000;
 // How often a picker open may ask Codex to re-fetch its account catalog. Codex
 // itself only goes online when its models_cache.json is past its own TTL or the
@@ -219,8 +226,13 @@ function createCodexModelsRuntime(options = {}) {
   const staleMaxMs = Number(options.staleMaxMs) || CODEX_MODELS_STALE_MAX_MS;
   const discover = options.discover || (() => discoverCodexModels(options));
   const readDisk = options.readDisk || (() => readCodexDiskCatalog(options));
+  const diskFreshMs = Number(options.diskFreshMs) || CODEX_MODELS_DISK_FRESH_MS;
   let cache = null; // last verified account catalog only
   let inFlight = null;
+  // Set when a discovery failed; cleared by the next success. A login failure
+  // means the account behind any cached catalog is gone, so the warm-disk path
+  // must stand down rather than keep serving another account's entitlements.
+  let lastFailCode = '';
 
   let lastSyncAt = 0;
 
@@ -244,6 +256,7 @@ function createCodexModelsRuntime(options = {}) {
   async function refresh() {
     try {
       const live = await discover();
+      lastFailCode = '';
       const models = normalizeModels(live && live.models);
       const fetchedAt = now();
       const catalogFetchedAt = Number(live && live.catalogFetchedAt) || 0;
@@ -262,6 +275,7 @@ function createCodexModelsRuntime(options = {}) {
     } catch (error) {
       const code = Object.prototype.hasOwnProperty.call(DIAGNOSTICS, error && error.code)
         ? error.code : 'cli_error';
+      lastFailCode = code;
       // Never reuse another account's old list after an auth failure.
       if (code !== 'login_required' && cache && now() - cache.at <= staleMaxMs
           && cache.result.models.length) {
@@ -298,6 +312,27 @@ function createCodexModelsRuntime(options = {}) {
       });
     }
     if (inFlight) return inFlight;
+    // Stale-while-revalidate: this process has verified a catalog before (so a
+    // login change would surface through the background refresh), the last
+    // discovery did not fail on auth, and Codex itself refreshed its disk
+    // catalog recently — hand the disk copy back immediately and let the CLI
+    // discovery run in the background, so a picker open never waits on a spawn.
+    if (!forceRefresh && cache && lastFailCode !== 'login_required'
+        && !(cache.result.source === 'cli' && cache.result.models.length === 0)) {
+      const disk = readDisk();
+      if (disk.models.length && disk.fetchedAt
+          && now() - disk.fetchedAt >= 0 && now() - disk.fetchedAt < diskFreshMs) {
+        inFlight = refresh().finally(() => { inFlight = null; });
+        const age = now() - disk.fetchedAt;
+        return response({
+          models: disk.models, source: 'disk_cache', fetchedAt: disk.fetchedAt,
+          cliVersion: disk.cliVersion,
+          code: age > ttlMs ? 'stale_cache' : 'ok',
+          stale: age > ttlMs,
+          catalogFetchedAt: disk.fetchedAt,
+        });
+      }
+    }
     inFlight = refresh().finally(() => { inFlight = null; });
     return inFlight;
   }
@@ -328,7 +363,7 @@ function createCodexModelsRuntime(options = {}) {
     // that must stay synchronous (catalog projections) use this; interactive
     // refreshes use list().
     peek() { return cache ? cache.result : null; },
-    _resetForTest() { cache = null; inFlight = null; lastSyncAt = 0; },
+    _resetForTest() { cache = null; inFlight = null; lastSyncAt = 0; lastFailCode = ''; },
   });
 }
 
@@ -358,6 +393,7 @@ module.exports = {
   readCodexDiskCatalog,
   normalizeModels,
   CODEX_MODELS_TTL_MS,
+  CODEX_MODELS_DISK_FRESH_MS,
   CODEX_MODELS_STALE_MAX_MS,
   CODEX_MODELS_SYNC_INTERVAL_MS,
 };

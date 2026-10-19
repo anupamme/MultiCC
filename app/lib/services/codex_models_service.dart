@@ -36,9 +36,11 @@ class CodexModelCatalog {
 /// The server calls Codex app-server `model/list`, so each row keeps the
 /// display name separate from the wire model id and already reflects rollout
 /// and workspace policy for the signed-in account. No model ids are hardcoded
-/// here. A short memory cache avoids persisting revoked entitlements on-device.
+/// here. Memory-only (never persisted), so revoked entitlements age out on
+/// restart; the TTL matches the server's 15-minute catalog cache, which now
+/// answers expired entries from the Codex disk catalog instead of a CLI spawn.
 class CodexModelsService {
-  static const Duration _ttl = Duration(minutes: 1);
+  static const Duration _ttl = Duration(minutes: 15);
   static const Duration _timeout = Duration(seconds: 20);
 
   static CodexModelCatalog? _cache;

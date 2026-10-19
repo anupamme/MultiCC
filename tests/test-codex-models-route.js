@@ -168,6 +168,63 @@ test('login failure never exposes a previous account disk catalog', async () => 
   assert.deepEqual(result.models, []);
 });
 
+test('expired memory cache serves a fresh disk catalog immediately and refreshes in the background', async () => {
+  let now = 60 * 60 * 1000;
+  let discoveries = 0;
+  let resolveDiscovery;
+  const gate = new Promise(resolve => { resolveDiscovery = resolve; });
+  const runtime = createCodexModelsRuntime({
+    now: () => now,
+    // First discovery succeeds and seeds the memory cache; the second hangs
+    // until the test releases it, proving the picker read did not wait.
+    discover: async () => {
+      discoveries += 1;
+      if (discoveries === 1) return { models: [model('gpt-seed')], cliVersion: '0.153.4' };
+      await gate;
+      return { models: [model('gpt-bg')], cliVersion: '0.153.4' };
+    },
+    readDisk: () => ({ models: [model('gpt-disk')], fetchedAt: now - 5 * 60 * 1000, cliVersion: '0.153.4' }),
+  });
+  assert.equal((await runtime.list()).source, 'cli');
+  now += 16 * 60 * 1000; // past the 15-minute memory TTL
+  const warm = await runtime.list();
+  assert.equal(warm.source, 'disk_cache');
+  assert.deepEqual(warm.models.map(entry => entry.model), ['gpt-disk']);
+  assert.equal(warm.stale, false);
+  assert.equal(discoveries, 2, 'background revalidation should have started');
+  resolveDiscovery();
+  await new Promise(resolve => setImmediate(resolve));
+  now += 1000;
+  const revalidated = await runtime.list();
+  assert.equal(revalidated.source, 'memory_cache');
+  assert.deepEqual(revalidated.models.map(entry => entry.model), ['gpt-bg']);
+});
+
+test('a login failure stands down the warm-disk path from the next picker open', async () => {
+  let now = 60 * 60 * 1000;
+  let discoveries = 0;
+  const runtime = createCodexModelsRuntime({
+    now: () => now,
+    discover: async () => {
+      discoveries += 1;
+      if (discoveries === 1) return { models: [model('gpt-mine')], cliVersion: '0.153.4' };
+      throw failure('login_required');
+    },
+    readDisk: () => ({ models: [model('gpt-mine')], fetchedAt: now - 1000, cliVersion: '0.153.4' }),
+  });
+  await runtime.list();
+  now += 16 * 60 * 1000;
+  // The first open after the logout still sees the warm disk copy — the SWR
+  // design cost — while the background discovery records the login failure.
+  const staleOpen = await runtime.list();
+  assert.equal(staleOpen.source, 'disk_cache');
+  await new Promise(resolve => setImmediate(resolve));
+  now += 1000;
+  const nextOpen = await runtime.list();
+  assert.equal(nextOpen.diagnostic.code, 'login_required');
+  assert.deepEqual(nextOpen.models, [], 'disk catalog must not outlive the login');
+});
+
 test('route supports explicit refresh without exposing process diagnostics', async () => {
   const calls = [];
   const runtime = {

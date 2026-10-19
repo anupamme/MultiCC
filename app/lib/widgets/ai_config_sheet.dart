@@ -19,15 +19,15 @@ import '../theme.dart';
 import 'agent_preset_picker_sheet.dart';
 
 
-Future<List<Map<String, dynamic>>> prepareAIConfigInputs(
+// Qoder owns no provider pool; its model list comes from the host CLI's
+// catalog instead. Warm it before the sheet builds so the dropdown opens on
+// the real models rather than the routing-tier fallback. Claude's list comes
+// from the installed CLI bundle — same warm-up, static-table fallback.
+Future<void> _warmModelCatalog(
   SettingsService settings,
   SessionCli cli, {
   http.Client? httpClient,
 }) async {
-  // Qoder owns no provider pool; its model list comes from the host CLI's
-  // catalog instead. Warm it before the sheet builds so the dropdown opens on
-  // the real models rather than the routing-tier fallback. Claude's list comes
-  // from the installed CLI bundle — same warm-up, static-table fallback.
   if (cli == SessionCli.qoder) {
     try {
       await QoderModelsService(settings: settings).load();
@@ -62,12 +62,27 @@ Future<List<Map<String, dynamic>>> prepareAIConfigInputs(
       ).load();
     } catch (_) {}
   }
+}
+
+Future<List<Map<String, dynamic>>> prepareAIConfigInputs(
+  SettingsService settings,
+  SessionCli cli, {
+  http.Client? httpClient,
+}) async {
+  // The model warm-up and the provider-pool fetch used to run serially, so
+  // every sheet open paid both before a line rendered. They touch different
+  // endpoints, so start the warm-up unawaited and settle it only where its
+  // result is actually read.
+  final warmModels = _warmModelCatalog(settings, cli, httpClient: httpClient);
   try {
     if (cli.supportsProvider) {
       final d = await ManageService(
         settings: settings,
         httpClient: httpClient,
       ).fetchProvidersForCli(cli.name);
+      // The opencode merge reads OpenCodeModelsService.cached, which only
+      // reflects the warm-up once it has settled.
+      await warmModels;
       final managed = (d['providers'] as List? ?? [])
           .map((e) => (e as Map).cast<String, dynamic>())
           .toList();
@@ -76,6 +91,7 @@ Future<List<Map<String, dynamic>>> prepareAIConfigInputs(
           : managed;
     }
   } catch (_) {}
+  await warmModels;
   return const [];
 }
 
