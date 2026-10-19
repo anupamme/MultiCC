@@ -482,6 +482,8 @@ function createTaskShellHost(deps) {
       return result;
     },
     listTasks: () => getRuntime().listTasks(),
+    // 只读读数，不建 runtime；库打不开时给 null，调用方据此放弃缓存而不是猜。
+    readEpoch: kinds => { try { return ensureStore().epoch(kinds); } catch (_) { return null; } },
     taskGraphData: () => getRuntime().taskGraphData(),
     getSnapshot: id => getRuntime().getSnapshot(id),
     artifactTaskTitle: id => ensureStore().get('task', id)?.title || null,

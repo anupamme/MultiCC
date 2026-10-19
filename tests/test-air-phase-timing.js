@@ -16,9 +16,9 @@ const crypto = require('node:crypto');
 const { mountAirRoutes } = require('../src/workspace/air-routes');
 const { airResponse } = require('./helpers/air-response');
 
-// 日志契约：这十个分段名是对外可读的字段，改名要连测试一起改（别让日志悄悄少一段）。
+// 日志契约：这十一个分段名是对外可读的字段，改名要连测试一起改（别让日志悄悄少一段）。
 const PHASE_MARKS = ['migrateMs', 'recordsMs', 'boardMs', 'admissionMs', 'admissionIndexMs',
-  'cardListMs', 'cardLoopMs', 'tailMs', 'jsonMs', 'etagMs'];
+  'cardListMs', 'cardSignatureMs', 'cardLoopMs', 'tailMs', 'jsonMs', 'etagMs'];
 const PAYLOAD_KEYS = ['ok', 'directories', 'tasks', 'taskPins', 'taskTodos', 'taskTodoIgnored', 'budgets', 'clis', 'migration',
   'lastRuntime', 'worktreePolicy', 'sessions'];
 // 阈值压到 50ms、间隔清零：慢轮次必打、快轮次不打，两件事在同一个进程里都能验。
