@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.6.4 — Uncommitted files are readable from the phone, and H.264 taps land where you aim (2026-10-19)
+
+### Highlights
+
+- **The uncommitted files of a main checkout open as a diff sheet on the phone** — tapping a dirty file in the Air workspace card shows that file's working-tree diff against HEAD (an untracked file reads as one whole addition), which is the mobile counterpart of the web directory page's "tap a filename to see the change". The list and the diff come from the same two endpoints the web uses (`/api/git/directory-status`, `/api/git/directory-file-diff`), and session worktrees stay filtered out server-side (`app/lib/widgets/air/air_dirty_files_sheet.dart`, `app/lib/services/session_service.dart`).
+- **Remote-screen taps land where you aim on the H.264 channel** — the native decoder caps the decoded width at 1280 (1470×956 becomes 1280×832) while the agent reads pointer coordinates in encoded/logical points, so every click used to drift up-left; the App now scales the coordinate back into the encoded domain before sending it (`app/lib/services/remote_screen_h264.dart`).
+
+### Internal
+
+- `server.js` is back inside the 3000-line budget after the secret-tools wiring pushed it to 3002; the release gate that caught it (`test-source-line-budget`) is green again.
+
 ## v2.6.3 — A vault that reaches live sessions, a voice that learns its words (2026-10-18)
 
 ### Highlights
