@@ -1360,4 +1360,44 @@ class SessionService {
     }
     return GitCommitDiff.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
+
+  /// Uncommitted files of a directory's main checkout, the same list the web
+  /// Air directory card shows (session worktrees are already filtered out
+  /// server-side).
+  Future<List<GitDirtyFile>> fetchDirectoryDirtyFiles(String dirId) async {
+    final res = await http
+        .get(
+          Uri.parse(
+            _url('/api/git/directory-status?dirId=${Uri.encodeQueryComponent(dirId)}'),
+          ),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 15));
+    if (res.statusCode >= 400) {
+      throw Exception(_tryParseError(res.body) ?? '${res.statusCode}');
+    }
+    final files = (jsonDecode(res.body) as Map)['dirtyFiles'] as List? ?? [];
+    return files
+        .map((e) => GitDirtyFile.fromJson(Map<String, dynamic>.from(e as Map)))
+        .toList();
+  }
+
+  /// Working-tree diff of one uncommitted file (vs HEAD; untracked files as an
+  /// all-added patch).
+  Future<GitWorkingDiff> fetchDirectoryFileDiff(
+    String dirId,
+    String path,
+  ) async {
+    final q =
+        'dirId=${Uri.encodeQueryComponent(dirId)}&path=${Uri.encodeQueryComponent(path)}';
+    final res = await http
+        .get(Uri.parse(_url('/api/git/directory-file-diff?$q')), headers: _headers)
+        .timeout(const Duration(seconds: 20));
+    if (res.statusCode >= 400) {
+      throw Exception(_tryParseError(res.body) ?? '${res.statusCode}');
+    }
+    return GitWorkingDiff.fromJson(
+      Map<String, dynamic>.from(jsonDecode(res.body) as Map),
+    );
+  }
 }

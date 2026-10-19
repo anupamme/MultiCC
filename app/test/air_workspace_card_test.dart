@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:multicc_app/i18n.dart';
 import 'package:multicc_app/models/message.dart';
 import 'package:multicc_app/services/air_service.dart';
 import 'package:multicc_app/widgets/air/air_workspace_card.dart';
@@ -74,6 +75,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('代码状态'), findsNothing);
   });
+
+  setUpAll(() => I18n.init('zh'));
 
   testWidgets('一个抬头、两格内容：代码状态与 worktree 生命周期在同一张卡里', (tester) async {
     await _pump(
@@ -228,6 +231,31 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('air-workspace-push')));
     expect(commits, 1);
     expect(pushes, 1);
+  });
+
+  testWidgets('有未提交文件时出现「查看」按钮，点了回调；干净时不摆', (tester) async {
+    var views = 0;
+    await _pump(
+      tester,
+      AirWorkspaceCard(
+        lifecycle: _life,
+        pushState: _git,
+        onShowDirty: () => views++,
+      ),
+    );
+    expect(find.text('● 3 个未提交文件（主检出）'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('air-workspace-dirty-files')));
+    expect(views, 1);
+
+    await _pump(
+      tester,
+      AirWorkspaceCard(
+        lifecycle: _life,
+        pushState: const DirectoryPushState(available: true, hasRemote: true),
+        onShowDirty: () {},
+      ),
+    );
+    expect(find.byKey(const ValueKey('air-workspace-dirty-files')), findsNothing);
   });
 
   testWidgets('干净且无未推送时不摆提交/推送按钮', (tester) async {
