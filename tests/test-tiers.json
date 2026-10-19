@@ -2036,6 +2036,11 @@
       ]
     },
     {
+      "path": "tests/test-chat-stream-vault-recycle.js",
+      "tier": "core",
+      "lane": "deterministic"
+    },
+    {
       "path": "tests/test-chat-stream.js",
       "tier": "other",
       "lane": "live"
@@ -2322,6 +2327,11 @@
       ]
     },
     {
+      "path": "tests/test-claude-sdk-stream-vault.js",
+      "tier": "core",
+      "lane": "isolated"
+    },
+    {
       "path": "tests/test-claude-sdk-stream.js",
       "tier": "core",
       "lane": "isolated",
@@ -2505,6 +2515,11 @@
       "entrypoints": [
         "npm:test:core"
       ]
+    },
+    {
+      "path": "tests/test-codex-app-stream-vault.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-codex-app-stream.js",
@@ -4348,6 +4363,11 @@
       "entrypoints": [
         "npm:test:core"
       ]
+    },
+    {
+      "path": "tests/test-secret-tools.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-secrets-entry-visibility.js",

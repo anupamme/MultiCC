@@ -2,6 +2,20 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.6.3 — A vault that reaches live sessions, a voice that learns its words (2026-10-18)
+
+### Highlights
+
+- **A secret added mid-session reaches the running CLI at the next turn** — a resident process fixes its environment at spawn, so the chat stream, the Claude Agent SDK lane and the codex app-server now recycle at the turn boundary when a vault entry changed (resuming the conversation), while never restarting when nothing changed and never refusing a turn that a background task is still holding. Vault names are now required to be real env identifiers (`[A-Za-z_][A-Za-z0-9_]*`) so an entry can actually be injected, with the old laxer names kept loadable/lookup-able so legacy entries can still be deleted or renamed instead of silently dropped (`src/secrets-vault.js`, `src/chat/chat-stream*.js`, `src/voice/host.js`).
+- **Tool requests can carry a secret without ever printing it** — `{{secret:NAME}}` placeholders are resolved inside the request and the value is redacted from anything written back, so an API call can be described in a task without the key entering the transcript (`src/secret-tools.js`).
+- **Voice learns the words it keeps getting wrong** — every correction (raw transcript → what the user actually sent) is diffed, and distinctive identifiers from the user's own messages become candidates; a fix only becomes an active hotword after being seen twice, and a pair is vetoed outright when it would rewrite normal prose (`src/voice/hotword-miner.js`, `hotword-learner.js`, `hotword-corrector.js`). The App gains a voice setup panel and composer that follow the same readiness report as the web.
+- **A task can suggest its own directory, and the user still decides** — the attribution decision now carries a `directoryHint` suggestion; the client shows a card and only a tap calls the task-level relocate, never an automatic move (`src/task-shell/attribution-decisions.js`, `app/lib/services/task_directory_hint.dart`, `app/lib/widgets/task_directory_hint_prompt.dart`).
+- **The Air console is rebuilt around ordering and to-dos** — manual task order, ignored "to-do" entries and the richer per-task cards land in the console on both web and App (`public/air.js`, `app/lib/widgets/air/air_console.dart`, `src/workspace/todo-ignores.js`).
+
+### Release tier
+
+- Core grew to 328 entries (279 deterministic, 26 isolated, 23 non-UI Flutter). Four vault tests were previously unclassified and are now pinned: three drive the turn-boundary recycle by injection (no spawn, no server) and one starts a real SDK child against a fake upstream; `tests/test-secret-tools.js` only uses an in-process 127.0.0.1:0 server and `.example.com` strings.
+
 ## v2.6.2 — Live model lists, a talking liveness pill, and HD remote screens (2026-10-18)
 
 ### Highlights
