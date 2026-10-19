@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../services/air_service.dart';
+import '../../services/air_sync_service.dart';
 import '../../theme.dart';
 import 'air_task_status.dart';
 
@@ -17,6 +18,7 @@ class AirPaletteScreen extends StatefulWidget {
     required this.allTasks,
     required this.onSelectDirectory,
     required this.onOpenTask,
+    this.sync,
   });
 
   final List<AirDirectory> directories;
@@ -25,6 +27,7 @@ class AirPaletteScreen extends StatefulWidget {
   /// 再传进来，同 Web 的 `recentPool()`）。
   final List<AirTask> recentTasks;
   final List<AirTask> allTasks;
+  final AirSyncService? sync;
 
   final ValueChanged<String> onSelectDirectory;
   final void Function(String dirId, String taskId) onOpenTask;
@@ -64,11 +67,10 @@ List<AirPaletteItem> airPaletteCandidates(
   String query = '',
 }) {
   final needle = query.trim().toLowerCase();
-  bool matches(String text) => needle.isEmpty || text.toLowerCase().contains(needle);
-  String nameOf(String dirId) => directories
-      .where((d) => d.id == dirId)
-      .map((d) => d.name)
-      .firstOrNull ??
+  bool matches(String text) =>
+      needle.isEmpty || text.toLowerCase().contains(needle);
+  String nameOf(String dirId) =>
+      directories.where((d) => d.id == dirId).map((d) => d.name).firstOrNull ??
       '未知目录';
 
   final dirs = directories
@@ -121,22 +123,39 @@ class _AirPaletteScreenState extends State<AirPaletteScreen> {
   @override
   void initState() {
     super.initState();
+    widget.sync?.addListener(_syncChanged);
     _items = _candidates('');
   }
 
   @override
   void dispose() {
+    widget.sync?.removeListener(_syncChanged);
     _query.dispose();
     _focus.dispose();
     super.dispose();
   }
 
-  List<AirPaletteItem> _candidates(String query) => airPaletteCandidates(
-    widget.directories,
-    widget.recentTasks,
-    widget.allTasks,
-    query: query,
-  );
+  void _syncChanged() {
+    if (mounted) setState(() => _items = _candidates(_query.text));
+  }
+
+  List<AirPaletteItem> _candidates(String query) {
+    final remote = query.trim().isEmpty
+        ? null
+        : widget.sync?.page('palette', {
+            'status': 'all',
+            'query': query.trim(),
+            'limit': 8,
+          });
+    final remoteTasks = [
+      for (final id in remote?.ids ?? const <String>[])
+        if (widget.sync?.snapshot?.taskOf(id) case final task?) task,
+    ];
+    return airPaletteCandidates(widget.directories, widget.recentTasks, [
+      ...remoteTasks,
+      ...widget.allTasks,
+    ], query: query);
+  }
 
   void _onQueryChanged(String value) {
     setState(() {

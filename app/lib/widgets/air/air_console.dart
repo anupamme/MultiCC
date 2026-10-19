@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../i18n.dart';
 import '../../models/message.dart';
 import '../../services/air_service.dart';
+import '../../services/air_sync_service.dart';
 import '../../services/manage_service.dart';
 import '../../services/session_service.dart';
 import '../../services/settings_service.dart';
@@ -29,7 +30,7 @@ import 'air_task_actions.dart';
 /// 里的一页（`_AirMode.console`），不再是自己 push 的一条路由。所以这里没有
 /// Scaffold：页头那条 AppBar（含左上角的 ☰）是宿主的，这一块只是它的正文。
 ///
-/// 数据只来自两个地方：`/api/air` 那一份快照（任务 + 目录）和 `/api/cron`
+/// 数据来自宿主共享的摘要与增量同步（任务 + 目录）和 `/api/cron`
 /// （定时任务）。控制台不新开一套统计口径，也不自己算「在不在跑」。
 class AirConsoleBody extends StatefulWidget {
   const AirConsoleBody({
@@ -44,10 +45,12 @@ class AirConsoleBody extends StatefulWidget {
     this.onOpenAiAssistant,
     this.onOpenSchedules,
     this.httpClient,
+    this.sync,
   });
 
   final SettingsService settings;
   final http.Client? httpClient;
+  final AirSyncService? sync;
 
   /// 点开一条任务。控制台是跨目录的，所以这一跳带着任务自己的目录走，不看
   /// 当前选的是哪个目录。
@@ -118,6 +121,13 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     httpClient: widget.httpClient,
   );
 
+  late final _sync = widget.sync ?? AirSyncService(_service);
+  void _syncChanged() {
+    if (mounted && _sync.snapshot != null) {
+      setState(() => _data = _sync.snapshot);
+    }
+  }
+
   /// 目录顺序与 Web 共用服务端 ui-layout.json，这一层只读/写，不自己发明格式。
   late final UiLayoutService _layoutService = UiLayoutService(
     settings: widget.settings,
@@ -181,6 +191,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
   @override
   void initState() {
     super.initState();
+    _sync.addListener(_syncChanged);
     _search.addListener(_onSearchChanged);
     unawaited(_loadLocalStore());
     unawaited(_loadDirectoryOrder());
@@ -278,6 +289,8 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
 
   @override
   void dispose() {
+    _sync.removeListener(_syncChanged);
+    if (widget.sync == null) _sync.dispose();
     _searchController.dispose();
     _search.dispose();
     _service.close();
@@ -314,7 +327,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
     if (_loading) return;
     _loading = true;
     try {
-      final snapshot = await _service.load();
+      final snapshot = await _sync.refresh();
       if (!mounted) return;
       setState(() {
         _data = snapshot;
@@ -637,17 +650,51 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
         .toList();
     final finished = tasks.where(airTaskDoneToday).toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    final running = airRunningDirectories(tasks);
+    final running = data?.indexed == true
+        ? data!.runningDirectoryIds
+        : airRunningDirectories(tasks);
     final enabledSchedules = (_schedules ?? const <CronTask>[])
         .where((task) => task.enabled)
         .length;
+    List<AirTask> remoteRows(AirPageResult? result) => [
+      for (final id in result?.ids ?? const <String>[])
+        if (data?.taskOf(id) case final task?) task,
+    ];
+    final previews = <String, List<AirTask>>{};
+    if (data?.indexed == true) {
+      for (final status in ['needs', 'running', 'recent']) {
+        previews[status] = remoteRows(
+          _sync.page('console-preview-$status', {
+            'status': status,
+            'limit': status == 'needs' ? 3 : 5,
+          }),
+        );
+      }
+    }
+    final remote = _tile == null
+        ? null
+        : _sync.page('console', {
+            'status': _tile == _ConsoleTile.all
+                ? (_query.trim().isNotEmpty ? 'all' : _status.apiValue)
+                : _tile == _ConsoleTile.needsMe
+                ? 'needs'
+                : _tile!.name,
+            'page': _taskPage,
+            if (_tile == _ConsoleTile.all) ...{
+              'dirId': _dir == 'all' ? null : _dir,
+              'query': _search.ids == null ? _query.trim() : '',
+              if (_search.ids != null) 'ids': _search.ids!.join(','),
+              'sort': _taskSort.name,
+              'visits': _localStore?.taskVisitedAt ?? const <String, int>{},
+            },
+          });
     final rows = _filteredTasks;
-    final pageCount = (rows.length / _taskPageSize).ceil().clamp(1, 1 << 30);
-    final page = _taskPage.clamp(1, pageCount);
-    final shown = rows
-        .skip((page - 1) * _taskPageSize)
-        .take(_taskPageSize)
-        .toList();
+    final pageCount =
+        remote?.pages ?? (rows.length / _taskPageSize).ceil().clamp(1, 1 << 30);
+    final page = remote?.page ?? _taskPage.clamp(1, pageCount);
+    final shown = data?.indexed == true
+        ? remoteRows(remote)
+        : rows.skip((page - 1) * _taskPageSize).take(_taskPageSize).toList();
     // 上半区的跨目录任务流。一条任务只出现在一个分区里（待办不会再在「正在
     // 运行」里出现一次）。待办按最早的消息时间在前（先处理老问题）；另外两个
     // 分区仍是最近动过的在前 —— 它们回答的是「现在在跑什么 / 刚发生了什么」。
@@ -710,9 +757,9 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
             // 控制台先回答「现在有什么在等我 / 在跑 / 刚动过」，再回答「我有哪些
             // 目录」。统计与工具不再占首屏 —— 它们收进底部的「更多」。
             _TaskStream(
-              attention: attention,
-              running: runningTasks,
-              recent: recent,
+              attention: previews['needs'] ?? attention,
+              running: previews['running'] ?? runningTasks,
+              recent: previews['recent'] ?? recent,
               directoryName: _directoryName,
               onOpenTask: widget.onOpenTask,
               onTaskAction: _runTaskAction,
@@ -779,6 +826,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                           key: ValueKey('air-console-dir-item-${directory.id}'),
                           child: _DirectoryRow(
                             directory: directory,
+                            counts: data?.taskStats[directory.id],
                             tasks: tasks
                                 .where((task) => task.dirId == directory.id)
                                 .toList(),
@@ -820,16 +868,18 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _Tiles(
-                    running: executing.length,
+                    running: data?.count('running') ?? executing.length,
                     runningDirectories: running.length,
-                    needsMe: attention.length,
-                    failed: failed.length,
-                    today: finished.length,
-                    all: active.length,
-                    total: tasks.length,
+                    needsMe: data?.count('needs') ?? attention.length,
+                    failed: data?.count('error') ?? failed.length,
+                    today: data?.count('today') ?? finished.length,
+                    all: data?.count('open') ?? active.length,
+                    total: data?.count('total') ?? tasks.length,
                     selected: _tile,
-                    onSelect: (tile) =>
-                        setState(() => _tile = _tile == tile ? null : tile),
+                    onSelect: (tile) => setState(() {
+                      _tile = _tile == tile ? null : tile;
+                      _taskPage = 1;
+                    }),
                   ),
                   const SizedBox(height: 8),
                   _MetaLine(
@@ -846,6 +896,8 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                       key: _drawerKey,
                       child: _TileDrawer(
                         tile: _tile!,
+                        remote: remote,
+                        indexed: data?.indexed == true,
                         executing: executing,
                         needsMe: attention,
                         failed: failed,
@@ -880,7 +932,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
                         onOpenTask: widget.onOpenTask,
                         onDeleteTask: _deleteTask,
                         onTaskAction: _runTaskAction,
-                        unread: attention.length,
+                        unread: data?.count('needs') ?? attention.length,
                         onOpenAttention: () => _openAttention(attention),
                         onClose: () => setState(() => _tile = null),
                       ),
@@ -920,6 +972,7 @@ class _AirConsoleBodyState extends State<AirConsoleBody> {
         MaterialPageRoute<void>(
           builder: (_) => AirAttentionScreen(
             tasks: urgent,
+            sync: _sync,
             directoryName: _directoryName,
             onTaskAction: _runTaskAction,
             onOpenTask: (task) {
@@ -1772,6 +1825,8 @@ class _MetaLine extends StatelessWidget {
 class _TileDrawer extends StatelessWidget {
   const _TileDrawer({
     required this.tile,
+    this.remote,
+    this.indexed = false,
     required this.executing,
     required this.needsMe,
     required this.failed,
@@ -1803,6 +1858,8 @@ class _TileDrawer extends StatelessWidget {
   });
 
   final _ConsoleTile tile;
+  final AirPageResult? remote;
+  final bool indexed;
   final List<AirTask> executing;
   final List<AirTask> needsMe;
   final List<AirTask> failed;
@@ -1847,10 +1904,12 @@ class _TileDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final list = _list;
-    final visible = tile == _ConsoleTile.all
+    final visible = indexed
+        ? shown
+        : tile == _ConsoleTile.all
         ? shown
         : list.take(_taskListLimit).toList();
-    final total = list.length;
+    final total = remote?.total ?? list.length;
     return _Panel(
       eyebrow: 'ACROSS ALL WORKSPACES',
       title: t(tile.labelKey),
@@ -1908,9 +1967,7 @@ class _TileDrawer extends StatelessWidget {
                 children: [
                   AirTaskRowAction(
                     key: ValueKey('air-console-action-${visible[i].id}'),
-                    tooltip: t(
-                      airTaskPrimaryAction(visible[i]).labelKey,
-                    ),
+                    tooltip: t(airTaskPrimaryAction(visible[i]).labelKey),
                     icon: Icon(airTaskPrimaryAction(visible[i]).icon),
                     onPressed: () => onTaskAction(visible[i]),
                   ),
@@ -1927,8 +1984,11 @@ class _TileDrawer extends StatelessWidget {
               ),
             ),
           ],
-          if (visible.isEmpty) _Empty(t(tile.emptyKey)),
-          if (tile == _ConsoleTile.all && pageCount > 1) ...[
+          if (indexed && remote == null)
+            const LinearProgressIndicator()
+          else if (visible.isEmpty)
+            _Empty(t(tile.emptyKey)),
+          if ((indexed || tile == _ConsoleTile.all) && pageCount > 1) ...[
             const SizedBox(height: 10),
             AirTaskPagerBar(
               page: page,
@@ -2294,6 +2354,7 @@ class _Picker<T> extends StatelessWidget {
 class _DirectoryRow extends StatelessWidget {
   const _DirectoryRow({
     required this.directory,
+    this.counts,
     required this.tasks,
     required this.running,
     required this.onTap,
@@ -2301,6 +2362,7 @@ class _DirectoryRow extends StatelessWidget {
   });
 
   final AirDirectory directory;
+  final Map<String, int>? counts;
   final List<AirTask> tasks;
   final bool running;
   final VoidCallback onTap;
@@ -2316,7 +2378,8 @@ class _DirectoryRow extends StatelessWidget {
     final unfinished = tasks
         .where(AirDirectoryTaskFilter.open.matches)
         .toList();
-    final executing = unfinished.where(airTaskRunning).length;
+    final executing =
+        counts?['running'] ?? unfinished.where(airTaskRunning).length;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -2370,7 +2433,9 @@ class _DirectoryRow extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    t('airAdminNInProgress', {'n': '${unfinished.length}'}),
+                    t('airAdminNInProgress', {
+                      'n': '${counts?['open'] ?? unfinished.length}',
+                    }),
                     style: const TextStyle(
                       color: AppColors.text,
                       fontSize: 11.5,
@@ -2380,7 +2445,9 @@ class _DirectoryRow extends StatelessWidget {
                   Text(
                     executing > 0
                         ? t('airAdminNExecuting', {'n': '$executing'})
-                        : t('airAdminNTaskCount', {'n': '${tasks.length}'}),
+                        : t('airAdminNTaskCount', {
+                            'n': '${counts?['total'] ?? tasks.length}',
+                          }),
                     style: TextStyle(
                       color: executing > 0
                           ? AppColors.success

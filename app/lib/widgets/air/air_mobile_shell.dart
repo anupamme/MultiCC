@@ -138,6 +138,7 @@ extension _AirMobileShell on _AirTasksViewState {
   Widget _mobileWorkspace(AirSnapshot? data) => AirMobileWorkspace(
     key: ValueKey(_mode),
     data: data,
+    sync: _sync,
     // 控制台跨所有项目；最近任务按本页选的目录（null = 全部项目）。
     directoryId: _mode == _AirMode.recent ? _mobileRecentDir : null,
     recent: _mode == _AirMode.recent,
@@ -351,6 +352,7 @@ extension _AirMobileShell on _AirTasksViewState {
                 directories: data?.directories ?? [],
                 currentDirectoryId: _directoryId,
                 tasksOf: (id) => data?.tasksOf(id) ?? [],
+                counts: data?.taskStats ?? const {},
                 runningDirectories: runningDirectories,
                 onOpen: _selectDirectory,
                 onAddDirectory: () => unawaited(_addDirectory()),

@@ -242,7 +242,9 @@ class AirDirectoryTaskPanelHead extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Flexible(child: AirTaskSortSwitch(sort: sort, onSort: onSort)),
+                Flexible(
+                  child: AirTaskSortSwitch(sort: sort, onSort: onSort),
+                ),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
@@ -324,7 +326,9 @@ class AirDirectoryTaskPanelHead extends StatelessWidget {
                       DropdownMenuItem(
                         value: filter,
                         child: Text(switch (filter) {
-                          AirDirectoryTaskFilter.needsMe => t('airNeedsMeFilter'),
+                          AirDirectoryTaskFilter.needsMe => t(
+                            'airNeedsMeFilter',
+                          ),
                           AirDirectoryTaskFilter.todo => t('airTodoFilter'),
                           _ => filter.label,
                         }),
@@ -359,6 +363,7 @@ class AirDirectoryTaskPanelBody extends StatelessWidget {
     required this.rowBuilder,
     this.listKey,
     this.minHeight,
+    this.loading = false,
   });
 
   /// 当前这一页要摆的行（已经切片）。
@@ -373,6 +378,7 @@ class AirDirectoryTaskPanelBody extends StatelessWidget {
 
   /// 分页时宿主给的下限（一个滚动口高 − 表头高）；不分页时为空。
   final double? minHeight;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -396,6 +402,7 @@ class AirDirectoryTaskPanelBody extends StatelessWidget {
   }
 
   Widget _buildList(BuildContext context) {
+    if (loading) return const LinearProgressIndicator();
     return rows.isEmpty
         ? const Center(
             child: Padding(

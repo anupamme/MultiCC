@@ -20,6 +20,7 @@ import '../screens/setup_screen.dart';
 import '../screens/task_graph_screen.dart';
 import '../screens/terminal_screen.dart';
 import '../services/air_service.dart';
+import '../services/air_sync_service.dart';
 import '../services/session_service.dart';
 import '../services/settings_service.dart';
 import '../services/update_service.dart';
@@ -55,13 +56,14 @@ import 'workspace_navigation_drawer.dart';
 
 part 'air/air_mobile_shell.dart';
 part 'air/air_tasks_view_actions.dart';
+part 'air/air_tasks_view_sync.dart';
 
 /// Air 的移动端首页：目录优先，任务是行，对话开在自己的聊天页里。
 ///
 /// 这一层是 Web `public/air.html` 的壳：左侧边栏（[AirSidebar]）、任务头部
 /// （☰ / 面包屑 / 标题 / 状态 / ⋯）和两块主区 —— 目录库（[AirDirectoryLibrary]）
 /// 与当前目录（统计 + 最近任务 + 快捷创建 `AirQuickComposer`）。数据仍走同一个
-/// `/api/air`，不引入第二套目录/任务模型。
+/// 摘要索引的分页与增量接口，目录和任务继续使用同一套模型。
 class AirTasksView extends StatefulWidget {
   final SettingsService settings;
   final http.Client? httpClient;
@@ -188,36 +190,36 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 当前目录首页显示哪一类东西。默认 Chat（任务/对话），和 Web 一致；换一个
   /// 目录也回到 Chat —— 「默认还是 chat 模式」不该被上一次切到 Terminal 记住。
   _DirectoryMode _dirMode = _DirectoryMode.chat;
-  Timer? _timer;
   String _clientVersion = '…';
 
-  /// 快照轮询的间隔。一次 `/api/air` 回来的是全量正文（本机实测 ~800KB，App 侧
-  /// 还没有条件请求），原先 4 秒一次基本是空转；15 秒对「谁在跑、谁在等我」这种
-  /// 看板够用，也把它压回人读一屏的量级。这个数字与 Web 端同一个（public/air.js
-  /// 的 POLL_MS，2026-09-30 两端一起定的）。切回前台会立刻补一次（见
-  /// [didChangeAppLifecycleState]），所以不会出现「刚回来看到的是十几秒前的画面」。
-  static const _snapshotPollInterval = Duration(seconds: 15);
+  late final _sync = AirSyncService(
+    _service,
+    include: () => _store?.recentTasks ?? const [],
+  )..addListener(_syncChanged);
 
   @override
   void initState() {
     super.initState();
-    unawaited(UpdateService.currentVersion().then((version) {
-      if (mounted) setState(() => _clientVersion = version);
-    }));
+    unawaited(
+      UpdateService.currentVersion().then((version) {
+        if (mounted) setState(() => _clientVersion = version);
+      }),
+    );
     WidgetsBinding.instance.addObserver(this);
     unawaited(_loadStore());
     _ops.start();
     _refresh();
-    _timer = Timer.periodic(_snapshotPollInterval, (_) {
-      if (_foreground) _refresh();
-    });
     widget.settings.advancedMode.addListener(_onAdvancedModeChanged);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
-    if (_foreground) _refresh();
+    if (_foreground) {
+      unawaited(_sync.resume().then<void>((_) {}, onError: (Object _) {}));
+    } else {
+      _sync.pause();
+    }
   }
 
   /// 换页之后把表头带回视野（同 Web `MultiCCAirTaskPager.go()` 里那句
@@ -230,8 +232,9 @@ class _AirTasksViewState extends State<AirTasksView>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_taskPageScroll.hasClients) return;
-      final viewport = _taskPageScroll.position.context.storageContext
-          .findRenderObject() as RenderBox?;
+      final viewport =
+          _taskPageScroll.position.context.storageContext.findRenderObject()
+              as RenderBox?;
       final head =
           _taskHeadKey.currentContext?.findRenderObject() as RenderBox?;
       if (viewport == null ||
@@ -240,7 +243,8 @@ class _AirTasksViewState extends State<AirTasksView>
           !head.hasSize) {
         return;
       }
-      final delta = head.localToGlobal(Offset.zero).dy -
+      final delta =
+          head.localToGlobal(Offset.zero).dy -
           viewport.localToGlobal(Offset.zero).dy;
       if (delta <= 0.5) return;
       final position = _taskPageScroll.position;
@@ -261,7 +265,7 @@ class _AirTasksViewState extends State<AirTasksView>
   void dispose() {
     _taskPageScroll.dispose();
     _directorySearch.dispose();
-    _timer?.cancel();
+    _sync.dispose();
     _taskSearch.dispose();
     widget.settings.advancedMode.removeListener(_onAdvancedModeChanged);
     _service.close();
@@ -279,39 +283,17 @@ class _AirTasksViewState extends State<AirTasksView>
           ? AirDirectoryTaskSort.visit
           : AirDirectoryTaskSort.message;
     });
+    if (_sync.indexed && store.recentTasks.isNotEmpty) {
+      _sync.page('include', {
+        'status': 'all',
+        'ids': store.recentTasks.take(50).join(','),
+        'limit': 50,
+      });
+    }
   }
 
   @override
-  Future<void> _refresh() async {
-    if (_loading) return;
-    _loading = true;
-    try {
-      final result = await _service.load();
-      if (!mounted) return;
-      setState(() {
-        _data = result;
-        if (!_capacityError) _error = '';
-        if (result.directoryOf(_directoryId) == null) {
-          _directoryId = result.directories.isEmpty
-              ? null
-              : result.directories.first.id;
-        }
-      });
-      // 收藏和最近记录指向的目录/任务可能已经被删掉，顺手清一遍，免得侧栏留着
-      // 一个点不开的名字。
-      await _store?.prune(
-        directoryIds: result.directories.map((d) => d.id).toSet(),
-        taskIds: result.tasks.map((t) => t.id).toSet(),
-      );
-      if (mounted) setState(() {});
-      // 引导等数据到位再开始：早一步锚点还不存在，会走成「找不到目标就往下跳」。
-      _maybeStartTour();
-    } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
-    } finally {
-      _loading = false;
-    }
-  }
+  Future<void> _refresh() => _refreshAir();
 
   /// 侧栏里的每一次点击都要先把抽屉收回去。这里不能用 `Navigator.pop`：抽屉不是
   /// 一条路由，首页又是栈底那一条，`canPop()` 会直接说「没得弹」。
@@ -386,70 +368,6 @@ class _AirTasksViewState extends State<AirTasksView>
       unawaited(_store?.rememberTask(taskId));
       setState(() {});
     }
-  }
-
-  /// 页头那颗「执行中 N / 空闲」徽标点开的东西：**本目录正在执行的这几条**。
-  ///
-  /// Web 的 `#task-state` 是按钮，点开的是「当前打开的那个任务」的详情
-  /// （`public/air.js:1835` 的 `openTaskDetails(currentTaskId)`）。App 的 Air
-  /// 首页没有「当前打开的任务」这一层 —— 这一行说的是「本目录有几条在跑」，
-  /// 照搬 Web 就得替用户猜一个任务。所以这里点开的是那个数字本身：正在执行的
-  /// 任务清单，每一条还是走同一套 [_open]。
-  Future<void> _showRunningTasks() async {
-    final data = _data;
-    final dirId = _directoryId;
-    if (data == null || dirId == null) return;
-    final running = data.tasksOf(dirId).where(airTaskRunning).toList();
-    final messenger = ScaffoldMessenger.of(context);
-    if (running.isEmpty) {
-      messenger.showSnackBar(const SnackBar(content: Text('本目录当前没有正在执行的任务。')));
-      return;
-    }
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: AppColors.panel,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '正在执行 ${running.length} 个任务',
-                style: const TextStyle(
-                  color: AppColors.text,
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final task in running)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: AirTaskTile(
-                          task: task,
-                          showTime: true,
-                          onTap: () {
-                            Navigator.of(sheetContext).pop();
-                            unawaited(_open(task));
-                          },
-                          onLongPress: () => _runTaskAction(task),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   /// 重启一条终端（`POST /api/sessions/:id/restart`，只对终端有效）：杀掉 tmux 里的
@@ -1297,6 +1215,7 @@ class _AirTasksViewState extends State<AirTasksView>
             directories: data?.directories ?? const <AirDirectory>[],
             recentTasks: _sidebarTasks(),
             allTasks: data?.tasks ?? const <AirTask>[],
+            sync: _sync,
             onSelectDirectory: _selectDirectory,
             onOpenTask: _openTaskById,
           ),
@@ -1309,7 +1228,10 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 「固定 Air 任务」要能直接进到那条任务 —— 哪怕它在另一个目录里。
   void _openSchedules() {
     _closeDrawer();
-    if (MediaQuery.sizeOf(context).width < 760) { setState(() => _mode = _AirMode.schedules); return; }
+    if (MediaQuery.sizeOf(context).width < 760) {
+      setState(() => _mode = _AirMode.schedules);
+      return;
+    }
     final navigator = Navigator.of(context);
     unawaited(
       navigator.push(
@@ -1407,10 +1329,12 @@ class _AirTasksViewState extends State<AirTasksView>
 
   Future<void> _push(WidgetBuilder builder) async {
     _closeDrawer();
-    await Navigator.of(context).push(MaterialPageRoute<void>(
-      settings: RouteSettings(arguments: {'backLabel': _mobileTitle}),
-      builder: builder,
-    ));
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: RouteSettings(arguments: {'backLabel': _mobileTitle}),
+        builder: builder,
+      ),
+    );
   }
 
   /// 全部功能：老首页抽屉里那张完整的表。侧栏只摆常用的几个，剩下的从这里进
@@ -1432,7 +1356,10 @@ class _AirTasksViewState extends State<AirTasksView>
   }
 
   void _openDestination(WorkspaceDestination destination) {
-    if (destination == WorkspaceDestination.global) { unawaited(_mobileSettings()); return; }
+    if (destination == WorkspaceDestination.global) {
+      unawaited(_mobileSettings());
+      return;
+    }
     // 定时任务在 Air 里已经有原生中心了，别再散到老抽屉那个只认 CLI 的页面上。
     if (destination == WorkspaceDestination.cron) {
       _openSchedules();
@@ -1498,6 +1425,12 @@ class _AirTasksViewState extends State<AirTasksView>
   /// **筛完的整份**，切片由 [_pageRows] 做。
   List<AirTask> _visibleTasks(BuildContext context) {
     final data = _data;
+    if (data?.indexed == true && _mode == _AirMode.tasks) {
+      return [
+        for (final id in _directoryPage?.ids ?? const <String>[])
+          if (data!.taskOf(id) case final task?) task,
+      ];
+    }
     final rows = (data?.tasksOf(_directoryId) ?? const <AirTask>[]).toList();
     rows.sort((a, b) {
       final primary = _taskSortAt(b).compareTo(_taskSortAt(a));
@@ -1566,6 +1499,7 @@ class _AirTasksViewState extends State<AirTasksView>
       rows <= 0 ? 1 : ((rows - 1) ~/ _tasksPageSize) + 1;
 
   List<AirTask> _pageRows(List<AirTask> rows) {
+    if (_data?.indexed == true) return rows;
     final page = _tasksPage.clamp(1, _pageCountFor(rows.length));
     final start = (page - 1) * _tasksPageSize;
     return rows.skip(start).take(_tasksPageSize).toList();
@@ -1592,11 +1526,13 @@ class _AirTasksViewState extends State<AirTasksView>
     final tasks = _visibleTasks(context);
     // 「在不在跑」只有一份判定（注册表的 spinner），目录环、页头那颗徽标和任务
     // 行上的转圈说的都是同一件事。
-    final runningDirectories = airRunningDirectories(
-      data?.tasks ?? const <AirTask>[],
-    );
+    final runningDirectories = data?.indexed == true
+        ? data!.runningDirectoryIds
+        : airRunningDirectories(data?.tasks ?? const <AirTask>[]);
     final runningHere =
-        data?.tasksOf(_directoryId).where(airTaskRunning).length ?? 0;
+        data?.count('running', _directoryId) ??
+        data?.tasksOf(_directoryId).where(airTaskRunning).length ??
+        0;
     // 页头工具条只在够宽时摆出来 —— 阈值跟着 Web `air.css` 收工具条的那个
     // 760px 断点走（那边是「低于它就整条收进 ⋯ 浮层」）。
     final showToolbar = MediaQuery.sizeOf(context).width >= 760;
@@ -1630,7 +1566,9 @@ class _AirTasksViewState extends State<AirTasksView>
     required int runningHere,
     required bool showToolbar,
   }) {
-    if (!showToolbar) return _mobileScaffold(data, directory, tasks, runningDirectories);
+    if (!showToolbar) {
+      return _mobileScaffold(data, directory, tasks, runningDirectories);
+    }
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: AppColors.bg,
@@ -1642,10 +1580,12 @@ class _AirTasksViewState extends State<AirTasksView>
         advancedMode: widget.settings.advancedMode.value,
         serverLabel: widget.settings.host,
         clientVersion: _clientVersion,
-        onSwitchServer: widget.onSwitchServer == null ? null : () {
-          _closeDrawer();
-          widget.onSwitchServer!();
-        },
+        onSwitchServer: widget.onSwitchServer == null
+            ? null
+            : () {
+                _closeDrawer();
+                widget.onSwitchServer!();
+              },
         onSelectDirectory: _selectDirectory,
         onOpenLibrary: () {
           _closeDrawer();
@@ -1909,6 +1849,7 @@ class _AirTasksViewState extends State<AirTasksView>
               _AirMode.console => AirConsoleBody(
                 settings: widget.settings,
                 httpClient: widget.httpClient,
+                sync: _sync,
                 // 点开一条任务 = 直接开对话，不切目录 —— 在哪打开就回哪去：关掉对话回到
                 // 控制台这一页（Web 那边 `navigate(directoryId, taskId)` 同款）。
                 // 控制台是跨目录的，任务可能不在当前目录里，但打开对话本身不依赖
@@ -1928,6 +1869,7 @@ class _AirTasksViewState extends State<AirTasksView>
                 directories: data?.directories ?? const [],
                 currentDirectoryId: _directoryId,
                 tasksOf: (dirId) => data?.tasksOf(dirId) ?? const [],
+                counts: data?.taskStats ?? const {},
                 runningDirectories: runningDirectories,
                 onOpen: _selectDirectory,
                 onAddDirectory: () => unawaited(_addDirectory()),
@@ -2233,8 +2175,9 @@ class _AirTasksViewState extends State<AirTasksView>
     final worktrees = directory == null || directory.external
         ? null
         : directory.visibleWorktreeLifecycle;
-    final pageCount = _pageCountFor(tasks.length);
-    final page = _tasksPage.clamp(1, pageCount);
+    final remote = data?.indexed == true ? _directoryPage : null;
+    final pageCount = remote?.pages ?? _pageCountFor(tasks.length);
+    final page = remote?.page ?? _tasksPage.clamp(1, pageCount);
     return RefreshIndicator(
       onRefresh: _refresh,
       child: CustomScrollView(
@@ -2251,6 +2194,7 @@ class _AirTasksViewState extends State<AirTasksView>
                 children: [
                   AirDirectoryStats(
                     tasks: all,
+                    counts: data?.taskStats[_directoryId],
                     worktreeCount: directory?.worktreeCount ?? 0,
                     // 统计卡就是一颗快速筛选键：点它 = 按这个状态筛清单。点完回到
                     // 第 1 页 —— 换了筛选条件还停在旧页码，看到的往往是空的。
@@ -2318,8 +2262,8 @@ class _AirTasksViewState extends State<AirTasksView>
   }) {
     final head = AirDirectoryTaskPanelHead(
       key: const ValueKey('air-directory-task-panel-head'),
-      filteredCount: tasks.length,
-      totalCount: all.length,
+      filteredCount: _directoryPage?.total ?? tasks.length,
+      totalCount: _data?.count('total', _directoryId) ?? all.length,
       sort: _taskSort,
       searchController: _taskSearch,
       status: _taskStatus,
@@ -2362,6 +2306,7 @@ class _AirTasksViewState extends State<AirTasksView>
             children: [
               head,
               AirDirectoryTaskPanelBody(
+                loading: _data?.indexed == true && _directoryPage == null,
                 rows: _pageRows(tasks),
                 page: page,
                 pageCount: pageCount,
@@ -2380,6 +2325,7 @@ class _AirTasksViewState extends State<AirTasksView>
       head: head,
       headKey: _taskHeadKey,
       bodyBuilder: (fillHeight) => AirDirectoryTaskPanelBody(
+        loading: _data?.indexed == true && _directoryPage == null,
         rows: _pageRows(tasks),
         page: page,
         pageCount: pageCount,
@@ -2591,7 +2537,9 @@ class _PinnedTaskPanelSliverState extends State<_PinnedTaskPanelSliver> {
             SliverToBoxAdapter(
               child: _PinnedCardBottom(
                 child: widget.bodyBuilder(
-                  extent == null || viewport <= extent ? null : viewport - extent,
+                  extent == null || viewport <= extent
+                      ? null
+                      : viewport - extent,
                 ),
               ),
             ),
