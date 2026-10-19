@@ -876,6 +876,15 @@
       ]
     },
     {
+      "path": "tests/test-air-card-cache.js",
+      "tier": "other",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:task-first"
+      ]
+    },
+    {
       "path": "tests/test-air-chat-layer-cdp.js",
       "tier": "flow",
       "lane": "cdp",

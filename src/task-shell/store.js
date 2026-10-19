@@ -28,12 +28,15 @@ function createTaskShellStore(file) {
   const rowidOf = db.prepare('SELECT rowid AS rid FROM shell_records WHERE kind = ? AND id = ?');
   const receiptWatermarkStmt = db.prepare("SELECT max(rowid) AS mx FROM shell_records WHERE kind = 'receipt'");
   // 写入口只有这两个语句：set/remove、派生索引维护、收据桶重建用的都是它们，
-  // 所以这个自增计数覆盖本连接的全部写路径 —— 见下面行缓存的失效信号。
-  let writes = 0;
+  // 所以这组自增计数覆盖本连接的全部写路径 —— 见下面行缓存的失效信号。
+  // 按 kind 分开记：收据、投递记录每轮都在写，只有一个总计数时，任何一笔收据都会
+  // 让 10MB 的 task 表缓存作废，下一次 /api/air 又得整表重新 JSON.parse。
+  const writesByKind = new Map();
+  const noteWrite = kind => writesByKind.set(kind, (writesByKind.get(kind) || 0) + 1);
   const putStmt = db.prepare('INSERT INTO shell_records(kind, id, body) VALUES (?, ?, ?) ON CONFLICT(kind, id) DO UPDATE SET body = excluded.body');
   const removeStmt = db.prepare('DELETE FROM shell_records WHERE kind = ? AND id = ?');
-  const put = { run: (...args) => { const out = putStmt.run(...args); writes += 1; return out; } };
-  const remove = { run: (...args) => { const out = removeStmt.run(...args); writes += 1; return out; } };
+  const put = { run: (...args) => { const out = putStmt.run(...args); noteWrite(args[0]); return out; } };
+  const remove = { run: (...args) => { const out = removeStmt.run(...args); noteWrite(args[0]); return out; } };
   const get = (kind, id) => { const row = select.get(kind, id); return row ? JSON.parse(row.body) : null; };
   const scan = kind => allWithIds.all(kind).map(row => ({ id: row.id, value: JSON.parse(row.body) }));
 
@@ -169,7 +172,9 @@ function createTaskShellStore(file) {
   //   · data_version：SQLite 在「别的连接提交」时自增，自己的写不动它（实测同连接
   //     连写两次值不变，另一连接写一次才 +1）。同一个库文件上还有第二个连接 ——
   //     admission 的 store（见 workspace/admission.js），只看自己的写会漏掉它。
-  //   · writes：本连接的写计数（上面两个写入口自增），补上 data_version 看不见的自写。
+  //   · writesByKind：本连接对这个 kind 的写计数（上面两个写入口自增），补上
+  //     data_version 看不见的自写。别的 kind 的自写不影响它；别的连接的任何写仍会
+  //     推动 data_version（SQLite 不按表区分），那一路宁可多失效也不漏。
   // 只对「小表」开放：receipt 一个 kind 就 201MB，缓存它等于把线上库常驻内存。
   // 白名单外的 kind 直接报错，而不是悄悄退化成不缓存 —— 那会变成沉默的性能 bug。
   //
@@ -182,7 +187,7 @@ function createTaskShellStore(file) {
   const rowCache = new Map();
   function cached(shape, kind, build) {
     if (!CACHEABLE.has(kind)) throw new Error(`row cache not allowed for kind ${kind}`);
-    const epoch = `${db.pragma('data_version', { simple: true })}:${writes}`;
+    const epoch = `${db.pragma('data_version', { simple: true })}:${writesByKind.get(kind) || 0}`;
     const key = `${shape}:${kind}`;
     const hit = rowCache.get(key);
     if (hit && hit.epoch === epoch) return hit.rows;
@@ -200,7 +205,17 @@ function createTaskShellStore(file) {
     // 对象是共享的、只读的** —— 调用方不得就地改写（今天这些调用点都只读：
     // find/filter/map）。set/remove 与别的连接提交都会让它失效。
     cachedList: kind => cached('rows', kind, () => list(kind)).slice(),
+    // 按 value.id 取行（与 task-first 里 `new Map(cachedList('task').map(…))` 同一口径），
+    // 和 cachedList 共用同一份解析结果，不再多 parse 一遍。逐卡问权属的 taskAccess
+    // 用它代替 get('task', id)：一张 task 行平均 10KB（九成是 contextLedger），逐卡
+    // 单行读 + JSON.parse 一轮 Air 快照就是 50~180ms。行对象同样共享、只读。
+    cachedById: kind => cached('byId', kind, () => new Map(cached('rows', kind, () => list(kind))
+      .filter(value => value && typeof value.id === 'string').map(value => [value.id, value]))),
     cachedEntries: kind => cached('entries', kind, () => entries(kind)).slice(),
+    // 「这几个 kind 自上次以来有没有可能变过」的廉价读数，口径与行缓存的失效信号
+    // 相同（外部连接的任何提交 + 本连接对这几个 kind 的写）。读数相同 ⇒ 内容没变；
+    // 读数不同只说明「可能变了」。Air 的卡片缓存拿它当签名的一部分。
+    epoch: kinds => `${db.pragma('data_version', { simple: true })}:${kinds.map(kind => writesByKind.get(kind) || 0).join(',')}`,
     // 单点查询（索引命中即一次单行读；未命中回退扫描并回填标记）。
     taskBySession(sessionId) {
       if (!sessionId) return null;

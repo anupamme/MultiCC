@@ -87,7 +87,9 @@ test('任务板逐卡片解析权属不再触发 task/link 全表读（每次请
   for (const card of cards) f.runtime.taskAccess(card);   // 第二次：必须全是单点读
   assert.equal(counted.get('list:task') || 0, 0, 'task 全表读必须为 0');
   assert.equal(counted.get('list:link') || 0, 0, 'link 全表读必须为 0');
-  assert.ok((counted.get('get:task') || 0) >= cards.length, '仍然逐个读卡片自己的 task 行');
+  // store 里有行的卡片走按 id 的行缓存（store.cachedById），不再逐卡单行读 + parse；
+  // 只有 store 里根本没有行的历史卡片才回退一次单点读（读不到，不 parse）。
+  assert.equal(counted.get('get:task') || 0, 40, '只有 40 张历史卡片回退单点读');
 });
 
 test('/api/air 一次请求只读一次 admission 快照（不再按卡片各读一次）', async () => {

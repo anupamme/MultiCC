@@ -32,8 +32,10 @@ function createTaskActions({ store, getRecord, getTask, getHistory, getExecution
     return open(sid);
   }
   function access(taskOrId) {
+    // 缓存版按 id 取（见 store.cachedById）：任务板读投影逐卡调这里，一轮上千次。
+    const stored = id => (store.cachedById ? store.cachedById('task').get(id) : null) || store.get('task', id);
     const task = typeof taskOrId === 'string' ? findTask(taskOrId)
-      : taskOrId && (store.get('task', taskOrId.id) || taskOrId);
+      : taskOrId && (stored(taskOrId.id) || taskOrId);
     // A transcript can carry a task id whose record is gone (deleted task or a
     // pre-migration annotation). Nothing may be written to it, and a read
     // projection must not fail because one row lost its card.

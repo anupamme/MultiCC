@@ -7,6 +7,7 @@ const { createAirPinRuntime } = require('./pins');
 const { createAirTodoRuntime } = require('./todos');
 const { createAirTodoIgnoreRuntime } = require('./todo-ignores');
 const { pendingAttention } = require('../task-board/attention');
+const { createAirCardCache } = require('./air-card-cache');
 
 // Air 是轮询页面：每 15 秒要把「任务板快照」（线上约 580KB、1069 张卡）和
 // 「当前任务详情」（实测 3.5MB，3.2MB 是消息正文）各拉一次，浏览器每轮都要
@@ -55,7 +56,7 @@ const round1 = ms => Math.round(ms * 10) / 10;
 // 分段名：报告里要拿它们的和与总时长对账（对不上的那部分不在任何一段里，见
 // unaccountedMs —— 那才是「时间其实花在别处」的信号）。
 const PHASE_MARKS = ['migrateMs', 'recordsMs', 'boardMs', 'admissionMs', 'admissionIndexMs',
-  'cardListMs', 'cardLoopMs', 'tailMs', 'jsonMs', 'etagMs'];
+  'cardListMs', 'cardSignatureMs', 'cardLoopMs', 'tailMs', 'jsonMs', 'etagMs'];
 
 function createPhaseTimer() {
   const start = process.hrtime.bigint();
@@ -266,6 +267,103 @@ function mountAirRoutes(app, deps) {
       lease: lease?.state || 'idle', capacityReason: workspace && !lease ? deps.admission.capacityReason(workspace.id) : null, reason: lease?.reason || null, pins: workspace?.pins || [],
       path: workspace?.path || record?.worktreePath || null, branch: workspace?.branch || record?.branch || null };
   }
+  // 一张卡片的底稿：内容只由输入决定（任务板这张卡、任务库里的权属、会话记录、
+  // admission 快照）。runState / worktreeChanges 留空位占住字段顺序，由 cardOverlay
+  // 每轮现填 —— 两条路径吐出的 JSON 逐字节相同，缓存命中与否客户端看不出来。
+  function cardBase(board, t, admission, admissionIdx, timedAdd) {
+    const sessionId = t.chatSessionId || t.sessionId || null;
+    const record = deps.records.get(sessionId);
+    // 逐卡嫌疑点各记一笔合计（单张卡片的读数太小，只有合计看得见走势）：
+    // taskAccess 是每条卡一次的权属查询；resource / attention 是 cardLoopMs 里剩下
+    // 那一半的候选。
+    const access = timedAdd('accessMs', () => deps.shell.taskAccess(t));
+    const taskResource = timedAdd('resourceMs', () => resource(sessionId, admission, admissionIdx));
+    // `updatedAt` is task-metadata time: renaming, changing lifecycle/status,
+    // classification and new messages can all move it.  The Air task list
+    // needs a separate conversation clock so a housekeeping edit cannot jump
+    // an old task above a task that just received a message.
+    const lastMessageAt = (Array.isArray(t.refs) ? t.refs : [])
+      .reduce((latest, ref) => Math.max(latest, Number(ref?.ts) || 0), 0)
+      || Number(t.createdAt) || Number(t.updatedAt) || 0;
+    const card = { id: t.id, dirId: core.taskDirId(board, t) || deps.records.get(sessionId)?.dirId, title: t.title, status: t.status,
+      recordType: t.recordType || null, workflowStage: t.workflowStage || null,
+      updatedAt: t.updatedAt || t.createdAt, lastMessageAt,
+      sessionId, ...access,
+      // 当前绑定线路来自任务自己的会话，不拿全局默认值猜；无绑定时留空。
+      providerName: record?.provider
+        ? (deps.providerName?.(record) || record.provider) : null,
+      // 占位，见 cardOverlay。
+      runState: null,
+      // ✅ 那一格的子状态（达成目标 / 需要交互，读不到就是 null = 老样子的「执行
+      // 成功」）。判定在服务端 classify 落盘时做完（src/classify/vocab.js
+      // goalStateForClassify），客户端只读不推；它只配 succeeded 用，别的状态一律
+      // 忽略 —— 一条刚跑起来的新一轮不该顶着上一轮的「达成目标」。
+      goalState: isGoalState(record?.taskState?.goalState) ? record.taskState.goalState : null,
+      resource: taskResource, worktreeChanges: null,
+      // 未看过的结果（完成/出错/等回复）只在服务端记一份，所有客户端读同一个答案。
+      attention: timedAdd('attentionMs', () => pendingAttention(t)) };
+    return { t, card };
+  }
+  // 每轮现算的两格。底稿对象是缓存共享的，这里只做浅拷贝、从不改它。
+  function cardOverlay({ t, card }, now, timedAdd) {
+    const record = deps.records.get(card.sessionId);
+    // 外层卡片只需要回答「这份 worktree 还有东西没交付吗」，不要把完整 merge
+    // 状态（冲突文件、分支细节等）复制进 15 秒一轮的 Air 快照。状态来自和任务页头
+    // 同一份缓存；首次读取触发后台刷新，下一轮快照自然带上结果。只触发磁盘上真实
+    // 驻留的 worktree：hibernated / planned 没有 checkout，逐条跑 Git 既没意义，
+    // 也会让上千张历史卡片排进状态队列。
+    let worktreeChanges = null;
+    if (record && ['resident', 'retained'].includes(card.resource.residency)
+        && typeof deps.mergeStateCached === 'function') {
+      const mergeState = timedAdd('mergeStateMs', () => deps.mergeStateCached(deps.directories.get(record.dirId), record));
+      if (mergeState && mergeState.reason !== 'loading' && mergeState.worktreeMissing !== true) {
+        const ahead = Math.max(0, Number.parseInt(mergeState.ahead, 10) || 0);
+        worktreeChanges = { dirty: mergeState.dirty === true, ahead };
+      }
+    }
+    // 这一轮到底在不在跑，是队列事件折出来的事实（src/task-board/normalize.js
+    // TASK_RUN_STATES），不是客户端能从 status 猜出来的：status 只有
+    // active/done/archived 三个人为的生命周期取值，「执行中」根本不在里面。
+    // 客户端只读它，不推断它。它随派发宽限（时间）和执行会话的队列状态变，所以
+    // 不进底稿。自愈：证明这一轮从没被受理过的卡片按空闲投影，而不是永久「执行中」。
+    const runState = timedAdd('runStateMs', () => projectRunStateOf(t, now));
+    return { ...card, runState, worktreeChanges };
+  }
+  // 底稿输入的内容签名。用内容而不是版本号：任务板卡片与会话记录都有原地改写，
+  // 版本号漏记一次就是一张永远不刷新的卡。线上实测整份签名约 25ms（任务板 ~10ms、
+  // 会话记录投影 ~12ms），比逐卡重建便宜一个数量级。任务库那一路只取读数（行太大，
+  // 见 store.epoch）。读数拿不到就返回 null —— 缓存据此放弃，而不是猜。
+  const CARD_STORE_KINDS = ['task', 'task-session', 'link', 'link-task', 'shell'];
+  function cardSignature(board, cards, admission) {
+    const epoch = deps.shell.readEpoch ? deps.shell.readEpoch(CARD_STORE_KINDS) : null;
+    if (epoch == null) return null;
+    const hash = crypto.createHash('sha1');
+    const put = value => hash.update(JSON.stringify(value === undefined ? null : value) + '\n');
+    put(epoch);
+    put([board.modules || null, board.taskGroups || null]);
+    for (const t of cards) put(t);
+    put(admission);
+    // 只投影底稿读到的会话字段（含 taskAccess 判权属时读的那几个）。providerName
+    // 的结果按 (cli, provider) 记一次：线路改名也得让签名变。
+    const providerNames = new Map();
+    for (const r of deps.records.values()) {
+      let providerName = null;
+      if (r.provider) {
+        const key = `${r.cli}\u0000${r.provider}`;
+        if (!providerNames.has(key)) providerNames.set(key, deps.providerName?.(r) || null);
+        providerName = providerNames.get(key);
+      }
+      put([r.id, r.dirId, r.kind, r.type, r.cli, r.provider, providerName, r.worktreePath, r.branch,
+        r.workspaceOwnerSessionId, r.workspaceState, r.taskBoundTaskId, r.taskExecutionSlot,
+        r.experimentalMode, r.taskState?.goalState]);
+    }
+    return hash.digest('base64url');
+  }
+  const cardCache = deps.cardCache || createAirCardCache({
+    mode: process.env.AIR_CARD_CACHE || 'shadow',
+    verifyMs: envNumber('AIR_CARD_CACHE_VERIFY_MS', 60_000),
+    logger: deps.logger || null,
+  });
   async function airSnapshot(timing) {
     // 计时永远只是读数：timing 缺省（测试直接调这个函数）时，下面两个局部函数退化成原调用。
     const lap = name => timing?.lap(name);
@@ -337,56 +435,14 @@ function mountAirRoutes(app, deps) {
     const cards = boardTasks();
     timing?.set('cardCount', cards.length);
     lap('cardListMs');
-    const tasks = cards.map(t => {
-      const sessionId = t.chatSessionId || t.sessionId || null;
-      const record = deps.records.get(sessionId);
-      // 两个逐卡嫌疑点各记一笔合计（单张卡片的读数太小，只有合计看得见走势）：
-      // taskAccess 是每条卡一次的单行读，mergeStateCached 可能把卡片排进 Git 状态队列。
-      const access = timedAdd('accessMs', () => deps.shell.taskAccess(t));
-      const taskResource = resource(sessionId, admission, admissionIdx);
-      // 外层卡片只需要回答「这份 worktree 还有东西没交付吗」，不要把完整 merge
-      // 状态（冲突文件、分支细节等）复制进 15 秒一轮的 Air 快照。状态来自和任务页头
-      // 同一份缓存；首次读取触发后台刷新，下一轮快照自然带上结果。只触发磁盘上真实
-      // 驻留的 worktree：hibernated / planned 没有 checkout，逐条跑 Git 既没意义，
-      // 也会让上千张历史卡片排进状态队列。
-      let worktreeChanges = null;
-      if (record && ['resident', 'retained'].includes(taskResource.residency)
-          && typeof deps.mergeStateCached === 'function') {
-        const mergeState = timedAdd('mergeStateMs', () => deps.mergeStateCached(deps.directories.get(record.dirId), record));
-        if (mergeState && mergeState.reason !== 'loading' && mergeState.worktreeMissing !== true) {
-          const ahead = Math.max(0, Number.parseInt(mergeState.ahead, 10) || 0);
-          worktreeChanges = { dirty: mergeState.dirty === true, ahead };
-        }
-      }
-      // `updatedAt` is task-metadata time: renaming, changing lifecycle/status,
-      // classification and new messages can all move it.  The Air task list
-      // needs a separate conversation clock so a housekeeping edit cannot jump
-      // an old task above a task that just received a message.
-      const lastMessageAt = (Array.isArray(t.refs) ? t.refs : [])
-        .reduce((latest, ref) => Math.max(latest, Number(ref?.ts) || 0), 0)
-        || Number(t.createdAt) || Number(t.updatedAt) || 0;
-      return { id: t.id, dirId: core.taskDirId(board, t) || deps.records.get(sessionId)?.dirId, title: t.title, status: t.status,
-        recordType: t.recordType || null, workflowStage: t.workflowStage || null,
-        updatedAt: t.updatedAt || t.createdAt, lastMessageAt,
-        sessionId, ...access,
-        // 当前绑定线路来自任务自己的会话，不拿全局默认值猜；无绑定时留空。
-        providerName: record?.provider
-          ? (deps.providerName?.(record) || record.provider) : null,
-        // 这一轮到底在不在跑，是队列事件折出来的事实（src/task-board/normalize.js
-        // TASK_RUN_STATES），不是客户端能从 status 猜出来的：status 只有
-        // active/done/archived 三个人为的生命周期取值，「执行中」根本不在里面。
-        // 客户端只读它，不推断它。
-        // 自愈：证明这一轮从没被受理过的卡片按空闲投影，而不是永久「执行中」。
-        runState: projectRunStateOf(t, projectNow),
-        // ✅ 那一格的子状态（达成目标 / 需要交互，读不到就是 null = 老样子的「执行
-        // 成功」）。判定在服务端 classify 落盘时做完（src/classify/vocab.js
-        // goalStateForClassify），客户端只读不推；它只配 succeeded 用，别的状态一律
-        // 忽略 —— 一条刚跑起来的新一轮不该顶着上一轮的「达成目标」。
-        goalState: isGoalState(record?.taskState?.goalState) ? record.taskState.goalState : null,
-        resource: taskResource, worktreeChanges,
-        // 未看过的结果（完成/出错/等回复）只在服务端记一份，所有客户端读同一个答案。
-        attention: pendingAttention(t) };
-    });
+    // 底稿（内容只由输入决定的部分）走 air-card-cache.js；runState 与 worktreeChanges
+    // 两格随时间 / 运行时自己变，每轮现算叠上去（见 cardOverlay）。
+    const signature = cardCache.mode === 'off' ? null : cardSignature(board, cards, admission);
+    lap('cardSignatureMs');
+    const { bases, outcome } = cardCache.resolve(signature,
+      () => cards.map(t => cardBase(board, t, admission, admissionIdx, timedAdd)));
+    timing?.set('cardCache', outcome);
+    const tasks = bases.map(entry => cardOverlay(entry, projectNow, timedAdd));
     // 最近有消息的在前。任务板本身是从旧到新存的，客户端凡是「先放自己知道的几条、
     // 剩下按原顺序补位」的列表（旧版 App 的手机最近任务就是）都会把新任务压到底。
     // 平手按 updatedAt；再平手保持任务板原顺序（sort 是稳定的），ETag 不会因排序抖动。

@@ -119,3 +119,42 @@ test('热路径必须走缓存版（防止以后悄悄退回 store.list）', () 
   assert.match(taskFirst, /store\.cachedEntries\('task-first:indexed'\)/);
   assert.doesNotMatch(taskFirst, /store\.list\('task'\)/);
 });
+
+// 收据、投递记录每轮都在写。失效信号若不分 kind，任何一笔收据都会让 10MB 的
+// task 表缓存作废 —— 那正是线上 migrateMs 的 p90 跳到 135ms 的原因。
+test('别的 kind 的自写不让 task 缓存失效；task 自己的写与外部连接的写仍然失效', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-shell-cache-'));
+  const file = path.join(dir, 'shell.sqlite');
+  const store = createTaskShellStore(file), other = createTaskShellStore(file);
+  t.after(() => { store.close(); other.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  store.set('task', 'tsk_1', { id: 'tsk_1', sessionId: 's1', title: 'a' });
+  const held = store.cachedList('task')[0];
+  store.set('receipt', 'r1', { shellId: 'sh1', text: 'x' });
+  store.set('delivery:run', 'd1', { ok: true });
+  store.remove('delivery:run', 'd1');
+  assert.equal(store.cachedList('task')[0], held, '收据/投递写入后 task 行仍复用');
+  store.set('task', 'tsk_1', { id: 'tsk_1', sessionId: 's1', title: 'b' });
+  assert.equal(store.cachedList('task')[0].title, 'b', 'task 自写立刻失效');
+  const again = store.cachedList('task')[0];
+  other.set('receipt', 'r2', { shellId: 'sh1', text: 'y' });
+  assert.notEqual(store.cachedList('task')[0], again, '外部连接任何写都按保守口径失效');
+});
+
+test('cachedById 与 cachedList 共用同一份解析结果，并随内容失效', t => {
+  const store = storeFixture(t);
+  store.set('task', 'tsk_1', { id: 'tsk_1', sessionId: 's1', title: 'a' });
+  store.set('task', 'tsk_2', { id: 'tsk_2', sessionId: 's2', title: 'b' });
+  const byId = store.cachedById('task');
+  assert.equal(byId.get('tsk_2'), store.cachedList('task')[1], '同一行对象，没有第二遍 parse');
+  assert.equal(store.cachedById('task'), byId, '没变时复用同一张表');
+  store.set('task', 'tsk_2', { id: 'tsk_2', sessionId: 's2', title: 'c' });
+  assert.equal(store.cachedById('task').get('tsk_2').title, 'c');
+  store.remove('task', 'tsk_1');
+  assert.equal(store.cachedById('task').has('tsk_1'), false);
+  assert.throws(() => store.cachedById('receipt'), /row cache not allowed for kind receipt/);
+});
+
+test('taskAccess 逐卡取行走缓存，不再逐卡单行读 task', () => {
+  const actions = fs.readFileSync(path.join(__dirname, '..', 'src', 'task-shell', 'task-actions.js'), 'utf8');
+  assert.match(actions, /store\.cachedById\('task'\)\.get\(id\)/);
+});
