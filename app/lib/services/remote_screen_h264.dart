@@ -137,6 +137,19 @@ class RemoteScreenH264 with ScreenInputMixin implements ScreenSource {
     if (!_closed) _send(bytes);
   }
 
+  /// 页面按 [width]×[height]（解码后的帧缓冲）归一化出 x/y，而 Agent 对 H.264
+  /// 通道的指针坐标按编码尺寸（= 屏幕逻辑点）理解。原生解码器会把宽度压到 ≤1280
+  /// （1470×956 → 1280×832），两域不等时必须放大回去，否则光标总落在点击处的左上方。
+  @override
+  void pointerEvent(int mask, int x, int y) {
+    final ew = _encodedWidth, eh = _encodedHeight;
+    if (ew > 0 && eh > 0 && width > 0 && height > 0 && (ew != width || eh != height)) {
+      x = (x * ew / width).round().clamp(0, ew - 1);
+      y = (y * eh / height).round().clamp(0, eh - 1);
+    }
+    super.pointerEvent(mask, x, y);
+  }
+
   /// 向 Agent 要一个关键帧（断流恢复、解码器重置后都从这里续上）。
   void requestKeyFrame({bool force = false}) {
     if (_closed) return;
