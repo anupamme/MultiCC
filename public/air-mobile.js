@@ -7,7 +7,7 @@
   let ctx;
   // filter 管「最近任务」页，consoleView 管控制台那张卡；从卡片点「全部 ›」会带着
   // 当前那一格过去，并清掉上次留下的搜索词（要看的是这一格的完整清单）。
-  let query = '', filter = 'recent', consoleView = 'recent';
+  let query = '', filter = 'recent', consoleView = 'recent', remotePage = 1;
   // 控制台不分目录，看的是所有项目；按目录看在「最近任务」页里选（null = 全部项目）。
   // 这只是这一页的筛选，不改全局「当前目录」。
   let recentDir = null;
@@ -63,7 +63,7 @@
     ctx = { ...ctx, ...context };
     const content = $('admin-content');
     if (recentDir && !context.data.directories.some(dir => dir.id === recentDir)) recentDir = null;
-    const signature = JSON.stringify([recentDir, context.data.tasks, ctx.recentTasks, root.currentLang, filter]);
+    const signature = JSON.stringify([recentDir, context.data.tasks, context.data.cursor, context.data.viewVersion, ctx.recentTasks, root.currentLang, filter, remotePage, query]);
     if (content.dataset.mobileRecent === signature && content.querySelector('#mobile-task-search')) return;
     const focus = document.activeElement?.id === 'mobile-task-search';
     const start = document.activeElement?.selectionStart;
@@ -72,20 +72,29 @@
     search.placeholder = root.t('airAdminSearchTasksLabel'); search.setAttribute('aria-label', search.placeholder);
     const tabs = make('div', null, 'mobile-task-filters');
     const list = make('div', null, 'mobile-task-list');
+    const pager = make('nav', null, 'directory-task-pager');
     const paint = () => {
       let rows = filterRows(recentRows(ctx, true, recentDir), filter);
       if (filter === 'recent') rows = rows.slice(0, 30);
       const needle = query.trim().toLowerCase();
       rows = rows.filter(task => !needle || [task.title, task.phase, task.goal, task.summary].some(value => String(value || '').toLowerCase().includes(needle)));
+      const remote = root.MultiCCAirLive?.page('mobile', { dirId: recentDir || '', status: filter, query, page: remotePage });
+      if (remote) { rows = remote.tasks; if (!remote.loading) remotePage = remote.page; }
+      pager.replaceChildren();
+      if (remote && remote.pages > 1) {
+        const prev = button(root.t('airTaskPagePrev'), () => { remotePage--; paint(); }); prev.disabled = remote.page <= 1;
+        const next = button(root.t('airTaskPageNext'), () => { remotePage++; paint(); }); next.disabled = remote.page >= remote.pages;
+        pager.append(prev, make('span', root.t('airTaskPageOf', { page: remote.page, total: remote.pages })), next);
+      }
       list.replaceChildren(...rows.map(task => taskRow(task, ctx)));
       if (!rows.length) list.append(make('p', root.t('airAdminNoMatchingTasks'), 'admin-empty'));
       for (const tab of tabs.children) tab.setAttribute('aria-pressed', String(tab.dataset.filter === filter));
     };
     for (const [value, key] of [...MOBILE_FILTERS, ['all', 'airAdminFilterAll']]) {
-      const tab = button(root.t(key), () => { filter = value; paint(); }); tab.dataset.filter = value; tabs.append(tab);
+      const tab = button(root.t(key), () => { filter = value; remotePage = 1; paint(); }); tab.dataset.filter = value; tabs.append(tab);
     }
-    search.oninput = () => { query = search.value; paint(); };
-    wrapper.append(search, tabs, list); content.replaceChildren(wrapper); content.dataset.mobileRecent = signature;
+    search.oninput = () => { query = search.value; remotePage = 1; paint(); };
+    wrapper.append(search, tabs, list, pager); content.replaceChildren(wrapper); content.dataset.mobileRecent = signature;
     paint();
     if (focus) { search.focus(); search.setSelectionRange?.(start, start); }
   }
@@ -97,7 +106,7 @@
       event.stopPropagation();
       root.MultiCCAirDirectoryNav.toggle(ctx.mode !== 'recent' ? null : {
         current: recentDir,
-        onPick: id => { recentDir = id; render(ctx); renderRecent(ctx); },
+        onPick: id => { recentDir = id; remotePage = 1; render(ctx); renderRecent(ctx); },
       });
     }, 'air-mobile-project'); project.id = 'air-mobile-project';
     // 控制台不分目录，顶栏那格留空（页面大标题已经写着「控制台」）。
@@ -128,13 +137,14 @@
     const panel = make('section', null, 'mobile-console-recent');
     const head = make('div', null, 'mobile-section-head');
     const all = recentRows(ctx, false);
-    const rows = filterRows(all, consoleView);
+    const remote = root.MultiCCAirLive?.page('mobile-preview', { status: consoleView, limit: 5 });
+    const rows = remote?.tasks || filterRows(all, consoleView);
     head.append(make('h3', root.t(MOBILE_FILTERS.find(([value]) => value === consoleView)[1])),
-      button(`${root.t('airAdminFilterAll')} ${rows.length} ›`, () => { filter = consoleView; query = ''; ctx.setMode('recent'); }));
+      button(`${root.t('airAdminFilterAll')} ${remote?.total ?? rows.length} ›`, () => { filter = consoleView; query = ''; ctx.setMode('recent'); }));
     // 桌面那排统计格在手机上藏掉了（太占地方），这里换成一行带数量的小格。
     const tabs = make('div', null, 'mobile-task-filters mobile-console-filters');
     for (const [value, key] of MOBILE_FILTERS) {
-      const count = value === 'recent' ? '' : ` ${filterRows(all, value).length}`;
+      const count = value === 'recent' ? '' : ` ${ctx.data.taskStats?.all?.[value] ?? filterRows(all, value).length}`;
       const tab = button(root.t(key) + count, () => { consoleView = value; paintConsole(); });
       tab.dataset.filter = value; tab.setAttribute('aria-pressed', String(value === consoleView)); tabs.append(tab);
     }

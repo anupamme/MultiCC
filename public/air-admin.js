@@ -82,6 +82,7 @@
   // 「最近使用」一段的条数上限：目录首页读的是「现在该看什么」，不是一份完整清单。
   const HOME_RECENT_LIMIT = 8;
   const TASK_PAGE_SIZE = 20;
+  let attentionPage = 1;
   // 其余四个统计格仍是短清单；「全部任务」单独按每页 20 条翻页。
   const TASK_LIST_LIMIT = 60;
 
@@ -145,6 +146,7 @@
   function isRunning(task) { return taskSpec(task).spinner === true; }
   function runningDirectories(data) {
     const dirs = new Set();
+    if (data?.taskStats) { for (const [id, count] of Object.entries(data.taskStats)) if (id !== 'all' && count.running) dirs.add(id); return dirs; }
     for (const task of data?.tasks || []) if (isRunning(task)) dirs.add(task.dirId);
     return dirs;
   }
@@ -439,6 +441,7 @@
   function renderOverview(context) {
     const { data, setMode, navigate } = context;
     const tasks = data?.tasks || [];
+    const counts = data?.taskStats?.all;
     const directories = data?.directories || [];
     const active = tasks.filter(task => task.status !== 'done' && task.status !== 'archived');
     const executing = tasks.filter(isRunning).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -458,19 +461,20 @@
     // 快照刷新时整页会重建：先把顶栏搜索框的焦点/光标记住，重建完再放回去。
     const homeSearchFocus = document.activeElement?.id === 'console-home-search';
     const homeSearchCaret = homeSearchFocus ? document.activeElement.selectionStart : null;
+    const controlFocus = document.activeElement?.id, controlCaret = document.activeElement?.selectionStart;
     // Compact filters accompany the complete task list below the attention cards.
     const stats = make('div', null, 'admin-stats console-filter-tabs');
     const tiles = [
-      ['running', t('airAdminTileRunning'), executing.length, running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
-      ['needs', t('airNeedsMeFilter'), todos.length, todos.length ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), todos.length ? 'amber' : ''],
-      ['error', t('airAdminTileError'), failed.length, failed.length ? t('airAdminTileErrorDetail') : t('airAdminTileErrorNone'), failed.length ? 'red' : ''],
-      ['today', t('airAdminTileToday'), finished.length, t('airAdminTileTodayDetail'), 'blue'],
-      ['all', t('airAdminTileAll'), active.length, t('airAdminTileAllDetail', { n: tasks.length }), 'purple'],
+      ['running', t('airAdminTileRunning'), (counts?.running ?? executing.length), running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
+      ['needs', t('airNeedsMeFilter'), (counts?.needs ?? todos.length), (counts?.needs ?? todos.length) ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), (counts?.needs ?? todos.length) ? 'amber' : ''],
+      ['error', t('airAdminTileError'), (counts?.error ?? failed.length), (counts?.error ?? failed.length) ? t('airAdminTileErrorDetail') : t('airAdminTileErrorNone'), (counts?.error ?? failed.length) ? 'red' : ''],
+      ['today', t('airAdminTileToday'), (counts?.today ?? finished.length), t('airAdminTileTodayDetail'), 'blue'],
+      ['all', t('airAdminTileAll'), (counts?.open ?? active.length), t('airAdminTileAllDetail', { n: (counts?.total ?? tasks.length) }), 'purple'],
     ];
     const tileButtons = new Map();
     for (const [view, label, count, detail, tone] of tiles) {
       const card = statCard(label, count, detail, tone, () => {
-        consoleFilter.view = view;
+        consoleFilter.view = view; consoleFilter.page = 1;
         paintDrawer();
       });
       card.dataset.view = view;
@@ -571,7 +575,7 @@
       const target = consoleFilter.page + delta;
       if (target < 1 || target > pageCount) return;
       consoleFilter.page = target;
-      paintTaskList();
+      paintDrawer();
       root.requestAnimationFrame(() => {
         const scroller = el('console-center');
         if (scroller) scroller.scrollTop += drawerHead.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
@@ -602,13 +606,21 @@
       const rows = ranked || filterTasks(tasks, filter, context.directoryName).map(task => ({ task }));
       // 正文命中时保留相关度；否则用与目录首页相同的消息/本机访问时钟。
       if (!ranked) sortRows(rows);
-      pageCount = Math.max(1, Math.ceil(rows.length / TASK_PAGE_SIZE));
+      const results = querying ? fullText?.results() : null;
+      const live = root.MultiCCAirLive;
+      const remote = live?.page('console', {
+        dirId: consoleFilter.dir === 'all' ? '' : consoleFilter.dir, status: filter.status,
+        query: results ? '' : filter.query, ids: root.MultiCCAirSync?.searchIds(results),
+        page: consoleFilter.page, sort: consoleFilter.sort,
+        visits: (() => { try { return JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}'); } catch (_) { return {}; } })(),
+      });
+      pageCount = remote?.pages ?? Math.max(1, Math.ceil(rows.length / TASK_PAGE_SIZE));
       consoleFilter.page = Math.min(Math.max(1, consoleFilter.page), pageCount);
       const start = (consoleFilter.page - 1) * TASK_PAGE_SIZE;
-      const shown = rows.slice(start, start + TASK_PAGE_SIZE);
+      const shown = remote && !remote.loading ? remote.tasks.map(task => ({ task })) : rows.slice(start, start + TASK_PAGE_SIZE);
       allList.replaceChildren(...shown.map(({ task, snippet }) => openRow(task, { deletable: true, snippet })));
-      if (!rows.length) allList.append(make('p', t('airAdminNoMatchingTasks'), 'admin-empty'));
-      drawerNote.textContent = t('airAdminNItems', { n: rows.length });
+      if (!shown.length && !remote?.loading) allList.append(make('p', t('airAdminNoMatchingTasks'), 'admin-empty'));
+      drawerNote.textContent = t('airAdminNItems', { n: remote && !remote.loading ? remote.total : rows.length });
       pageLabel.textContent = t('airTaskPageOf', { page: consoleFilter.page, total: pageCount });
       prev.disabled = consoleFilter.page <= 1;
       next.disabled = consoleFilter.page >= pageCount;
@@ -637,12 +649,17 @@
       pager.hidden = view !== 'all' || pageCount <= 1;
       if (view === 'all') { paintTaskList(); return; }
       const [list, emptyKey] = fixedLists[view];
-      const shown = list.slice(0, TASK_LIST_LIMIT);
+      const remote = root.MultiCCAirLive?.page('console', { status: view, page: consoleFilter.page, sort: view === 'error' ? 'oldest' : 'message' });
+      if (remote) {
+        pageCount = remote.pages; consoleFilter.page = remote.page;
+        prev.disabled = remote.page <= 1; next.disabled = remote.page >= remote.pages;
+        pager.hidden = remote.pages <= 1;
+        pageLabel.textContent = t('airTaskPageOf', { page: remote.page, total: remote.pages });
+      }
+      const shown = remote && !remote.loading ? remote.tasks : list.slice(0, TASK_LIST_LIMIT);
       allList.replaceChildren(...shown.map(task => openRow(task)));
-      if (!list.length) allList.append(make('p', t(emptyKey), 'admin-empty'));
-      drawerNote.textContent = list.length > shown.length
-        ? t('airAdminTaskCountLimited', { total: list.length, shown: shown.length })
-        : t('airAdminNItems', { n: list.length });
+      if (!shown.length && !remote?.loading) allList.append(make('p', t(emptyKey), 'admin-empty'));
+      drawerNote.textContent = t('airAdminNItems', { n: remote?.total ?? list.length });
     }
     search.oninput = () => { consoleFilter.query = search.value; consoleFilter.page = 1; paintTaskList(); };
     // 搜索框同时挂两条路：本地筛选立刻重画（上面那条），全文结果到了再按相关度覆盖
@@ -757,12 +774,13 @@
       button.type = 'button';
       applyRing(button, running.has(directory.id), directory.id);
       const dirTasks = tasks.filter(task => task.dirId === directory.id);
-      const activeCount = dirTasks.filter(isRunning).length;
+      const activeCount = context.data.taskStats?.[directory.id]?.running ?? dirTasks.filter(isRunning).length;
+      const total = context.data.taskStats?.[directory.id]?.total ?? dirTasks.length;
       button.append(make('strong', '▣ ' + (directory.name || directory.id)),
         make('small', directory.path || ''),
         make('small', activeCount
-          ? t('airDirTaskCountActive', { total: dirTasks.length, active: activeCount })
-          : t('airDirTaskCount', { total: dirTasks.length })),
+          ? t('airDirTaskCountActive', { total, active: activeCount })
+          : t('airDirTaskCount', { total })),
         // 与目录库同一份 worktree 口径（air-worktrees.js 的 summary）。
         make('small', root.MultiCCAirWorktrees?.summary?.(directory)
           || t('airDirWorktreeCount', { n: directory.worktreeCount || 0 })));
@@ -787,7 +805,12 @@
 
     function paintFlow() {
       const needle = needleNow();
-      const loud = todos.filter(task => matchesTask(task, needle));
+      const live = root.MultiCCAirLive;
+      const preview = (key, status, limit, fallback) => {
+        const page = live?.page(key, { status, query: needle, limit });
+        return page && !page.loading ? page.tasks : fallback.filter(task => matchesTask(task, needle));
+      };
+      const loud = preview('home-needs', 'needs', PRIORITY_CARD_MAX, todos);
       cards.replaceChildren(...loud.slice(0, PRIORITY_CARD_MAX).map(task => {
         const error = taskStatus(task) === 'error';
         const card = make('article', null, 'console-priority-card ' + (error ? 'error' : 'waiting'));
@@ -809,11 +832,12 @@
       // 不让「等我处理」把目录和「更多」顶出首屏。
       requestAnimationFrame(() => { if (cards.isConnected) fitPriorityCards(cards); });
 
-      const runningNow = executing.filter(task => matchesTask(task, needle));
+      const runningNow = preview('home-running', 'running', 5, executing);
       runningList.replaceChildren(...runningNow.slice(0, 5).map(task => openRow(task)));
       if (!runningNow.length) runningList.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airAdminNoRunningTasks'));
 
-      const recentNow = recentTasks.filter(task => matchesTask(task, needle));
+      const recentNow = preview('home-recent', 'recent', 30, recentTasks)
+        .filter(task => !loud.some(t => t.id === task.id) && !runningNow.some(t => t.id === task.id));
       recentList.replaceChildren(...recentNow.slice(0, HOME_RECENT_LIMIT).map(task => openRow(task)));
       if (!recentNow.length) recentList.append(empty('airAdminNoMatchingTasks'));
     }
@@ -871,6 +895,10 @@
     if (homeSearchFocus) {
       try { homeSearch.focus(); homeSearch.setSelectionRange?.(homeSearchCaret, homeSearchCaret); } catch (_) { /* noop */ }
     }
+    if (['console-task-search', 'console-task-status', 'console-task-scope', 'console-task-dir'].includes(controlFocus)) {
+      const control = el(controlFocus); control?.focus();
+      if (typeof controlCaret === 'number') control?.setSelectionRange?.(controlCaret, controlCaret);
+    }
     root.MultiCCAirMobile?.decorateConsole(context);
 
   }
@@ -884,18 +912,28 @@
       // 早退路径 —— 这里再强制重画一次，否则按钮按下去什么都不动。
       action(t('airAdminRefresh'), async () => { await context.refresh?.(); render('attention', context, true); }, '', keepsGlyph('↻')),
     ]);
-    const urgent = todoTasks(context.data);
+    const remote = root.MultiCCAirLive?.page('attention', { status: 'needs', page: attentionPage });
+    const urgent = remote && !remote.loading ? remote.tasks : todoTasks(context.data).slice(0, TASK_PAGE_SIZE);
+    const total = context.data.taskStats?.all?.needs ?? urgent.length;
+    if (remote && !remote.loading) attentionPage = remote.page;
     const panel = make('section', null, 'admin-panel console-attention-page');
     const head = make('div', null, 'admin-panel-head');
     head.append(make('div'));
     head.firstChild.append(make('span', t('airAllProjects'), 'eyebrow'), make('h3', t('airAdminWhoNeedsMe')));
-    head.append(make('span', urgent.length ? t('airAdminAttentionPageNote', { n: urgent.length }) : t('airAdminNothingPending'), 'admin-panel-note'));
+    head.append(make('span', total ? t('airAdminAttentionPageNote', { n: total }) : t('airAdminNothingPending'), 'admin-panel-note'));
     const list = make('div', null, 'admin-recent-list');
     // 这一页本身就是完整清单，点走一条不用收掉任何浮层 —— 直接把 navigate 交给
     // taskRow 的默认行为，不套控制台那层 onOpen。
     for (const task of urgent) list.append(taskRow(task, context));
     if (!urgent.length) list.append(make('p', t('airAdminNoAttentionTasks'), 'admin-empty'));
     panel.append(head, list);
+    if (remote?.pages > 1) {
+      const pager = make('div', null, 'admin-task-pager');
+      const prev = action(t('airTaskPagePrev'), () => { attentionPage--; renderAttention(context); });
+      const next = action(t('airTaskPageNext'), () => { attentionPage++; renderAttention(context); });
+      prev.disabled = attentionPage <= 1; next.disabled = attentionPage >= remote.pages;
+      pager.append(prev, make('span', t('airTaskPageOf', { page: attentionPage, total: remote.pages })), next); panel.append(pager);
+    }
     el('admin-content').replaceChildren(panel);
   }
 
@@ -1539,6 +1577,7 @@
       renderOverview(context);
       return;
     }
+    if (mode === 'attention') { activeMode = mode; return renderAttention(context); }
     if (!force && activeMode === mode && !(mode === 'settings' && settingsRoute !== location.search)) return;
     root.MultiCCAirMore?.park();
     activeMode = mode;

@@ -68,8 +68,14 @@ async function api(route, body, status = 200, method) {
     const plannedEntry = await api('/api/air/tasks/' + plannedId);
     assert.equal(plannedEntry.configuration.cli, 'codex', 'planned task selects an available runtime');
     assert.equal(plannedEntry.resource.residency, 'planned');
+    const initialAir = await api('/api/air/sync');
+    assert.ok(initialAir.cursor && initialAir.taskStats, '生产宿主挂载摘要同步接口');
+    const initialPage = await api('/api/air/page?status=all&limit=20'); assert.ok(initialPage.tasks.length <= 20);
     const input = { dirId: 'd1', title: 'Independent task', cli: 'codex', clientMsgId: 'new-task' };
     const task = await api('/api/air/tasks', input); assert.deepEqual(await api('/api/air/tasks', input), task);
+    await wait(async () => (await api('/api/air/page?status=all&ids=' + task.taskId)).tasks.some(row => row.id === task.taskId), '新任务进入共享摘要索引');
+    const airChanges = await api('/api/air/sync?cursor=' + initialAir.cursor);
+    assert.ok(airChanges.reset || airChanges.events.some(event => event.tasks.some(row => row.id === task.taskId)), '写入触发增量变更');
     let record = persisted().find(s => s.id === task.sessionId); assert.equal(record.workspaceState, 'planned');
     assert.equal(record.taskBoundTaskId, task.taskId, 'REST creation binds the canonical task identity');
     assert.equal(fs.existsSync(record.worktreePath), false); assert.equal(rows().length, 0);

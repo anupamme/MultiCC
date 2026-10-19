@@ -52,9 +52,8 @@ function createAirCardCache({ mode = 'shadow', verifyMs = 60_000, reportMs = 10 
   // items: 本轮全部卡片（任意对象）；keyOf/signatureOf/build 由调用方给。
   // globalSignature 为 null 表示「这一轮说不清共同输入有没有变」（例如任务库读数
   // 拿不到）：一律现建，并丢掉手上的缓存。返回 { entries, hits, builds }。
-  function resolve(globalSignature, items, { keyOf, signatureOf, build }) {
-    report();
-    stats.requests += 1;
+  function resolve(globalSignature, items, { keyOf, signatureOf, build, prune = true, countRequest = true }) {
+    if (countRequest) { report(); stats.requests += 1; }
     if (active === 'off' || globalSignature == null) {
       global = null; held = new Map();
       stats.builds += items.length;
@@ -65,7 +64,7 @@ function createAirCardCache({ mode = 'shadow', verifyMs = 60_000, reportMs = 10 
       global = globalSignature; held = new Map();
     }
     const now = clock();
-    const next = new Map();
+    const next = prune ? new Map() : held;
     let hits = 0, builds = 0;
     const entries = items.map(item => {
       const key = keyOf(item), signature = signatureOf(item);
@@ -88,7 +87,21 @@ function createAirCardCache({ mode = 'shadow', verifyMs = 60_000, reportMs = 10 
     return { entries, hits, builds };
   }
 
-  return { resolve, mode: active, stats: () => ({ mode: active, ...stats }) };
+  async function resolveAsync(globalSignature, items, options) {
+    report(); stats.requests += 1;
+    const entries = []; let hits = 0, builds = 0;
+    for (let i = 0; i < items.length; i += 24) {
+      const batch = resolve(globalSignature, items.slice(i, i + 24), { ...options, prune: false, countRequest: false });
+      entries.push(...batch.entries); hits += batch.hits; builds += batch.builds;
+      await new Promise(done => setImmediate(done));
+    }
+    if (options.prune !== false) {
+      const keys = new Set(items.map(options.keyOf));
+      for (const key of held.keys()) if (!keys.has(key)) held.delete(key);
+    }
+    return { entries, hits, builds };
+  }
+  return { resolve, resolveAsync, mode: active, stats: () => ({ mode: active, ...stats }) };
 }
 
 module.exports = { createAirCardCache, AIR_CARD_CACHE_MODES: MODES };

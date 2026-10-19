@@ -184,6 +184,7 @@ async function startFixtureServer(routes = {}) {
       res.end(payload);
     }
   });
+  const airFixture = require('./air-sync-fixture').installAirSyncFixture(routes, server);
   server.on('connection', socket => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
@@ -197,6 +198,7 @@ async function startFixtureServer(routes = {}) {
     baseUrl: `http://127.0.0.1:${port}`,
     requests,
     async close() {
+      airFixture?.close();
       for (const socket of sockets) socket.destroy();
       await new Promise(resolve => server.close(resolve));
     },

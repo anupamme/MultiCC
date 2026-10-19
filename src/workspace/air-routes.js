@@ -9,15 +9,12 @@ const { createAirTodoIgnoreRuntime } = require('./todo-ignores');
 const { pendingAttention } = require('../task-board/attention');
 const { createAirCardCache } = require('./air-card-cache');
 
-// Air 是轮询页面：每 15 秒要把「任务板快照」（线上约 580KB、1069 张卡）和
-// 「当前任务详情」（实测 3.5MB，3.2MB 是消息正文）各拉一次，浏览器每轮都要
-// 解析近 4MB JSON 并把整块 DOM 重建一遍。绝大多数轮次内容根本没变，所以两个
-// 读接口支持条件请求：内容一样就回 304，客户端保留现有视图、不再解析。
-// ETag 由响应正文本身算出，不额外维护版本号，永远不会与正文脱节。
-function conditionalBody(req, res, payload, timing) {
-  const body = JSON.stringify(payload);
+// 旧 App 的完整快照与按需详情继续支持 ETag/304。生产快照正文按摘要版本复用；
+// Web 首页走分页索引与游标增量，不再每 15 秒请求完整快照。
+function conditionalBody(req, res, payload, timing, encoded) {
+  const body = encoded ? encoded.body : JSON.stringify(payload);
   timing?.lap('jsonMs');
-  const etag = `W/"${crypto.createHash('sha1').update(body).digest('base64url')}"`;
+  const etag = encoded ? encoded.etag : `W/"${crypto.createHash('sha1').update(body).digest('base64url')}"`;
   timing?.lap('etagMs');
   // 字符数（不是字节数）：只用来判断「这一轮到底搬了多少东西」，不参与任何逻辑。
   timing?.set('bodyChars', body.length);
@@ -125,6 +122,7 @@ function mountAirRoutes(app, deps) {
     try {
       const result = await fn(req, res);
       if (!res.headersSent && result !== undefined) res.json(result);
+      if (req.method && req.method !== 'GET') liveSync?.invalidate();
     } catch (error) {
       if (res.headersSent || res.writableEnded) return;
       res.status(error.status || 500).json({ ok: false, code: error.code || 'air_request_failed', message: error.status ? error.message : 'Request failed' });
@@ -401,11 +399,11 @@ function mountAirRoutes(app, deps) {
     };
   }
   const cardCache = deps.cardCache || createAirCardCache({
-    mode: process.env.AIR_CARD_CACHE || 'shadow',
+    mode: process.env.AIR_CARD_CACHE || (deps.registerSync ? 'on' : 'shadow'),
     verifyMs: envNumber('AIR_CARD_CACHE_VERIFY_MS', 60_000),
     logger: deps.logger || null,
   });
-  async function airSnapshot(timing) {
+  async function airSnapshot(timing, options = {}) {
     // 计时永远只是读数：timing 缺省（测试直接调这个函数）时，下面两个局部函数退化成原调用。
     const lap = name => timing?.lap(name);
     const timedAdd = (name, fn) => {
@@ -473,7 +471,8 @@ function mountAirRoutes(app, deps) {
       try { return deps.hibernation?.()?.policy?.() || null; } catch (_) { return null; }
     })();
     lap('admissionIndexMs');
-    const cards = boardTasks();
+    const selected = options.ids && new Set(options.ids);
+    const cards = boardTasks().filter(task => !selected || selected.has(task.id));
     timing?.set('cardCount', cards.length);
     lap('cardListMs');
     // 底稿（内容只由输入决定的部分）逐卡走 air-card-cache.js；runState /
@@ -482,13 +481,18 @@ function mountAirRoutes(app, deps) {
     const globalSignature = cardCache.mode === 'off' ? null : globalCardSignature(board);
     const signatureOf = cardCache.mode === 'off' ? null : cardSignatures(admissionIdx);
     lap('cardSignatureMs');
-    const { entries, hits, builds } = cardCache.resolve(globalSignature, cards, {
+    const resolve = options.cooperative ? cardCache.resolveAsync : cardCache.resolve;
+    const { entries, hits, builds } = await resolve(globalSignature, cards, {
       keyOf: t => t.id, signatureOf: t => (signatureOf ? signatureOf(t) : null),
-      build: t => cardBase(board, t, admission, admissionIdx, timedAdd) });
+      prune: !selected, build: t => cardBase(board, t, admission, admissionIdx, timedAdd) });
     timing?.set('cardHits', hits);
     timing?.set('cardBuilds', builds);
     const capacity = capacityMemo();
-    const tasks = entries.map(entry => cardOverlay(entry, projectNow, capacity, timedAdd));
+    const tasks = [];
+    for (let i = 0; i < entries.length; i++) {
+      tasks.push(cardOverlay(entries[i], projectNow, capacity, timedAdd));
+      if (options.cooperative && i % 24 === 23) await new Promise(done => setImmediate(done));
+    }
     // 最近有消息的在前。任务板本身是从旧到新存的，客户端凡是「先放自己知道的几条、
     // 剩下按原顺序补位」的列表（旧版 App 的手机最近任务就是）都会把新任务压到底。
     // 平手按 updatedAt；再平手保持任务板原顺序（sort 是稳定的），ETag 不会因排序抖动。
@@ -531,16 +535,25 @@ function mountAirRoutes(app, deps) {
     lap('tailMs');
     return payload;
   }
-  // 分相位计时只在这里挂：计时对象每请求一个，响应正文与 ETag 与从前逐字节相同
-  // （数字只走日志，见 createPhaseReporter）。/api/air/tasks/:id 那条详情重得多，但先
-  // 把这一条的 390ms 拆开，别同时动两个变量。
+  // 分相位计时记录后台生产者的成本，数字不进入摘要正文。
   const reportPhases = createPhaseReporter(deps.phaseDiagnostics, { lastLogAt: 0 });
+  const liveSync = deps.registerSync ? require('./air-sync-runtime').createAirSyncRuntime({
+    build: async ids => {
+      const timing = createPhaseTimer();
+      const snapshot = await airSnapshot(timing, { ids, cooperative: true });
+      reportPhases(timing, deps.logger); return snapshot;
+    }, subscribe: deps.subscribe, logger: deps.logger, send: deps.send,
+    taskIdsForSession: id => Object.values(deps.getBoard().tasks || {}).filter(task =>
+      task.sessionId === id || task.chatSessionId === id || core.taskRunSessionIds(task).includes(id)).map(task => task.id),
+  }) : null;
+  if (liveSync) { liveSync.mount(app, route); deps.registerSync(liveSync); }
   let airBuildsInFlight = 0;
   app.get('/api/air', route(async (req, res) => {
     const timing = createPhaseTimer();
     airBuildsInFlight += 1;
     try {
-      return conditionalBody(req, res, await airSnapshot(timing), timing);
+      if (liveSync) await liveSync.ensureReady();
+      return conditionalBody(req, res, liveSync ? null : await airSnapshot(timing), timing, liveSync?.index.serialized());
     } finally {
       airBuildsInFlight -= 1;
       timing.set('inFlight', airBuildsInFlight);
@@ -650,8 +663,12 @@ function mountAirRoutes(app, deps) {
     return { ok: true, publications: await deps.admission.recoverEvidence(entry.sessionId) };
   }));
   app.post('/api/air/tasks/:id/roles', route(req => ({ ok: true, roleBindings: deps.shell.updateRoleBindings(req.params.id, req.body) })));
-  pins().mountRoutes(app);
-  todos().mountRoutes(app);
-  todoIgnores().mountRoutes(app);
+  const writes = liveSync ? { get: (...args) => app.get(...args), post: (path, handler) => app.post(path, async (req, res) => {
+    try { await handler(req, res); } finally { liveSync.invalidate(); }
+  }) } : app;
+  pins().mountRoutes(writes);
+  todos().mountRoutes(writes);
+  todoIgnores().mountRoutes(writes);
+  return liveSync;
 }
 module.exports = { mountAirRoutes };

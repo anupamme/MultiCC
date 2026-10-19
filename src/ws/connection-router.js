@@ -175,7 +175,7 @@ function mountWsConnectionRouter(wss, deps) {
       return workspaceRuntime.attachWorkspace(ws, urlObj);
     }
     if (urlObj.pathname === '/ws/meta') {
-      return workspaceRuntime.attachMeta(ws);
+      return workspaceRuntime.attachMeta(ws, urlObj);
     }
     if (urlObj.pathname === '/ws/remote-screen') {
       if (!remoteScreenRfb) { ws.close(1010, 'remote screen unavailable'); return; }

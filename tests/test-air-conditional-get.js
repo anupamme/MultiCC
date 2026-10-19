@@ -1,5 +1,5 @@
 'use strict';
-// Air 是纯轮询页面：每 15 秒拉一次任务板快照（线上约 580KB）和当前任务详情
+// 旧客户端仍保留兼容快照读取，新首页通过增量同步获取状态。详情（线上约 580KB）和当前任务详情
 // （实测 3.5MB，其中 3.2MB 是消息正文）。内容没变时必须能 304 收场，否则
 // 服务端每轮都要把这几 MB 写出去、浏览器每轮都要解析并重建一遍 DOM。
 const test = require('node:test');
@@ -113,7 +113,7 @@ test('Air 前端显式发条件请求，并在 304 时跳过解析与重画', ()
   assert.match(source, /if \(conditional && response\.status === 304\) return \{ ok: true, unchanged: true \}/);
   // 通用 api() 不能带条件请求：别的 GET 调用方收到「没变」会当成空数据。
   assert.match(source, /const apiConditional = path => request\(path, \{ method: 'GET', body: undefined, conditional: true \}\);/);
-  assert.match(source, /const snapshot = await apiConditional\('\/api\/air'\);/);
+  assert.match(source, /liveSync \? \(await liveSync\.sync\(\)/);
   assert.match(source, /const path = `\/api\/air\/tasks\/\$\{encodeURIComponent\(selected\)\}`;/);
   assert.match(source, /const result = await apiConditional\(path\);/);
   // 「没变」的前提是上一次那份正文还在手上。entry 会被 navigate / popstate /
@@ -125,7 +125,7 @@ test('Air 前端显式发条件请求，并在 304 时跳过解析与重画', ()
   assert.ok(source.indexOf('resourceEtag.set(path, etag)') > source.indexOf('if (!response.ok || result.ok === false)'),
     'ETag 要记在收下正文之后');
   assert.match(source, /if \(result\.unchanged\) return false;/, '详情没变就不重建会话区');
-  assert.match(source, /if \(!snapshot\.unchanged\) \{[\s\S]{0,900}?render\(\);/, '快照没变就整块跳过渲染');
+  assert.match(source, /if \(!snapshot\.unchanged\) \{\s*acceptSnapshot\(snapshot\);/, '兼容读取没变时跳过渲染');
   // 打开对话只核验轻量绑定；含审计历史的详情只在用户展开详情面板时读取。
   assert.match(openEntry, /\/api\/air\/tasks\/\$\{encodeURIComponent\(taskId\)\}\/open/);
   assert.match(source, /MultiCCAirTaskEntry\?\.open\(\{ taskId, api, notice \}\)/);
@@ -144,5 +144,5 @@ test('Air 前端显式发条件请求，并在 304 时跳过解析与重画', ()
   // 判据不与「有没有卡片在跑」挂钩 —— 任务板上长期挂着别人留下的 running/queued 旧卡。
   assert.doesNotMatch(source, /anyRunning/);
   // 失败退避仍在，且以这唯一一档为底：别在服务端打嗝时持续加码。
-  assert.match(source, /const delay = pollFailures \? Math\.min\(POLL_MS \* 2 \*\* pollFailures, POLL_MAX_MS\) : POLL_MS;/);
+  assert.match(source, /const delay = liveSync \? 60000 \+ Math\.random\(\) \* 5000 : pollFailures/);
 });

@@ -652,6 +652,7 @@ test('the directory task list keeps its filters, shares page scrolling, paginate
 
     await page.evaluate(`(() => { const i=document.getElementById('directory-task-search');i.value='';i.dispatchEvent(new Event('input'));
       const s=document.getElementById('directory-task-status');s.value='archived';s.dispatchEvent(new Event('change')); })()`);
+    assert.ok(await page.waitFor(`document.querySelector('#directory-task-list')?.textContent.includes('已经归档')`));
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#directory-task-list strong')].map(e=>e.textContent)`), ['已经归档']);
     // 状态过滤是这副清单的常态，抬头不会跟着变回「最近任务」—— 那个两态的开关
     // 已经被分页替掉了。

@@ -66,12 +66,6 @@
   let pinSignature = '';
   let directoryId = initialParams.get('dir');
   let taskId = initialParams.get('task');
-  // The lightweight /open response already carries identity and configuration
-  // (see air-task-entry.js), which is what the header and the AI/Role buttons
-  // need. Deliberately no refreshEntry() here: open() fires on every navigate(),
-  // and pulling the full detail — 3.5MB of transcript on a long task — would
-  // undo the conditional-get path. The detail endpoint is asked when the user
-  // expands the details panel, or when the header refresh button is pressed.
   window.addEventListener('multicc-air-task-open', () => { syncFrame(); });
   let entry = null;
   let mode = modeFrom(initialParams);
@@ -79,16 +73,10 @@
   let epoch = 0;
   let stopped = false;
   let loading = false;
-  // 轮询是本页面唯一的数据来源（Air 没有 WebSocket），所以只能靠「有没有变」
-  // 决定要不要重画。服务端给两个读接口算 ETag；内容没变时回 304，这里就完全
-  // 跳过解析与 DOM 重建。刷新失败时指数退避，别在服务端打嗝时继续按同一节奏敲。
+  // 详情条件请求独立于首页增量同步。
   const resourceEtag = new Map();
   let pollFailures = 0;
-  // 只有一个轮询档，活跃 / 后台标签页 / 内容没变都是它。2026-09-30 用户要求统一到
-  // 15 秒，App 端（air_tasks_view.dart 的 _snapshotPollInterval）也是同一个数字。
-  // 数字不是随手挑的：服务端每轮要重算全部卡片（线上 1189 张、实测 0.5s），再快
-  // 就是白烧。原先分三档（活跃 4s / 后台 15s / 空闲 15s），拉平之后降档判断没有了
-  // 可降的空间，那套机械（POLL_HIDDEN_MS / POLL_IDLE_MS / idleRounds）已删。
+  let liveSync = null;
   const POLL_MS = 15000;
   // 任务完成/出错未读提醒：统一事件源，三处消费（侧边栏未读高亮、语音、浮动条）。
   // 唯一全局实例；openTask 走 navigate（同一路径也负责把未读标记清掉）。
@@ -371,7 +359,9 @@
     const ranked = needle
       ? window.MultiCCAirAdmin?.rankedRows?.(data.tasks, { status: 'all' }, () => '', paletteSearch?.results()) : null;
     const hits = new Map((ranked || []).map(({ task, snippet }) => [task.id, snippet]));
-    const pool = ranked ? ranked.map(({ task }) => task) : [...recentPool(), ...data.tasks];
+    const remote = liveSync?.page('palette', { status: 'all', limit: 8, query: paletteSearch?.results() ? '' : needle,
+      ids: window.MultiCCAirSync?.searchIds(paletteSearch?.results()) });
+    const pool = remote?.tasks || (ranked ? ranked.map(({ task }) => task) : [...recentPool(), ...data.tasks]);
     const seen = new Set();
     const tasks = [];
     for (const task of pool) {
@@ -527,8 +517,8 @@
     $('directory-grid').replaceChildren(...directories.map(directory => {
       const button = node('button');
       applyRing(button, busy.has(directory.id), directory.id);
-      const taskCount = data.tasks.filter(task => task.dirId === directory.id).length;
-      const activeCount = data.tasks.filter(task => task.dirId === directory.id && isRunningTask(task)).length;
+      const taskCount = data.taskStats?.[directory.id]?.total ?? data.tasks.filter(task => task.dirId === directory.id).length;
+      const activeCount = data.taskStats?.[directory.id]?.running ?? data.tasks.filter(task => task.dirId === directory.id && isRunningTask(task)).length;
       button.append(node('strong', '▣ ' + directory.name), node('small', directory.path),
         node('small', activeCount
           ? t('airDirTaskCountActive', { total: taskCount, active: activeCount })
@@ -553,6 +543,7 @@
   function renderDirectoryOverview() {
     const dir = data?.directories.find(directory => directory.id === directoryId);
     const tasks = (data?.tasks || []).filter(task => task.dirId === directoryId);
+    const counts = data?.taskStats?.[directoryId];
     // 统计口径与 filterTasks 完全同源：运行中/异常按 taskStatus（archived/done 生命
     // 周期优先；异常含被手动忽略的），等我处理按 air-task-todo 的 needsMe。点击卡片 = 按该
     // 档筛选，两者不可能再出现「卡片 2 个、列表 29 个」的分叉。
@@ -584,34 +575,34 @@
       return card;
     };
     $('directory-stats').replaceChildren(
-      stat(t('airAdminTileRunning'), running.length, '', 'green', 'running'),
-      stat(t('airNeedsMeFilter'), todos.length, '', 'amber', 'needs'),
-      stat(t('airAdminTileError'), errored.length, '', 'red', 'error'),
-      stat(t('airAdminTileToday'), finishedToday.length, t('airAdminTileTodayDetail'), 'blue', 'today'),
-      stat(t('airAdminTileAll'), tasks.length, t('airDirArchiveWorktrees', {
-        archived: tasks.filter(task => task.status === 'archived').length,
+      stat(t('airAdminTileRunning'), (counts?.running ?? running.length), '', 'green', 'running'),
+      stat(t('airNeedsMeFilter'), (counts?.needs ?? todos.length), '', 'amber', 'needs'),
+      stat(t('airAdminTileError'), (counts?.error ?? errored.length), '', 'red', 'error'),
+      stat(t('airAdminTileToday'), (counts?.today ?? finishedToday.length), t('airAdminTileTodayDetail'), 'blue', 'today'),
+      stat(t('airAdminTileAll'), (counts?.total ?? tasks.length), t('airDirArchiveWorktrees', {
+        archived: (counts?.archived ?? tasks.filter(task => task.status === 'archived').length),
         worktrees: dir?.worktreeCount || 0,
       }), 'purple', 'all'),
     );
-    // 全文命中时保持相关度顺序，没有命中照旧按时间排；两条路的状态/目录筛选同属
-    // filterTasks。「框里现在有没有词」是前提：面板被导航重置成空查询时，上一轮的
-    // 命中结果必须让位给完整列表，否则会继续按旧相关度排、连条数都少一截。
-    // 搜索口径与状态那格分开：搜索永远搜全部记录（见 air-admin 的 searchFilter），
-    // 服务端那条路和「还没回来」的本地退路共用同一份，别在结果到达前后给出两种条数。
     const querying = !!directoryTaskFilter.query.trim();
     const active = querying ? (window.MultiCCAirAdmin?.searchFilter?.(directoryTaskFilter) || directoryTaskFilter)
       : directoryTaskFilter;
     const ranked = querying ? window.MultiCCAirAdmin?.rankedRows?.(tasks, active, () => '', directorySearch?.results()) : null;
     const snippets = new Map((ranked || []).map(({ task, snippet }) => [task.id, snippet]));
-    const filtered = ranked ? ranked.map(({ task }) => task)
+    let filtered = ranked ? ranked.map(({ task }) => task)
       : pinFirstInDirectory((window.MultiCCAirAdmin?.filterTasks?.(tasks, active, () => '') || [...tasks]).sort(compareDirectoryTasks));
-    // 这一页画哪几条、右下角页码写什么，都由 air-task-pager.js 算（它自己持有当前页，
-    // 于是换页之后的一次快照刷新不会把人踢回第一页）。
-    const rows = window.MultiCCAirTaskPager?.paint(filtered) || filtered;
+    const searchResult = querying ? directorySearch?.results() : null;
+    const remote = liveSync?.page('directory', {
+      dirId: directoryId || '', status: active.status,
+      query: searchResult ? '' : active.query,
+      ids: window.MultiCCAirSync?.searchIds(searchResult), sort: directoryTaskSort, visits: taskVisitedAt,
+      page: window.MultiCCAirTaskPager?.currentPage() || 1,
+    });
+    if (remote && !remote.loading) filtered = remote.tasks;
+    const visible = remote?.loading ? filtered.slice((remote.page - 1) * 20, remote.page * 20) : filtered;
+    const rows = window.MultiCCAirTaskPager?.paint(visible, remote) || visible;
     $('directory-task-heading').textContent = t('airDirAllTasks');
-    // 这里数的是**筛完之后**的条数，不是这一页画了几条 —— 页码里已经写着「第几 / 共几
-    // 页」，抬头再报一次「20 / 45 个任务」是把同一个事实说两遍。
-    $('directory-overview-count').textContent = t('airDirCountOfTotal', { shown: filtered.length, total: tasks.length });
+    $('directory-overview-count').textContent = t('airDirCountOfTotal', { shown: remote?.total ?? filtered.length, total: (counts?.total ?? tasks.length) });
     for (const button of $('directory-task-sort').querySelectorAll('button[data-sort]')) {
       button.setAttribute('aria-pressed', String(button.dataset.sort === directoryTaskSort));
     }
@@ -1888,8 +1879,9 @@
     // 原来挂在「跨目录活动」上的那条常驻信号，现在挂在控制台入口上：不进那一页
     // 也知道别的目录有事在等我。
     const todo = todoTasks();
-    $('console-badge').hidden = !todo.length;
-    $('console-badge').textContent = todo.length ? String(todo.length) : '';
+    const todoCount = data.taskStats?.all?.needs ?? todo.length;
+    $('console-badge').hidden = !todoCount;
+    $('console-badge').textContent = todoCount ? String(todoCount) : '';
 
     renderSidebarTasks();
     renderPins();
@@ -1913,9 +1905,6 @@
     }
   }
 
-  // 页头那行状态在手机上是跟标题挤同一行的：「任务 进行中」这一段让位，留下
-  // 「本轮 …」和「归属待核验」。所以分段返回，由 CSS 决定窄屏藏哪一段；
-  // taskStateText 留给需要一整句的地方。
   function taskStateSegments(value) {
     const unstartedPlan = value.task?.recordType === 'planned' && !value.messages?.length
       && !value.execution?.busy && !value.execution?.pending;
@@ -2600,11 +2589,6 @@
     const selected = taskId;
     if (!selected) return false;
     const path = `/api/air/tasks/${encodeURIComponent(selected)}`;
-    // 条件请求的前提是「上一份正文还在手上」。entry 会被 navigate / popstate /
-    // dismissChat 清掉，ETag 却还留在表里：那时照旧带上 If-None-Match，服务端回
-    // 304，客户端既没有正文可画、又不肯再要一次，页头就永远停在「正在读取任务…」
-    // —— 状态行和 composer 上的 AI/角色胶囊一起空着，直到这条任务下次真的变了。
-    // 手里没有它的 entry，就先忘掉那个校验符，换一次真身回来。
     if (entry?.task?.id !== selected) resourceEtag.delete(path);
     try {
       const result = await apiConditional(path);
@@ -2626,36 +2610,32 @@
     }
   }
 
+  function acceptSnapshot(snapshot) {
+    const versionChanged = data?.cursor !== snapshot.cursor || !data;
+    data = snapshot;
+    taskPins = Array.isArray(data.taskPins) ? data.taskPins.slice() : [];
+    pinSignature = '';
+    window.MultiCCAirTaskTodo?.sync(data); // 手动待办同样随快照来（air-task-todo.js）
+    if (data.lastRuntime && !quickRuntimeDirty) {
+      quickRuntime = { ...data.lastRuntime };
+      renderQuickPills();
+    }
+    if (data.migration?.errors?.length) notice(t('airMigrationPending', { n: data.migration.errors.length }));
+    taskNotify?.onSnapshot(data.attentionTasks || data.tasks, taskId);
+    render();
+    if (paletteOpen) renderPalette();
+    if (taskId && versionChanged) void window.MultiCCAirTaskEntry?.open({ taskId, api, notice });
+  }
+
   async function refresh({ entry: refreshSelectedEntry = false } = {}) {
     if (loading) return;
     loading = true;
     let failed = false;
     try {
-      const snapshot = await apiConditional('/api/air');
+      const snapshot = liveSync ? (await liveSync.sync(), { unchanged: true }) : await apiConditional('/api/air');
       if (!snapshot.unchanged) {
-        data = snapshot;
-        // Pin 的清单随快照一起来（不用为它多打一次接口）。顺序就是页头从左到右的顺序。
-        taskPins = Array.isArray(data.taskPins) ? data.taskPins.slice() : [];
-        pinSignature = '';
-        window.MultiCCAirTaskTodo?.sync(data); // 手动待办同样随快照来（air-task-todo.js）
-        // 「随时更新成最近使用」的落点：每次快照都把 lastRuntime 灌进新任务胶囊，
-        // 除非用户面前正摆着一份手挑的配置（quickRuntimeDirty）。刷新可能来自任何
-        // 地方的任何动作，不能因为它把人刚选好的线路冲回几小时前那套。
-        if (data.lastRuntime && !quickRuntimeDirty) {
-          quickRuntime = { ...data.lastRuntime };
-          renderQuickPills();
-        }
-        notice(data.migration?.errors?.length ? t('airMigrationPending', { n: data.migration.errors.length }) : '');
-        // 统一事件源：这轮快照里刚翻终态且未打开的任务，会驱动侧边栏高亮、语音、
-        // 浮动完成条三处消费。置于 render() 之前，未读标记才能随本轮绘制即时生效。
-        taskNotify?.onSnapshot(data.tasks, taskId);
-        render();
-        if (taskId) void window.MultiCCAirTaskEntry?.open({ taskId, api, notice });
+        acceptSnapshot(snapshot);
       }
-      // Background polling only asks for the large task entry while its detail
-      // card is open. A deliberate header refresh is different: delivery and
-      // attribution live outside that card too, so the button must refresh the
-      // selected entry even when the card is collapsed.
       const entryChanged = taskId && (refreshSelectedEntry || !$('task-details').hidden)
         ? await refreshEntry() : false;
       if (entryChanged === null) failed = true;
@@ -2968,18 +2948,20 @@
     closeDetails();
     closePalette();
     render();
+    if (liveSync) void liveSync.sync().catch(() => {});
     window.MultiCCAirNavigation.restore();
     void window.MultiCCAirTaskEntry?.open({ taskId, api, notice });
     if (mode === 'schedules' || mode === 'overview') void window.MultiCCAirSchedules?.refresh().then(render);
   });
-  window.addEventListener('pagehide', () => { saveDraft(); stopped = true; epoch++; clearTimeout(timer); });
+  window.addEventListener('pagehide', () => { liveSync?.close(); saveDraft(); stopped = true; epoch++; clearTimeout(timer); });
   window.addEventListener('pageshow', event => {
-    if (event.persisted) { stopped = false; epoch++; void poll(); }
+    if (event.persisted) { liveSync?.resume(); stopped = false; epoch++; void poll(); }
   });
 
   // 隐藏期间不刷新（见 poll），回到前台先对齐一次：否则回来还盯着十几秒前的状态。
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden || stopped) return;
+    if (document.hidden || stopped) { liveSync?.pause(); return; }
+    liveSync?.resume();
     clearTimeout(timer);
     epoch++;
     void poll(epoch);
@@ -2989,8 +2971,24 @@
     if (stopped || currentEpoch !== epoch) return;
     if (!document.hidden || !data) await refresh();
     if (stopped || currentEpoch !== epoch) return;
-    const delay = pollFailures ? Math.min(POLL_MS * 2 ** pollFailures, POLL_MAX_MS) : POLL_MS;
+    const delay = liveSync ? 60000 + Math.random() * 5000 : pollFailures ? Math.min(POLL_MS * 2 ** pollFailures, POLL_MAX_MS) : POLL_MS;
     timer = setTimeout(() => poll(currentEpoch), delay);
+  }
+  if (window.MultiCCAirSync) {
+    const state = node('span', '', 'air-sync-state');
+    state.setAttribute('role', 'status'); state.hidden = true;
+    $('refresh').insertAdjacentElement('afterend', state);
+    liveSync = window.MultiCCAirSync.create({
+      request: path => api(path), getInclude: () => [taskId, ...recentTaskIds].filter(Boolean),
+      onChange: value => { if (value) acceptSnapshot(value); },
+      isVisible: () => !document.hidden,
+      socketUrl: path => window.multiccWsUrl(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${path}`),
+      onStatus: status => {
+        state.hidden = status === 'live'; state.dataset.state = status;
+        state.textContent = t(status === 'degraded' ? 'termLoadFailedShort' : status === 'connecting' ? 'connecting' : 'reconnecting');
+      },
+    });
+    window.MultiCCAirLive = liveSync;
   }
   void powerShortcuts.refresh();
   void poll();

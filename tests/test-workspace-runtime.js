@@ -253,11 +253,25 @@ test('production composition delegates workspace/meta ownership to the runtime',
   assert.match(source, /createWorkspaceRuntime\s*\(\s*\{/);
   assert.match(source, /mountWsConnectionRouter\(wss,/);
   assert.match(wsRouter, /workspaceRuntime\.attachWorkspace\(ws, urlObj\)/);
-  assert.match(wsRouter, /workspaceRuntime\.attachMeta\(ws\)/);
+  assert.match(wsRouter, /workspaceRuntime\.attachMeta\(ws, urlObj\)/);
   assert.doesNotMatch(source, /function\s+workspaceBroadcast\s*\(/);
   assert.doesNotMatch(source, /function\s+handleWorkspaceWs\s*\(/);
   assert.doesNotMatch(source, /function\s+handleMetaWs\s*\(/);
   assert.doesNotMatch(source, /_origWorkspaceBroadcast/);
+});
+
+test('Air 专用 Meta 订阅不接收旧全量快照；观察者解绑与关闭由宿主拥有', () => {
+  const { runtime } = createHarness(); const air = new FakeSocket(), legacy = new FakeSocket();
+  let attached, closed = 0; const seen = [];
+  runtime.setAirSync({ attach: (socket, url) => { attached = [socket, url.searchParams.get('cursor')]; }, close: () => closed++ });
+  const unsubscribe = runtime.subscribe((dir, event) => seen.push([dir, event.type]));
+  runtime.attachMeta(air, new URL('http://local/ws/meta?air=1&cursor=epoch:1'));
+  runtime.attachMeta(legacy, new URL('http://local/ws/meta'));
+  assert.deepEqual(attached, [air, 'epoch:1']); assert.deepEqual(air.messages, []);
+  assert.equal(legacy.messages[0].type, 'meta_snapshot');
+  runtime.setSummary('plain', '索引刷新'); assert.ok(seen.some(([, type]) => type === 'summary'));
+  unsubscribe(); const before = seen.length; runtime.setSummary('plain', '不再回调'); assert.equal(seen.length, before);
+  runtime.close(); assert.equal(closed, 1);
 });
 
 
