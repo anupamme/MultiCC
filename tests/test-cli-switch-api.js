@@ -57,6 +57,17 @@ async function waitForServer() {
   throw new Error('isolated server did not start');
 }
 
+async function waitUntil(check, message, attempts = 300) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const value = await check();
+      if (value) return value;
+    } catch (_) {}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(message);
+}
+
 function cleanup() {
   try { if (server) server.kill('SIGTERM'); } catch (_) {}
   assertTestDir(tmpRoot);
@@ -178,16 +189,30 @@ function cleanup() {
   // the task-bound room it came from (whose workspace is created lazily at
   // delivery). The bounded projections and the Git checkpoint are therefore
   // asserted against the fork.
+  // Task-first: the always-on Air producer adopts every chat record onto the
+  // board, so a fork does not stay a plain fleet session — it becomes a
+  // task-bound room like the one it came from. The fleet and workspace
+  // projections are human-shaped, so they must show the task cards instead and
+  // keep the room (and its host internals) off the wire.
+  const forkTaskId = await waitUntil(async () => {
+    const got = await api('GET', `/api/sessions/${forkId}`);
+    return got.data?.taskBoundTaskId || null;
+  }, 'the fork was never adopted onto the board');
   response = await api('GET', '/api/v1/sessions');
-  ok(response.status === 200 && response.data.sessions?.some(item => item.id === forkId),
-    'v1 session list uses the same bounded projection');
+  const fleetWire = JSON.stringify(response.data);
+  ok(response.status === 200 && !(response.data.sessions || []).some(item => item.id === forkId),
+    'v1 fleet list keeps the task-bound fork out of the human-shaped fleet');
+  ok(!fleetWire.includes(forkId) && !fleetWire.includes('worktreePath')
+    && !fleetWire.includes('cliSessionId') && !fleetWire.includes('rolePrompt')
+    && !fleetWire.includes('cwd'),
+  'v1 session list uses the same bounded projection');
   response = await api('GET', `/api/v1/directories/${dirId}/workspace`);
   const workspaceWire = JSON.stringify(response.data);
-  ok(response.status === 200 && response.data.workspace?.sessions?.some(item => item.session?.id === forkId),
+  ok(response.status === 200 && response.data.workspace?.count === response.data.workspace?.sessions?.length,
     'v1 workspace is composed through the bounded workspace service');
-  ok(!workspaceWire.includes('currentFile') && !workspaceWire.includes('worktreePath')
-    && !workspaceWire.includes(project),
-  'v1 workspace excludes filesystem and current-file paths');
+  ok(!workspaceWire.includes(forkId) && !workspaceWire.includes('currentFile')
+    && !workspaceWire.includes('worktreePath') && !workspaceWire.includes(project),
+  'v1 workspace excludes task-bound rooms, filesystem and current-file paths');
 
   response = await api('POST', `/api/sessions/${sessionId}/switch-cli`, { cli: 'opencode', fresh: true });
   ok(response.status === 200 && response.data.changed && response.data.fresh, 'explicit same-CLI native reset');
@@ -206,8 +231,16 @@ function cleanup() {
     'cleanup releases the task-owned room through the task board');
   response = await api('GET', `/api/sessions/${sessionId}`);
   ok(response.status === 404, 'task deletion removed the hidden task-bound room');
+  // The fork's transcript is pinned by its own adopted task, so the directory
+  // cannot go until that card does (task-first keeps the evidence with it).
+  response = await api('DELETE', `/api/task-board/tasks/${forkTaskId}`, { force: true });
+  ok(response.status === 200, 'cleanup releases the forked room through the task board');
+  // Both rooms were already disposed with their task cards, so the directory
+  // itself is all that is left to remove.
   response = await api('DELETE', `/api/directories/${dirId}?force=1`);
-  ok(response.status === 200 && response.data.removedSessions >= 1, 'cleanup directory and sessions');
+  ok(response.status === 200, 'cleanup directory and sessions', JSON.stringify(response.data));
+  response = await api('GET', '/api/directories');
+  ok(!(response.data || []).some(item => item.id === dirId), 'directory is gone');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) throw new Error(`${failed} integration assertion(s) failed`);

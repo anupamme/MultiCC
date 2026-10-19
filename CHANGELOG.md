@@ -2,6 +2,26 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.7.1 — The v2.7.0 changes, cut again with a green release gate (2026-10-20)
+
+`v2.7.0` published its tag but never produced release assets: the shared core
+gate caught `tests/test-cli-switch-api.js` still assuming a fork stays a plain
+fleet session, and that job blocks asset creation, so there is nothing to
+install behind the tag. `v2.7.1` carries exactly the v2.7.0 changes below, with
+the release gates fixed:
+
+- **A fork is a task-bound room now** — task-first adopts every chat record onto
+  the board, so the CLI-switch integration asserts the human-shaped fleet and
+  workspace projections keep the adopted fork out (and their wire bounded),
+  then disposes its card before the directory goes.
+- **Handoff teardown follows the live board** — the session-bundle integration
+  swept a `task_board.json` snapshot that can lag the Air producer, so a card
+  adopted mid-teardown blocked the directory delete; it now sweeps
+  `/api/air` until nothing is left to release.
+- **The Air sync push test waits for its frames** — the delta/reset assertions
+  read the socket immediately after `flush()`; they now give the pushed frame a
+  bounded window instead of assuming one event-loop turn is enough.
+
 ## v2.7.0 — Air keeps one source of truth, and every request follows your proxy (2026-10-20)
 
 ### Highlights
