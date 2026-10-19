@@ -13,13 +13,22 @@ import 'package:multicc_app/widgets/air/air_workspace_card.dart';
 /// * 本地一个都没有时按钮就变灰，而不是点下去再说「没有可回收的」；
 /// * 自动回收关掉时照实说「已关闭」，不假装它一直在后台收东西；
 /// * 没有 git 状态时（远端工作区 / 非 git 仓库）那一格不摆，不留一行空标题。
-Future<void> _pump(WidgetTester tester, Widget child) async {
+Future<void> _pump(
+  WidgetTester tester,
+  Widget child, {
+  bool expand = true,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(body: SingleChildScrollView(child: child)),
     ),
   );
   await tester.pumpAndSettle();
+  // 卡默认收起；多数用例要看里面的内容，先点开抬头。
+  if (expand) {
+    await tester.tap(find.byKey(const ValueKey('air-workspace-toggle')));
+    await tester.pumpAndSettle();
+  }
 }
 
 const _life = AirWorktreeLifecycle(
@@ -41,6 +50,31 @@ const _git = DirectoryPushState(
 );
 
 void main() {
+  testWidgets('默认收起：只剩抬头一行，点开才看到两格内容', (tester) async {
+    await _pump(
+      tester,
+      const AirWorkspaceCard(
+        lifecycle: _life,
+        pushState: _git,
+        idleMs: 3600000,
+      ),
+      expand: false,
+    );
+
+    expect(find.byKey(const ValueKey('air-workspace-heading')), findsOneWidget);
+    expect(find.text('代码状态'), findsNothing);
+    expect(find.text('Worktree 生命周期'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('air-workspace-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('代码状态'), findsOneWidget);
+    expect(find.text('Worktree 生命周期'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('air-workspace-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('代码状态'), findsNothing);
+  });
+
   testWidgets('一个抬头、两格内容：代码状态与 worktree 生命周期在同一张卡里', (tester) async {
     await _pump(
       tester,
@@ -135,6 +169,7 @@ void main() {
     await _pump(
       tester,
       AirWorkspaceCard(lifecycle: _life, busy: true, onReclaim: () => fired++),
+      expand: false, // 同一张卡换参数重绘，展开态保留
     );
     expect(find.text('回收中…'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('air-worktree-reclaim')));

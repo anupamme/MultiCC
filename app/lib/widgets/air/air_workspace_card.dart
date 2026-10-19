@@ -60,8 +60,8 @@ class AirWorkspaceCard extends StatefulWidget {
 }
 
 class _AirWorkspaceCardState extends State<AirWorkspaceCard> {
-  /// 手机上这张卡占半屏，不是每次都要看：点抬头收起，只剩标题一行。
-  bool _collapsed = false;
+  /// 手机上这张卡占半屏，用户多数时候并不看这里：默认收起、只剩标题一行，点抬头展开。
+  bool _collapsed = true;
 
   @override
   Widget build(BuildContext context) {
