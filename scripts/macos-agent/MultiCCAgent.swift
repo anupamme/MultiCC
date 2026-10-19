@@ -1549,6 +1549,17 @@ func handle(_ req: [String: Any]) -> [String: Any] {
       }
       return dispatched("hid_events")
     }
+  case "dragdown":
+    // Press only; the live-drag path owns the release (rfbDragEnd). Reserved for the
+    // remote-screen viewer — any other caller would leave the button stuck down.
+    guard session == "remote-screen" else { return refused("unsupported", "dragdown is reserved for the remote screen viewer", retrySafe: false) }
+    guard let x = num(req["x"]), let y = num(req["y"]) else { return ["ok": false, "error": "x and y are required"] }
+    let a = CGPoint(x: x, y: y)
+    return withMutation(req, session: session, target: pidAt(a), kind: .pointer) {
+      post(CGEvent(mouseEventSource: automationEventSource, mouseType: .mouseMoved, mouseCursorPosition: a, mouseButton: .left))
+      post(CGEvent(mouseEventSource: automationEventSource, mouseType: .leftMouseDown, mouseCursorPosition: a, mouseButton: .left))
+      return dispatched("hid_events")
+    }
   case "drag":
     guard let x = num(req["x"]), let y = num(req["y"]), let x2 = num(req["x2"]), let y2 = num(req["y2"]) else {
       return ["ok": false, "error": "x, y, x2 and y2 are required"]
@@ -1898,6 +1909,12 @@ final class RfbClient: NSObject {
   var lastMask = 0
   var downPos: CGPoint?
   var downAt = Date.distantPast
+  // live touch drag: the left button is physically held down (see rfbLeftHeldMove)
+  let dragLock = NSLock()
+  var liveDrag = false         // mouse-down was posted, mouse-up still owed (dragLock)
+  var dragDead = false         // this press may not start/continue a drag: refused, halted, locked (dragLock)
+  var liveDragPos = CGPoint.zero
+  var liveDragAt = Date.distantPast
   var lastClickAt = Date.distantPast
   var lastClickPos = CGPoint.zero
   var lastMoveAt = Date.distantPast
@@ -2558,13 +2575,14 @@ func rfbPointer(_ c: RfbClient, mask: Int, x rfbX: Int, y rfbY: Int) {
   let left = mask & 0x01 != 0, wasLeft = prev & 0x01 != 0
   if left && !wasLeft {
     c.downPos = p; c.downAt = Date()
+    c.dragLock.lock(); c.dragDead = false; c.dragLock.unlock()
   } else if left && wasLeft {
-    if Date().timeIntervalSince(c.lastMoveAt) > 0.05 && hypot(p.x - c.lastMovePos.x, p.y - c.lastMovePos.y) > 1.5 {
-      c.lastMoveAt = Date(); c.lastMovePos = p
-      rfbInput(["op": "move", "x": x, "y": y, "allowSystem": true])
-    }
+    rfbLeftHeldMove(c, p)
   } else if !left && wasLeft, let start = c.downPos {
     c.downPos = nil
+    c.dragLock.lock(); let live = c.liveDrag, dead = c.dragDead; c.dragDead = false; c.dragLock.unlock()
+    if live { rfbDragEnd(c, p); return }   // the drag already happened live: just let go where the finger lifted
+    if dead { return }                     // refused / stopped mid-press: nothing more may be sent for it
     if hypot(p.x - start.x, p.y - start.y) > 8 {
       rfbInput(["op": "drag", "x": Int(start.x), "y": Int(start.y), "x2": x, "y2": y, "ms": 250, "allowSystem": true])
     } else {
@@ -2574,6 +2592,89 @@ func rfbPointer(_ c: RfbClient, mask: Int, x rfbX: Int, y rfbY: Int) {
       rfbInput(["op": "click", "x": Int(start.x), "y": Int(start.y), "count": dbl ? 2 : 1, "allowSystem": true])
     }
   }
+}
+
+// Live touch drag. A drag used to be replayed after the finger lifted (one "drag" op
+// from the press point to the release point), so the remote never followed the finger
+// and a scrollbar / window / selection only jumped at the end. Now, once the pointer
+// leaves the 8pt click slop with the left button held, the button is pressed at the
+// touch-down point (dragdown op: the full withMutation policy — protected apps, lease,
+// halt, lock), moves stream as leftMouseDragged on the light rfbHover-style path (no
+// per-sample AX hit test: a drag crosses many windows, withMutation would call that
+// "stale"), and mouse-up ALWAYS follows: finger lift, disconnect, Esc, screen lock, or
+// 10s without pointer traffic. The button can never be left stuck down.
+let RFB_DRAG_SLOP: CGFloat = 8
+let RFB_DRAG_IDLE_RELEASE: TimeInterval = 10
+
+@available(macOS 14.0, *)
+func rfbDragEnd(_ c: RfbClient, _ at: CGPoint?) {
+  c.dragLock.lock()
+  let was = c.liveDrag
+  c.liveDrag = false
+  let p = at ?? c.liveDragPos
+  c.dragLock.unlock()
+  guard was else { return }
+  post(CGEvent(mouseEventSource: automationEventSource, mouseType: .leftMouseUp, mouseCursorPosition: p, mouseButton: .left))
+}
+
+/// Connection gone / session over: give the button back.
+@available(macOS 14.0, *)
+func rfbDragAbort(_ c: RfbClient) { rfbDragEnd(c, nil) }
+
+@available(macOS 14.0, *)
+func rfbDragWatchdog(_ c: RfbClient) {
+  Thread.detachNewThread {
+    while true {
+      Thread.sleep(forTimeInterval: 0.5)
+      c.dragLock.lock()
+      let live = c.liveDrag, idle = Date().timeIntervalSince(c.liveDragAt)
+      c.dragLock.unlock()
+      if !live { return }
+      if idle > RFB_DRAG_IDLE_RELEASE {
+        log("rfb drag: released after \(Int(RFB_DRAG_IDLE_RELEASE))s without pointer traffic")
+        rfbDragEnd(c, nil)
+        return
+      }
+    }
+  }
+}
+
+@available(macOS 14.0, *)
+func rfbLeftHeldMove(_ c: RfbClient, _ p: CGPoint) {
+  guard let start = c.downPos else { return }
+  c.dragLock.lock(); let dead = c.dragDead, live = c.liveDrag; c.dragLock.unlock()
+  if dead { return }
+  if !live {
+    guard hypot(p.x - start.x, p.y - start.y) > RFB_DRAG_SLOP else { return }
+    let r = handle(["op": "dragdown", "x": Int(start.x), "y": Int(start.y), "allowSystem": true, "session": "remote-screen"])
+    if (r["ok"] as? Bool) != true {
+      log("rfb drag refused: \(r["reason"] ?? r["error"] ?? "?")")
+      c.dragLock.lock(); c.dragDead = true; c.dragLock.unlock()
+      return
+    }
+    c.dragLock.lock(); c.liveDrag = true; c.liveDragPos = start; c.liveDragAt = Date(); c.dragLock.unlock()
+    rfbDragWatchdog(c)
+  }
+  rfbDragStep(c, p)
+}
+
+@available(macOS 14.0, *)
+func rfbDragStep(_ c: RfbClient, _ p: CGPoint) {
+  // Hard stops end the drag (button released) instead of silently dropping samples:
+  // never keep dragging into a locked screen, after Esc, or under another session.
+  guard AXIsProcessTrusted(), !screenLocked(), !(control.isHalted && !control.clearIdleHalt()),
+        control.holderConflict("remote-screen") == nil else {
+    rfbDragEnd(c, nil)
+    c.dragLock.lock(); c.dragDead = true; c.dragLock.unlock()
+    return
+  }
+  c.dragLock.lock(); c.liveDragPos = p; c.liveDragAt = Date(); c.dragLock.unlock()
+  guard Date().timeIntervalSince(c.lastMoveAt) >= 0.012 else { return }   // ≤ ~80 Hz
+  // A busy input lane just drops this sample; the mouse-up carries the final point.
+  guard mutationLane.try() else { return }
+  defer { mutationLane.unlock() }
+  c.lastMoveAt = Date()
+  post(CGEvent(mouseEventSource: automationEventSource, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left))
 }
 
 // Hover from the H.264 viewer. Its video shows the real cursor (nothing draws one
@@ -2634,6 +2735,7 @@ func rfbSession(_ fd: Int32) {
   var senderStarted = false
   RfbScreen.shared.attach(client)
   defer {
+    rfbDragAbort(client)   // a live touch drag must never outlive its connection
     client.shutdown()
     if senderStarted { senderDone.wait() }
     RfbScreen.shared.detach(client)

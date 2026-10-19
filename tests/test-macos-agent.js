@@ -50,6 +50,40 @@ test('agent + scroll sources: ungated code stays Swift 5.5 compatible (macOS 11 
   }
 });
 
+// Live touch drag holds the real left button down while a finger is on the phone.
+// The inputs that must always give it back can't be exercised here (they'd move the
+// real pointer), so pin the structure that guarantees it.
+test('remote screen live drag: every exit path releases the button, dragdown is viewer-only', () => {
+  const dir = path.join(__dirname, '..', 'scripts', 'macos-agent');
+  const src = fs.readFileSync(path.join(dir, 'MultiCCAgent.swift'), 'utf8');
+  const h264 = fs.readFileSync(path.join(dir, 'MultiCCAgentH264.swift'), 'utf8');
+  const body = (name) => {
+    const at = src.indexOf(`func ${name}(`);
+    assert.ok(at > 0, `${name} exists`);
+    const next = src.indexOf('\n}\n', at);
+    return src.slice(at, next);
+  };
+  // press goes through the full policy gate and only for the remote-screen session
+  const handleCase = src.slice(src.indexOf('case "dragdown":'), src.indexOf('case "drag":'));
+  assert.match(handleCase, /session == "remote-screen"/);
+  assert.match(handleCase, /withMutation\(/);
+  assert.match(handleCase, /\.leftMouseDown/);
+  assert.doesNotMatch(handleCase, /\.leftMouseUp/);
+  // release: lift, disconnect (RFB + H.264 sessions), idle watchdog, hard stops
+  assert.match(body('rfbPointer'), /if live \{ rfbDragEnd\(c, p\); return \}/);
+  assert.match(src, /defer \{\s*rfbDragAbort\(client\)/);
+  assert.match(h264, /defer \{ rfbDragAbort\(client\.input\);/);
+  assert.match(body('rfbDragWatchdog'), /RFB_DRAG_IDLE_RELEASE/);
+  const step = body('rfbDragStep');
+  for (const guard of ['AXIsProcessTrusted()', 'screenLocked()', 'control.isHalted', 'holderConflict("remote-screen")']) {
+    assert.ok(step.includes(guard), `rfbDragStep stops on ${guard}`);
+  }
+  assert.match(step, /rfbDragEnd\(c, nil\)/);
+  assert.match(body('rfbDragEnd'), /\.leftMouseUp/);
+  // a refused press must not be retried on every move sample
+  assert.match(body('rfbLeftHeldMove'), /c\.dragDead = true/);
+});
+
 test('computer use: input dispatch clears inherited modifiers and preserves explicit chords', { skip: !hasSwift, timeout: 60000 }, t => {
   const root = fs.mkdtempSync('/tmp/multicc-input-flags-');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
