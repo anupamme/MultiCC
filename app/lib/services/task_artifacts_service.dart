@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 import 'package:http/http.dart' as http;
@@ -193,11 +194,13 @@ class TaskArtifactsController extends ChangeNotifier {
   }
 
   /// Web 的 `poll`：**打开时 5s、收起时 15s**，页面不可见就跳过这一轮。
+  /// 间隔带 ±15% 抖动：固定周期会把所有端的轮询叠到同一时刻打向服务器。
   void startPolling() {
     _timer?.cancel();
     void schedule() {
       if (!isAlive()) return;
-      _timer = Timer(Duration(seconds: _open ? 5 : 15), () {
+      final seconds = (_open ? 5 : 15) * (0.85 + math.Random().nextDouble() * 0.3);
+      _timer = Timer(Duration(milliseconds: (seconds * 1000).round()), () {
         if (!isAlive()) return;
         if (WidgetsBinding.instance.lifecycleState ==
             AppLifecycleState.resumed) {

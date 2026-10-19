@@ -6,7 +6,7 @@ const { createAirReadIndex } = require('./air-read-index');
 function createAirSyncRuntime({ build, subscribe, taskIdsForSession = () => [], send,
   logger = console, reconcileMs = 30_000, debounceMs = 100, index = createAirReadIndex() }) {
   const clients = new Map();
-  let stopped = false, inFlight = null, timer = null, dueAt = Infinity, full = true, dirty = new Set();
+  let stopped = false, inFlight = null, timer = null, dueAt = Infinity, full = true, dirty = new Set(), metaDirty = false;
   let lastError = null, checkedAt = 0, retryAt = 0;
   function schedule(ms = debounceMs) {
     const delay = Math.max(ms, retryAt - Date.now());
@@ -14,9 +14,13 @@ function createAirSyncRuntime({ build, subscribe, taskIdsForSession = () => [], 
     clearTimeout(timer); dueAt = Date.now() + delay;
     timer = setTimeout(() => { timer = null; dueAt = Infinity; void flush(); }, delay); timer.unref?.();
   }
+  // 失效分三档：null＝全量（工作区级事件/显式核对）；空数组＝只有元数据可能变了
+  // （未挂到任务板的会话事件——新任务首轮、aux 等），快照生成器收到 [] 时只重算
+  // 目录/终端/统计等元数据、跳过全部任务卡；非空数组＝逐卡增量。
   function invalidate(ids) {
     if (stopped) return;
-    if (!ids || !ids.length) full = true;
+    if (!ids) full = true;
+    else if (!ids.length) metaDirty = true;
     else for (const id of ids) dirty.add(id);
     schedule();
   }
@@ -31,8 +35,8 @@ function createAirSyncRuntime({ build, subscribe, taskIdsForSession = () => [], 
     if (stopped) return Promise.resolve();
     if (inFlight) return inFlight;
     clearTimeout(timer); timer = null; dueAt = Infinity;
-    const all = full || !dirty.size || !index.isReady(), ids = [...dirty];
-    full = false; dirty.clear();
+    const all = full || !index.isReady() || (!dirty.size && !metaDirty), ids = [...dirty];
+    full = false; dirty.clear(); metaDirty = false;
     inFlight = (async () => {
       try {
         const snapshot = await build(all ? null : ids);
@@ -46,7 +50,7 @@ function createAirSyncRuntime({ build, subscribe, taskIdsForSession = () => [], 
       } finally {
         inFlight = null;
         // 失败后有界退避；持续事件不会造成无间隔重算。
-        schedule(lastError ? 5000 : (full || dirty.size ? debounceMs : reconcileMs));
+        schedule(lastError ? 5000 : (full || dirty.size || metaDirty ? debounceMs : reconcileMs));
       }
     })();
     return inFlight;

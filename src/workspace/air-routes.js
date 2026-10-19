@@ -122,7 +122,11 @@ function mountAirRoutes(app, deps) {
     try {
       const result = await fn(req, res);
       if (!res.headersSent && result !== undefined) res.json(result);
-      if (req.method && req.method !== 'GET') liveSync?.invalidate();
+      // 这些写操作（创建任务、绑定角色、补投递……）只影响快照元数据或不进入快照，
+      // 任务卡变化由各自领域事件（task_board_update/task_state）带过来；这里按元数据
+      // 档失效，别把每次创建/点选都升级成 1284 张卡的全量重建。reclaim 例外：它在
+      // 自己的处理器里显式要求全量。
+      if (req.method && req.method !== 'GET') liveSync?.invalidate([]);
     } catch (error) {
       if (res.headersSent || res.writableEnded) return;
       res.status(error.status || 500).json({ ok: false, code: error.code || 'air_request_failed', message: error.status ? error.message : 'Request failed' });
@@ -543,8 +547,14 @@ function mountAirRoutes(app, deps) {
       const snapshot = await airSnapshot(timing, { ids, cooperative: true });
       reportPhases(timing, deps.logger); return snapshot;
     }, subscribe: deps.subscribe, logger: deps.logger, send: deps.send,
-    taskIdsForSession: id => Object.values(deps.getBoard().tasks || {}).filter(task =>
-      task.sessionId === id || task.chatSessionId === id || core.taskRunSessionIds(task).includes(id)).map(task => task.id),
+    // 会话记录在广播 session_created 之前就写好了 taskBoundTaskId（create-record），
+    // 先走它：新任务的首轮事件不会再因为板册尚未回填 linkage 而解析成空集合。
+    taskIdsForSession: id => {
+      const bound = deps.records.get(id)?.taskBoundTaskId;
+      if (bound) return [bound];
+      return Object.values(deps.getBoard().tasks || {}).filter(task =>
+        task.sessionId === id || task.chatSessionId === id || core.taskRunSessionIds(task).includes(id)).map(task => task.id);
+    },
   }) : null;
   if (liveSync) { liveSync.mount(app, route); deps.registerSync(liveSync); }
   let airBuildsInFlight = 0;
@@ -576,6 +586,8 @@ function mountAirRoutes(app, deps) {
       throw Object.assign(new Error('directory not found'), { status: 404, code: 'directory_not_found' });
     }
     const result = await hibernation.reclaim({ dirId, force: body.force === true });
+    // 回收直接改写任务卡上的 worktree 状态且没有领域事件可跟，保持显式全量。
+    liveSync?.invalidate();
     return { ok: result.ok !== false, dirId, ...result };
   }));
   app.get('/api/air/resolve', route(async req => {
@@ -664,7 +676,8 @@ function mountAirRoutes(app, deps) {
   }));
   app.post('/api/air/tasks/:id/roles', route(req => ({ ok: true, roleBindings: deps.shell.updateRoleBindings(req.params.id, req.body) })));
   const writes = liveSync ? { get: (...args) => app.get(...args), post: (path, handler) => app.post(path, async (req, res) => {
-    try { await handler(req, res); } finally { liveSync.invalidate(); }
+    // pin/todo/ignore 全是快照元数据字段，元数据档重建就会重排分页与计数。
+    try { await handler(req, res); } finally { liveSync.invalidate([]); }
   }) } : app;
   pins().mountRoutes(writes);
   todos().mountRoutes(writes);

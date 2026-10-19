@@ -147,7 +147,11 @@
   async function poll(epoch = pollEpoch) {
     if (stopped || epoch !== pollEpoch) return;
     if (!document.hidden) await refreshList();
-    if (!stopped && epoch === pollEpoch) timer = setTimeout(() => poll(epoch), opened ? 5000 : 15000);
+    if (!stopped && epoch === pollEpoch) {
+      // 固定周期会把所有客户端的同档轮询钉到同一时刻；±15% 抖动错峰。
+      const base = opened ? 5000 : 15000;
+      timer = setTimeout(() => poll(epoch), Math.round(base * (0.85 + Math.random() * 0.3)));
+    }
   }
   root.addEventListener('pagehide', () => { stopped = true; generation++; pollEpoch++; clearTimeout(timer); request?.abort(); request = null; });
   root.addEventListener('pageshow', event => { if (event.persisted) { stopped = false; void poll(); } });

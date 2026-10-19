@@ -15,8 +15,30 @@ function pageTaskHistory(rawMessages, options = {}) {
     ...(options.around ? { found: true, hasNewer: end < messages.length } : {}) };
 }
 
-function mountTaskShellRoutes(app, { getRuntime, open = id => getRuntime().open(id), history, artifacts, taskEntry, taskIndex,
-  taskOperations, attributionDecisions, independent, relations }) {
+// 产物采集要整份解析任务转录（百毫秒级），而两个消费端是 5s/15s 的轮询，且 web/App/
+// 聊天帧常常同时盯着同一个任务。同一任务：进行中的采集合并成一个；完成后的短窗口
+// （默认 2s，远小于最短轮询周期）内直接复用同一份结果。失败不落缓存。
+function createArtifactsMemo(artifacts, { memoMs = 2000, maxEntries = 64 } = {}) {
+  const memo = new Map();
+  return taskId => {
+    const hit = memo.get(taskId);
+    if (hit && Date.now() - hit.at < memoMs) return hit.promise;
+    const entry = { at: Date.now(), promise: null };
+    entry.promise = Promise.resolve(artifacts(taskId)).then(result => {
+      entry.at = Date.now(); // TTL 从采集完成时刻起算
+      return result;
+    }, error => {
+      memo.delete(taskId);
+      throw error;
+    });
+    memo.set(taskId, entry);
+    if (memo.size > maxEntries) for (const key of memo.keys()) { memo.delete(key); if (memo.size <= maxEntries) break; }
+    return entry.promise;
+  };
+}
+
+function mountTaskShellRoutes(app, { getRuntime, open = id => getRuntime().open(id), history, artifacts, artifactsMemoMs,
+  taskEntry, taskIndex, taskOperations, attributionDecisions, independent, relations }) {
   const route = handler => async (req, res) => {
     try {
       const runtime = getRuntime();
@@ -37,10 +59,11 @@ function mountTaskShellRoutes(app, { getRuntime, open = id => getRuntime().open(
     return { ...pageTaskHistory(entry.messages, req.query), task: entry.task, execution: entry.execution, readOnly: entry.readOnly };
   }));
   if (artifacts) {
-    app.get('/api/task-shell-tasks/:taskId/artifacts', route((_runtime, req) => artifacts(req.params.taskId)));
+    const collectArtifacts = createArtifactsMemo(artifacts, { memoMs: artifactsMemoMs });
+    app.get('/api/task-shell-tasks/:taskId/artifacts', route((_runtime, req) => collectArtifacts(req.params.taskId)));
     app.get('/api/task-shells/:shellId/artifacts', route((runtime, req) => {
       const scope = runtime.chatScope(req.params.shellId);
-      return scope.taskId ? artifacts(scope.taskId) : { taskId: null, title: '', items: [] };
+      return scope.taskId ? collectArtifacts(scope.taskId) : { taskId: null, title: '', items: [] };
     }));
   }
   app.post('/api/task-shell-tasks/:taskId/fork', route((runtime, req) => runtime.forkTask(req.params.taskId, req.body)));
@@ -143,4 +166,4 @@ function mountTaskShellRoutes(app, { getRuntime, open = id => getRuntime().open(
   app.post('/api/task-shells/:shellId/receipts/:receiptId/retry', route((runtime, req) => runtime.retry(req.params.shellId, req.params.receiptId)));
 }
 
-module.exports = { mountTaskShellRoutes, pageTaskHistory };
+module.exports = { mountTaskShellRoutes, createArtifactsMemo, pageTaskHistory };
