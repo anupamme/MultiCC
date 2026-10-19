@@ -535,7 +535,7 @@ class _NavRow extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
 
-  /// 行尾的数字（控制台挂的是「谁在等我」的条数）。0 不显示。
+  /// 行尾的数字（控制台挂的是「待办」的条数）。0 不显示。
   final String? badge;
 
   @override

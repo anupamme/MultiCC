@@ -5,7 +5,7 @@
 //   ② 侧栏的任务带只装「最近」，完整列表（跨全部目录 + 搜索 + 筛选）搬进控制台；
 //   ③ 运行中的任务和它所在的目录，在侧栏 / 控制台 / 目录页 / 页头都带同一圈彩虹；
 //   ④ ⌘K 一次搜目录和任务两类对象；
-//   ⑤ 控制台的统计压成一条窄读数带，「谁在等我」只留最近更新的 5 条，整份清单在它
+//   ⑤ 控制台的统计压成一条窄读数带，「待办」只留最近更新的 5 条，整份清单在它
 //      自己的页上（?view=attention）。
 // 这些行为靠 DOM/地址状态判断。唯一量位置的地方是各页共用的正文：一页只站一块。
 // 例外是③里的「圈真的画出来了吗」—— 那一处必须读像素，理由见 ringEdges。
@@ -681,7 +681,7 @@ test('the directory task list keeps its filters, shares page scrolling, paginate
   });
 });
 
-// 控制台的第一格是「谁在等我」，它一长就把下面整片推走。这里用一个 6 条待办的
+// 控制台的第一格是「待办」，它一长就把下面整片推走。这里用一个 6 条待办的
 // 现场确认三件事：面板里只画最近更新的 5 条、总数照报、完整清单在它自己的页上（而那一页
 // 是个能直接打开、能返回、地址里留得住的真页面）。顺带把「统计读数带压扁了」钉住 ——
 // 它是这次「留更多空间给任务」的兑现方式，光看截图不算数。
@@ -796,11 +796,11 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="today"]').click()`);
     assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '当前筛选保持可见');
 
-    // ── ③ 「谁在等我」是自己的一页：换页而不是换层，地址留住，清单给全 ────
+    // ── ③ 「待办」是自己的一页：换页而不是换层，地址留住，清单给全 ────
     await page.navigate('/air?view=attention');
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===true`), '进那一页时控制台这一页让开');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`), '页头换成那一页自己的标题');
-    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), '控制台 / 谁在等我');
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='待办'`), '页头换成那一页自己的标题');
+    assert.equal(await page.evaluate(`document.getElementById('task-breadcrumb').textContent`), '控制台 / 待办');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'attention', '整页有自己的地址');
     assert.equal(await page.evaluate(`location.search.includes('task=')`), false, '整页不是某个任务的任务页');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#admin-content .admin-recent-row strong')].map(el=>el.textContent)`),
@@ -813,7 +813,7 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
 
     // 地址可直达：刷新/分享这条链接都落到同一页，它才是控制台那一片的入口。
     await page.navigate('/air?view=attention');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`));
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='待办'`));
     assert.equal(await page.evaluate(`document.getElementById('console-center').hidden`), true, '直接打开这一页不会顺手打开控制台');
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content .admin-recent-row').length`), 6);
 
@@ -825,7 +825,7 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
 
     // ── ④ 返回控制台：回到的是控制台那一页，不是任务页 ─────────────────────
     await page.navigate('/air?view=attention');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`));
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='待办'`));
     await page.evaluate(`document.getElementById('page-back').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`), '「返回控制台」回到控制台那一页');
     assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview', '回去的这一页地址就是它自己的地址');
@@ -883,7 +883,7 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     // ── 窄屏：压扁后的读数带和整页都不能横向溢出 ───────────────────────────
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await page.navigate('/air?view=attention');
-    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='谁在等我'`));
+    assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='待办'`));
     assert.equal(await page.evaluate(`document.documentElement.scrollWidth<=innerWidth`), true, '整页在窄屏不横向溢出');
     await page.screenshot('09-attention-mobile');
     await page.evaluate(`document.getElementById('overview').click()`);
@@ -925,7 +925,7 @@ test('a task waiting on background work never renders as waiting for you', async
   const task = (id, title, status, runState, updatedAt, resource) => ({ id, dirId: 'd1', title, recordType: 'planned',
     workflowStage: 'doing', status, runState, updatedAt, resource: resource || { residency: 'planned', lease: 'idle' }, configuration });
   // 三条活着的任务各说各的：等后台任务、等回答、正在跑。等后台任务那条既不该算进
-  // 「谁在等我」，也不该拿「在跑」的圈 —— 外面有东西在跑，但本机这一轮没在跑。
+  // 「待办」，也不该拿「在跑」的圈 —— 外面有东西在跑，但本机这一轮没在跑。
   const airTasks = [
     task('tsk_bg', '等回调：索引重建', 'active', 'background', 900),
     task('tsk_wait', '等回答：发布口径', 'active', 'waiting', 800),

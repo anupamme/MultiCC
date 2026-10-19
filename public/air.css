@@ -1088,7 +1088,7 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
 #admin-actions:empty { display: none; }
 /* 统计是一条「读数带」，不是控制台的主体：四个数字用来确认系统活着，真正要看的
    是下面的任务。所以它压扁成一条窄带（数字 27→19px、卡片 116→78px 高），省下来的
-   高度全给「谁在等我」和「全部任务」。 */
+   高度全给「待办」和「全部任务」。 */
 .admin-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
 .admin-stat { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 9px 12px; border: 1px solid #d8e5f2; border-radius: 14px; background: rgba(255, 255, 255, .92); text-align: left; box-shadow: 0 9px 30px #35577d0a; }
 button.admin-stat:hover { transform: translateY(-1px); }
@@ -1128,7 +1128,7 @@ button.admin-stat:hover { transform: translateY(-1px); }
 .admin-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .admin-panel-head h3 { margin-top: 3px; color: #294760; font-size: 15px; }
 .admin-panel-head button { min-height: 30px; padding: 4px 8px; color: #537493; border-color: transparent; background: transparent; font-size: 10px; }
-/* 面板头上「说明 + 出口」要贴在一起（谁在等我的 N 条往上是一句话、往右是一扇门），
+/* 面板头上「说明 + 出口」要贴在一起（待办的 N 条往上是一句话、往右是一扇门），
    所以它们自己是一个 flex 组，不会被 space-between 拆到两头。 */
 .admin-panel-meta { display: flex; align-items: center; gap: 4px; }
 .admin-recent-list { display: grid; }

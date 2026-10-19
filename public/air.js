@@ -1506,7 +1506,7 @@
       // 控制台这一页自己：跨全部工作目录的任务总览。
       recent: [t('airCrumbConsole'), t('airRecentTasks'), t('airAdminSearchTasksLabel')],
       overview: [t('airCrumbConsole'), t('airConsole'), t('airConsoleHint')],
-      // 「谁在等我」完整清单（控制台只放最近几条）。
+      // 「待办」完整清单（控制台只放最近几条）。
       attention: [t('airCrumbConsole'), t('airAdminAttention'), t('airAdminAttentionHint')],
       secrets: [t('airCrumbSettings'), t('airAdminPanelSecrets'), t('secretsVaultShortHint')],
       docs: [t('airCrumbTools'), t('airDocs'), t('airAdminDocsHint')],
@@ -2677,7 +2677,7 @@
       // 控制台从一层浮层变成了一页：进出都走 setMode，跟「定时任务」「工作目录库」
       // 同一条路（地址、页头、正文可见性都由它一次落地）。
       openConsole: () => setMode('overview'),
-      // 「谁在等我」整页读的是外壳这份 /api/air 快照，刷新也只能由外壳去做 ——
+      // 「待办」整页读的是外壳这份 /api/air 快照，刷新也只能由外壳去做 ——
       // 让它自己再打一个接口就等于给控制台造了第二份口径。
       refresh: () => refresh(),
     };
