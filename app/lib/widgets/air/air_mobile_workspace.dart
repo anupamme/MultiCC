@@ -119,6 +119,7 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   }
 
   Widget _task(AirTask task) => AirTaskTile(
+    key: ValueKey('air-mobile-row-${task.id}'),
     task: task,
     onTap: () => widget.onOpenTask(task),
     onLongPress: widget.onTaskAction == null

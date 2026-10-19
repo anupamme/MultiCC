@@ -31,6 +31,7 @@ class AirSyncService extends ChangeNotifier {
   final double Function() _random;
   final _store = AirSyncStore();
   final _pages = <String, AirPageResult>{};
+  final _stalePages = <String>{};
   final _pending = <String, String>{};
   final _failedPages = <String, DateTime>{};
   List<ExternalFleet> _fleets = const [];
@@ -122,8 +123,11 @@ class AirSyncService extends ChangeNotifier {
             throw const FormatException('Air sync unavailable');
           }
           if (response['tasks'] is List) {
+            final sameEpoch =
+                AirSyncStore.epoch('${response['cursor']}') ==
+                AirSyncStore.epoch(_store.cursor);
             _store.replace(response);
-            _invalidatePages();
+            _invalidatePages(discard: !sameEpoch);
           } else {
             for (final event in response['events'] as List? ?? []) {
               final before = _store.cursor;
@@ -172,9 +176,16 @@ class AirSyncService extends ChangeNotifier {
     }
   }
 
-  void _invalidatePages() {
+  void _invalidatePages({bool discard = false}) {
     _serial++;
-    _pages.clear();
+    if (discard) {
+      _pages.clear();
+      _stalePages.clear();
+    } else {
+      // Keep the visible rows mounted while their membership is revalidated.
+      // Clearing them here briefly shrinks the list and clamps its scroll offset.
+      _stalePages.addAll(_pages.keys);
+    }
     _pending.clear();
     _failedPages.clear();
   }
@@ -184,16 +195,17 @@ class AirSyncService extends ChangeNotifier {
     if (!indexed || _closed || _paused) return null;
     final query = {'limit': 20, ...options, 'dayStart': _dayStart};
     final signature = airPageSignature(query);
-    final cached = _pages[slot];
-    if (cached?.signature == signature) {
+    final candidate = _pages[slot];
+    final cached = candidate?.signature == signature ? candidate : null;
+    if (cached != null && !_stalePages.contains(slot)) {
       // Returning to a cached query also supersedes a different pending read.
       _pending.remove(slot);
       return cached;
     }
-    if (_pending[slot] == signature) return null;
+    if (_pending[slot] == signature) return cached;
     final failed = _failedPages[signature];
     if (failed != null && DateTime.now().difference(failed).inSeconds < 5) {
-      return null;
+      return cached;
     }
     _pending[slot] = signature;
     final serial = _serial;
@@ -214,8 +226,11 @@ class AirSyncService extends ChangeNotifier {
         final page = AirPageResult(body: result, signature: signature);
         _pages.remove(slot);
         _pages[slot] = page;
+        _stalePages.remove(slot);
         while (_pages.length > 16) {
-          _pages.remove(_pages.keys.first);
+          final oldest = _pages.keys.first;
+          _pages.remove(oldest);
+          _stalePages.remove(oldest);
         }
         _store.put(result['tasks'] as List, cursor);
         _emit();
@@ -233,7 +248,7 @@ class AirSyncService extends ChangeNotifier {
         }
       }
     }());
-    return null;
+    return cached;
   }
 
   Future<void> _connectSocket() async {
