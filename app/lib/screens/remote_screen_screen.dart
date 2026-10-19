@@ -7,11 +7,14 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../i18n.dart';
 import '../services/remote_screen_rfb.dart';
 import '../services/remote_screen_region.dart';
 import '../services/remote_screen_service.dart';
+import '../services/remote_touch_controller.dart';
 import '../services/settings_service.dart';
 
 /// 键盘条的功能键/快捷键：[label, spec]。spec 里 `+` 分段，修饰键映射成
@@ -113,7 +116,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
 
   int _lastX = 0;
   int _lastY = 0;
-  DateTime _lastMoveSent = DateTime.fromMillisecondsSinceEpoch(0);
   final TextEditingController _textCtrl = TextEditingController();
 
   /// 捏合缩放：InteractiveViewer 的变换只改视觉框，Listener 收到的
@@ -122,10 +124,34 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   final TransformationController _xform = TransformationController();
   bool _zoomed = false;
   int _zoomPct = 100;
-  int _pointerCount = 0;
-  Offset _downLocal = Offset.zero;
-  bool _downSent = true; // 未放大态的左键 down 是否已发给远端
-  Timer? _downDefer;
+  int _pointerCount = 0; // 兼容（JPEG）模式用；流畅模式的手势全在 _touch 里
+
+  /// 触摸手势识别（直接触摸 / 触控板两档），见 RemoteTouchController。
+  late final RemoteTouchController _touch = RemoteTouchController(
+    onPointer: (mask, x, y) {
+      final source = _svc.source;
+      if (source == null) return;
+      _lastX = x;
+      _lastY = y;
+      source.pointerEvent(mask, x, y);
+    },
+    onCursor: (s, pressed) =>
+        _cursorMark.value = s == null ? null : _CursorMark(s, pressed),
+    onHold: () => HapticFeedback.mediumImpact(),
+    onRightUsed: () {
+      if (mounted) setState(() => _rightOnce = false);
+    },
+    onFollow: _followCursor,
+  );
+  final ValueNotifier<_CursorMark?> _cursorMark = ValueNotifier(null);
+
+  /// 触控板模式：一指滑动带虚拟光标走；偏好会记住（只对流畅模式生效）。
+  bool _trackpad = false;
+  static const _trackpadPref = 'remote_screen_trackpad';
+
+  /// 最近一次舞台几何（视口 / 内容框偏移 / 内容框尺寸），放大态下视角跟随光标用。
+  ({Size vp, double offX, double offY, double dw, double dh})? _stageGeo;
+  Matrix4? _xformAtStart;
 
   /// 框选源图裁剪（与 Web 版 setBoxSel 同一交互）：开启后拖一个矩形，
   /// 松开从原生截图裁剪并 fit 铺满视口，之后的
@@ -147,6 +173,10 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       if (mounted) setState(() {});
     });
     _frameSub = _svc.onFrame.listen((_) => _renderFrame());
+    SharedPreferences.getInstance().then((prefs) {
+      final on = prefs.getBool(_trackpadPref) ?? false;
+      if (mounted && on != _trackpad) setState(() => _trackpad = on);
+    }).catchError((Object _) {});
     if (widget.initialControl) {
       _control = true;
       _hadControl = true;
@@ -246,7 +276,8 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   void dispose() {
     _haltTimer?.cancel();
     _permTimer?.cancel();
-    _downDefer?.cancel();
+    _touch.reset();
+    _cursorMark.dispose();
     _xform.dispose();
     _frameSub?.cancel();
     _modeSub?.cancel();
@@ -283,23 +314,13 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     _lastFrameAt = now;
     if (_decoding) return; // 上一帧还在解码，跳过；下个 update 会再触发
     final w = source.width, h = source.height;
-    // BGRA → RGBA：32bit 上 R/B 互换，A/G 原位。按 32 位整读要求 4 字节对齐，
-    // 来源没对齐就先拷一份 —— 否则 view 抛异常，而且 _decoding 会永远卡住，
-    // 页面停在「已连上、画面全黑」。
-    final aligned = fb.offsetInBytes % 4 == 0 ? fb : Uint8List.fromList(fb);
-    final src = Uint32List.view(
-      aligned.buffer,
-      aligned.offsetInBytes,
-      aligned.lengthInBytes ~/ 4,
-    );
-    final rgba = Uint8List(src.length * 4);
-    final dst = Uint32List.view(rgba.buffer, 0, src.length);
-    for (var i = 0; i < src.length; i++) {
-      final v = src[i];
-      dst[i] = (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16);
-    }
+    // 引擎直接吃 BGRA：不再逐像素在 Dart 里换 R/B（一帧上百万次循环会把 UI 线程
+    // 吃满、压低帧率）。framebuffer 会被后续 update 原地改写，而解码是异步读的，
+    // 所以必须先拷一份 —— memcpy 比 Dart 循环快一个数量级，也顺带绕开了
+    // 来源未 4 字节对齐的问题。
+    final pixels = Uint8List.fromList(fb);
     _decoding = true;
-    ui.decodeImageFromPixels(rgba, w, h, ui.PixelFormat.rgba8888, (img) {
+    ui.decodeImageFromPixels(pixels, w, h, ui.PixelFormat.bgra8888, (img) {
       _decoding = false;
       if (!mounted) {
         img.dispose();
@@ -324,6 +345,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       _haltTimer?.cancel();
       _haltTimer = null;
       _rightOnce = false;
+      _touch.reset();
     }
   }
 
@@ -368,89 +390,89 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   }
 
   // ── 指针（仅流畅模式）──
-  void _sendPointer(int mask, double dx, double dy, double dw, double dh) {
+  // 手势识别全在 RemoteTouchController（纯 Dart，单测覆盖）；这里只做装配。
+  bool get _trackpadActive =>
+      _trackpad && _control && _svc.mode == RemoteScreenMode.live;
+
+  void _syncTouch(double dw, double dh) {
     final source = _svc.source;
-    if (source == null || source.width <= 0 || dw <= 0 || dh <= 0) return;
-    _lastX = ((dx / dw) * source.width).round().clamp(0, source.width - 1);
-    _lastY = ((dy / dh) * source.height).round().clamp(0, source.height - 1);
-    source.pointerEvent(mask, _lastX, _lastY);
+    if (source == null) return;
+    _touch
+      ..display = Size(dw, dh)
+      ..source = Size(source.width.toDouble(), source.height.toDouble())
+      ..viewScale = _xform.value.getMaxScaleOnAxis()
+      ..zoomed = _zoomed
+      ..mode = _trackpadActive
+          ? RemoteTouchMode.trackpad
+          : RemoteTouchMode.direct
+      ..rightOnce = _rightOnce;
   }
 
   void _onPointerDown(PointerDownEvent e, double dw, double dh) {
     if (!_control) return;
-    _pointerCount++;
-    if (_pointerCount >= 2) {
-      // 第二指落下 = 捏合开始：撤掉第一指 pending 的 down；已发出的补一个
-      // up 把单指操作干净收尾（Agent 端按位移判 click/drag）。
-      _downDefer?.cancel();
-      _downDefer = null;
-      if (_downSent && !_zoomed) {
-        _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
-      }
-      _downSent = true;
-      return;
-    }
-    _downLocal = e.localPosition;
-    // 「右键」已点亮：这一次落指不发左键 down，抬起时按位移决定是否发右键。
-    if (_rightOnce) return;
-    if (_zoomed) return; // 放大态：down 不转发，up 按位移决定是否精确单击
-    // 未放大：down 延迟 90ms 再发 —— 两指捏合通常在百毫秒内落齐，这扇窗把
-    // 「第一指的 down」挡在捏合开始之前，远端不会收到幽灵按键。
-    _downSent = false;
-    _downDefer?.cancel();
-    _downDefer = Timer(const Duration(milliseconds: 90), () {
-      _downSent = true;
-      _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
-    });
+    _syncTouch(dw, dh);
+    _touch.down(e.pointer, e.localPosition, e.position, e.timeStamp);
   }
 
   void _onPointerMove(PointerMoveEvent e, double dw, double dh) {
-    if (!_control || _pointerCount >= 2) return;
-    if (_rightOnce) return; // 右键待发：拖动只用来判「是否仍算轻点」
-    if (_zoomed) return; // 放大态单指拖 = 平移画面，不转发远端
-    if (e.buttons == 0) return;
-    if (!_downSent) {
-      // 拖拽从第一格位移开始：冲掉延迟立即补 down，再走节流 move。
-      _downDefer?.cancel();
-      _downDefer = null;
-      _downSent = true;
-      _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
-    }
-    final now = DateTime.now();
-    if (now.difference(_lastMoveSent).inMilliseconds < 30) return;
-    _lastMoveSent = now;
-    _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
+    if (!_control) return;
+    _syncTouch(dw, dh);
+    _touch.move(e.pointer, e.localPosition, e.position, e.timeStamp);
   }
 
   void _onPointerUp(PointerEvent e, double dw, double dh) {
-    if (_pointerCount > 0) _pointerCount--;
-    if (!_control || _pointerCount >= 1) return; // 捏合中一指抬起，忽略
-    if (_rightOnce) {
-      // Agent 端 mask 4→0 沿触发 click right；拖动超过阈值视为取消，不消耗「右键」。
-      if ((e.localPosition - _downLocal).distance < 10 &&
-          e.runtimeType != PointerCancelEvent) {
-        setState(() => _rightOnce = false);
-        _sendPointer(4, e.localPosition.dx, e.localPosition.dy, dw, dh);
-        _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
-      }
-      return;
+    _syncTouch(dw, dh);
+    if (e is PointerCancelEvent || !_control) {
+      _touch.cancel(e.pointer);
+    } else {
+      _touch.up(e.pointer, e.localPosition, e.position, e.timeStamp);
     }
-    if (_zoomed) {
-      final moved = (e.localPosition - _downLocal).distance;
-      if (moved < 10) {
-        _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
-        _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
-      }
-      return;
+  }
+
+  void _toggleTrackpad() {
+    _touch.reset(); // 切档先把按着的键松开
+    _cursorMark.value = null;
+    final on = !_trackpad;
+    setState(() => _trackpad = on);
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setBool(_trackpadPref, on))
+        .catchError((Object _) => false);
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 4),
+          content: Text(
+            on
+                ? '触控板模式：滑动移动光标 · 轻点单击 · 按住后再拖 = 拖拽 · 双指滑动 = 滚动 · 双指轻点 = 右键 · 双指捏合缩放'
+                : '触摸模式：手指点哪、拖到哪',
+          ),
+        ),
+      );
+  }
+
+  /// 触控板放大态：光标靠近视口边缘时把视角推过去，光标始终在可见区域内。
+  void _followCursor(Offset src) {
+    final g = _stageGeo;
+    final source = _svc.source;
+    if (g == null || source == null || !_zoomed || source.width <= 0) return;
+    final m = _xform.value;
+    final s = m.getMaxScaleOnAxis();
+    final vx = (src.dx / source.width * g.dw + g.offX) * s + m.entry(0, 3);
+    final vy = (src.dy / source.height * g.dh + g.offY) * s + m.entry(1, 3);
+    const margin = 56.0;
+    double push(double v, double len) {
+      if (v < margin) return margin - v;
+      if (v > len - margin) return len - margin - v;
+      return 0;
     }
-    if (!_downSent) {
-      // 快速轻点（90ms 窗内）：补一对 down+up，Agent 端判一次单击。
-      _downDefer?.cancel();
-      _downDefer = null;
-      _downSent = true;
-      _sendPointer(1, e.localPosition.dx, e.localPosition.dy, dw, dh);
-    }
-    _sendPointer(0, e.localPosition.dx, e.localPosition.dy, dw, dh);
+
+    final dx = push(vx, g.vp.width), dy = push(vy, g.vp.height);
+    if (dx == 0 && dy == 0) return;
+    _xform.value = Matrix4.identity()
+      ..translate(m.entry(0, 3) + dx, m.entry(1, 3) + dy)
+      ..scale(s);
+    _onZoomUpdate(g.vp, g.offX, g.offY, g.dw, g.dh);
   }
 
   void _wheelPulse(int mask) {
@@ -671,6 +693,15 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
             color: _control ? const Color(0xFF2ba67a) : null,
             onPressed: () => _setControl(!_control),
           ),
+          if (_control && _svc.mode == RemoteScreenMode.live)
+            IconButton(
+              icon: Icon(
+                _trackpad ? Icons.mouse_outlined : Icons.touch_app_outlined,
+              ),
+              tooltip: _trackpad ? '触控板模式（点按切回触摸）' : '触摸模式（点按切到触控板）',
+              color: _trackpad ? const Color(0xFF2ba67a) : null,
+              onPressed: _toggleTrackpad,
+            ),
           if (_control)
             IconButton(
               icon: const Icon(Icons.ads_click),
@@ -741,6 +772,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
       if (w > 0 && h > 0) '$w×$h',
       _modeLabel,
       if (_boxSelOn) t('rsBoxSelHint'),
+      if (_trackpadActive) '触控板',
       if (_svc.mode == RemoteScreenMode.live &&
           _fps != null &&
           _statusErr == null)
@@ -892,6 +924,7 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
             source.width * scale,
             source.height * scale,
             Listener(
+              behavior: HitTestBehavior.opaque,
               onPointerDown: (e) =>
                   _onPointerDown(e, source.width * scale, source.height * scale),
               onPointerMove: (e) =>
@@ -900,9 +933,29 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
                   _onPointerUp(e, source.width * scale, source.height * scale),
               onPointerCancel: (e) =>
                   _onPointerUp(e, source.width * scale, source.height * scale),
-              child: CustomPaint(
-                painter: _ScreenPainter(img),
-                size: Size.infinite,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CustomPaint(
+                    painter: _ScreenPainter(img),
+                    size: Size.infinite,
+                  ),
+                  // 本地光标 / 落点：不等往返就跟手（IgnorePointer，不抢手势）
+                  IgnorePointer(
+                    child: ValueListenableBuilder<_CursorMark?>(
+                      valueListenable: _cursorMark,
+                      builder: (context, mark, _) => CustomPaint(
+                        painter: _CursorPainter(
+                          mark,
+                          source.width.toDouble(),
+                          source.height.toDouble(),
+                          _trackpadActive,
+                        ),
+                        size: Size.infinite,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -951,23 +1004,35 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
   // 视口，未放大时（内容比视口窄的一侧）保持居中 —— 与 Web 版 clampPan 同义。
   Widget _zoomStage(Size vp, double dw, double dh, Widget child) {
     final offX = (vp.width - dw) / 2, offY = (vp.height - dh) / 2;
+    _stageGeo = (vp: vp, offX: offX, offY: offY, dw: dw, dh: dh);
+    final pad = _trackpadActive;
     return Stack(
       children: [
         Positioned.fill(
           child: ClipRect(
             child: GestureDetector(
               // 双击：放大↔复位（第一次轻点会照常发出一次单击，与 Web 版一致）。
-              onDoubleTapDown: (d) => _doubleTapZoom(d, vp, offX, offY, dw, dh),
+              onDoubleTapDown: pad
+                  ? null // 触控板里连点两下是双击，不是缩放
+                  : (d) => _doubleTapZoom(d, vp, offX, offY, dw, dh),
               child: InteractiveViewer(
                 transformationController: _xform,
                 constrained: false,
-                panEnabled: _zoomed, // 未放大时单指拖不动物画面
+                // 触控板：单指/双指平行滑动归手势控制器（光标 / 滚轮），视角靠跟随光标
+                panEnabled: _zoomed && !pad,
                 scaleEnabled: true,
                 minScale: 1.0,
                 maxScale: 6.0,
                 boundaryMargin: const EdgeInsets.all(double.infinity),
-                onInteractionUpdate: (_) =>
-                    _onZoomUpdate(vp, offX, offY, dw, dh),
+                onInteractionStart: (_) => _xformAtStart = _xform.value.clone(),
+                onInteractionUpdate: (_) {
+                  // 双指在「滚动」远端：InteractiveViewer 看到的微小比例抖动不许动画面
+                  final start = _xformAtStart;
+                  if (pad && _touch.scrolling && start != null) {
+                    _xform.value = start.clone();
+                  }
+                  _onZoomUpdate(vp, offX, offY, dw, dh);
+                },
                 child: Transform.translate(
                   offset: Offset(offX, offY),
                   child: SizedBox(width: dw, height: dh, child: child),
@@ -1090,9 +1155,6 @@ class _RemoteScreenScreenState extends State<RemoteScreenScreen> {
     double dw,
     double dh,
   ) {
-    // 双击的第二次轻点还挂在 90ms 窗里：撤掉，别让它多出一次幽灵单击。
-    _downDefer?.cancel();
-    _downDefer = null;
     final f = d.localPosition; // 视口坐标 = 双击锚点
     if (_svc.region != null) {
       _svc.selectRegion(null);
@@ -1241,4 +1303,74 @@ class _ScreenPainter extends CustomPainter {
   @override
   bool shouldRepaint(_ScreenPainter oldDelegate) =>
       !identical(oldDelegate.image, image);
+}
+
+
+/// 本地光标 / 落点标记（源画面像素）。
+class _CursorMark {
+  const _CursorMark(this.pos, this.pressed);
+  final Offset pos;
+  final bool pressed;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _CursorMark && other.pos == pos && other.pressed == pressed;
+
+  @override
+  int get hashCode => Object.hash(pos, pressed);
+}
+
+/// 触摸模式画一个落点圈；触控板模式画箭头光标。
+class _CursorPainter extends CustomPainter {
+  _CursorPainter(this.mark, this.srcW, this.srcH, this.trackpad);
+  final _CursorMark? mark;
+  final double srcW;
+  final double srcH;
+  final bool trackpad;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final m = mark;
+    if (m == null || srcW <= 0 || srcH <= 0) return;
+    final p = Offset(m.pos.dx / srcW * size.width, m.pos.dy / srcH * size.height);
+    const accent = Color(0xFF4da3ff);
+    if (trackpad) {
+      final path = Path()
+        ..moveTo(p.dx, p.dy)
+        ..lineTo(p.dx, p.dy + 18)
+        ..lineTo(p.dx + 4.5, p.dy + 14)
+        ..lineTo(p.dx + 8, p.dy + 21)
+        ..lineTo(p.dx + 10.5, p.dy + 20)
+        ..lineTo(p.dx + 7, p.dy + 13)
+        ..lineTo(p.dx + 12.5, p.dy + 13)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()..color = m.pressed ? accent : const Color(0xFFFFFFFF),
+      );
+      canvas.drawPath(
+        path,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = const Color(0xFF10141c),
+      );
+      return;
+    }
+    if (m.pressed) {
+      canvas.drawCircle(p, 16, Paint()..color = accent.withValues(alpha: 0.28));
+    }
+    canvas.drawCircle(
+      p,
+      16,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..color = accent,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CursorPainter old) =>
+      old.mark != mark || old.trackpad != trackpad;
 }
