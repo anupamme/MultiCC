@@ -2,7 +2,7 @@
 
 const { createHash } = require('node:crypto');
 const { createProviderRevision } = require('./provider-attempt-runtime');
-const { resolveAutoStallTimeoutMs } = require('./auto-stall-timeout');
+const { resolveModelRequestPolicy } = require('./model-request-policy');
 const { createProviderRouteProof } = require('./turn-request');
 const { protocolFamilyOf } = require('../cli/cli-capability');
 const { nativeOpenCodeId } = require('../providers/native-opencode');
@@ -157,11 +157,7 @@ function createProviderInvocationFactory(options = {}) {
       attemptNo: input.attemptNo,
       reasonCode: input.reasonCode,
       continuation: input.continuation === true,
-      // Auto Provider only fails over when an attempt errors, so a silently
-      // stalled upstream wedges the turn forever. Every Auto attempt therefore
-      // carries its own idle budget for the proxy watchdog; a non-Auto session
-      // resolves to 0 and the proxy never arms one for it.
-      stallTimeoutMs: resolveAutoStallTimeoutMs(session, input.env),
+      ...resolveModelRequestPolicy(session, input.env),
       spawnKey: spawnKeyFor({
         cli: binding.cli, providerId, protocol,
         providerRevision: protocolFamilyOf(binding.cli, 'api') === 'openai_responses'

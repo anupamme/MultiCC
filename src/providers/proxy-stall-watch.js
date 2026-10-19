@@ -2,19 +2,18 @@
 
 const { proxyRequestKind } = require('./proxy-outcome');
 
-// Host-side idle watchdog for one downstream inference response. The upstream
-// proxy (cli-provider-router) never notices a provider that accepted the request
-// and then sent nothing: it only aborts upstream when its own client walks away.
-// Nothing errors, so nothing fails over either — the turn simply hangs until the
-// operator cancels it. This watch is that missing terminal state: it fires only
-// for Auto attempts (the caller arms it with the attempt's own budget), settles
-// the host's proxy observation as a timeout BEFORE any teardown can be mistaken
-// for a client disconnect, and then retires the physical route.
+const { createModelStreamProgress } = require('./model-stream-progress');
+
+// 每个已准入的模型请求独占计时器；请求结束即撤销，不计本地工具时间。
 const RESPONSE_STALLED_BEFORE_RESPONSE = 'response_stalled_before_response';
 const STREAM_IDLE_TIMEOUT = 'stream_idle_timeout';
+const MODEL_REQUEST_DEADLINE = 'model_request_deadline';
+const MODEL_CONNECT_TIMEOUT = 'model_connect_timeout';
 const PROXY_STALL_CODES = Object.freeze([
   RESPONSE_STALLED_BEFORE_RESPONSE,
   STREAM_IDLE_TIMEOUT,
+  MODEL_REQUEST_DEADLINE,
+  MODEL_CONNECT_TIMEOUT,
 ]);
 
 const PROXY_STALL_CODE_SET = new Set(PROXY_STALL_CODES);
@@ -37,7 +36,8 @@ function stallBody(code, timeoutMs) {
     error: {
       type: 'upstream_stalled',
       code,
-      message: `upstream sent no data for ${seconds}s`,
+      message: code === MODEL_REQUEST_DEADLINE ? 'model request budget exhausted'
+        : `upstream made no progress for ${seconds}s`,
     },
   });
 }
@@ -83,9 +83,7 @@ function terminateStalledResponse(res, { code, timeoutMs = 0, progressed = false
   return destroy();
 }
 
-// One watch per admitted downstream request. `arm(attempt)` installs it only for
-// an inference request whose attempt carries a positive stall budget, so a
-// non-Auto session's response object is never wrapped at all.
+// 一个物理请求一个看门狗；重试继承同一请求链的绝对截止时间。
 function createProxyStallWatch(options = {}) {
   const protocol = clean(options.protocol).toLowerCase();
   const res = options.res;
@@ -94,8 +92,14 @@ function createProxyStallWatch(options = {}) {
   const schedule = typeof options.setTimeout === 'function' ? options.setTimeout : setTimeout;
   const unschedule = typeof options.clearTimeout === 'function' ? options.clearTimeout : clearTimeout;
   const onStall = typeof options.onStall === 'function' ? options.onStall : null;
+  const now = options.now || Date.now;
+  const readProgress = createModelStreamProgress();
+  let deadlineTimer = null;
+  let deadlineAt = null;
+  let freshDeadlineAt = null;
   let timer = null;
   let limitMs = 0;
+  let connectMs = 0;
   let armed = false;
   let progressed = false;
   let finished = false;
@@ -117,8 +121,7 @@ function createProxyStallWatch(options = {}) {
   function noteProgress() {
     if (finished) return;
     progressed = true;
-    // Idle, not total: every downstream byte restarts the budget, so a long but
-    // live stream is never retired — only silence is.
+    // 有效事件只重置空闲预算，不延长绝对截止时间。
     if (timer !== null) rearm();
   }
 
@@ -126,19 +129,20 @@ function createProxyStallWatch(options = {}) {
     if (finished) return;
     finished = true;
     disarm();
+    if (deadlineTimer !== null) unschedule(deadlineTimer);
+    deadlineTimer = null;
   }
 
   function hasSentHeaders() {
     return progressed || res?.headersSent === true;
   }
 
-  function onTimeout() {
-    timer = null;
+  function onTimeout(forcedCode, timeoutMs = limitMs) {
     if (finished) return;
-    const code = stallCodeFor(hasSentHeaders());
+    const code = forcedCode || stallCodeFor(progressed);
     const detail = {
       code,
-      timeoutMs: limitMs,
+      timeoutMs,
       progressed,
       protocol,
       requestKind,
@@ -153,9 +157,8 @@ function createProxyStallWatch(options = {}) {
     try { observe.settle({ status: 'error', errorCode: code }); } catch (_) {}
     if (onStall) { try { onStall(detail); } catch (_) {} }
     // 2. Retire the route.
-    finished = true;
-    disarm();
-    try { terminateStalledResponse(res, { code, timeoutMs: limitMs, progressed }); } catch (_) {}
+    finish();
+    try { terminateStalledResponse(res, { code, timeoutMs, progressed: hasSentHeaders() }); } catch (_) {}
     return detail;
   }
 
@@ -164,17 +167,22 @@ function createProxyStallWatch(options = {}) {
     if (requestKind !== 'inference' || !res || !observe
         || typeof observe.settle !== 'function') return false;
     const budget = Number(attempt && attempt.stallTimeoutMs);
-    if (!Number.isSafeInteger(budget) || budget <= 0) return false;
+    const total = Number(attempt && attempt.requestTimeoutMs);
+    if ((!Number.isSafeInteger(budget) || budget <= 0) && !(total > 0)) return false;
     armed = true;
-    limitMs = budget;
-    // Every downstream progress signal restarts the budget: headers, a body
-    // chunk, or a flushed header block. Return values and `this` are preserved.
-    for (const method of ['write', 'writeHead', 'flushHeaders']) {
-      const original = res[method];
-      if (typeof original !== 'function') continue;
-      res[method] = function stallWatchProgress(...args) {
-        noteProgress();
-        return original.apply(this, args);
+    connectMs = Number(attempt.connectTimeoutMs) || 0;
+    limitMs = Number.isSafeInteger(budget) && budget > 0 ? budget : 0;
+    if (total > 0) {
+      freshDeadlineAt = now() + total;
+      deadlineAt = Number(attempt.requestDeadlineAt) || freshDeadlineAt;
+      deadlineTimer = schedule(() => onTimeout(MODEL_REQUEST_DEADLINE, total), Math.max(1, deadlineAt - now()));
+      deadlineTimer?.unref?.();
+    }
+    const write = res.write;
+    if (typeof write === 'function') {
+      res.write = function stallWatchProgress(...args) {
+        if (args[0] != null && readProgress(args[0])) noteProgress();
+        return write.apply(this, args);
       };
     }
     const end = res.end;
@@ -193,21 +201,33 @@ function createProxyStallWatch(options = {}) {
     return true;
   }
 
-  function dispose() {
-    finished = true;
-    disarm();
+  function isolateRetryBudget() {
+    // Claude 路由可能先查主供应商，再解析出子供应商；子请求不能继承主请求的重试余额。
+    if (finished || !freshDeadlineAt || deadlineAt === freshDeadlineAt) return;
+    if (deadlineTimer !== null) unschedule(deadlineTimer);
+    deadlineAt = freshDeadlineAt;
+    deadlineTimer = schedule(() => onTimeout(MODEL_REQUEST_DEADLINE), Math.max(1, deadlineAt - now()));
+    deadlineTimer?.unref?.();
   }
+
+  function dispose() { finish(); }
 
   return Object.freeze({
     arm,
+    noteProgress,
+    isolateRetryBudget,
     dispose,
     isArmed: () => armed,
     timeoutMs: () => limitMs,
     progressed: () => progressed,
+    deadlineAt: () => deadlineAt,
+    connectTimeout: () => { if (armed && !finished) onTimeout(MODEL_CONNECT_TIMEOUT, connectMs); },
   });
 }
 
 module.exports = {
+  MODEL_REQUEST_DEADLINE,
+  MODEL_CONNECT_TIMEOUT,
   PROXY_STALL_CODES,
   RESPONSE_STALLED_BEFORE_RESPONSE,
   STREAM_IDLE_TIMEOUT,

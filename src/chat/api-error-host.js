@@ -169,7 +169,7 @@ function createApiErrorHost(options = {}) {
       turnId: turn?.turnId,
       attempt,
       phase,
-      partialOutput,
+      partialOutput: partialOutput || raw?.partialOutput === true,
       sideEffects,
       turnElapsedMs,
       idempotencyKey: turnErrorIdempotencyKey(sessionName, turn, attempt, identity),

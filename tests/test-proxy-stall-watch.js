@@ -7,6 +7,8 @@ const {
   PROXY_STALL_CODES,
   RESPONSE_STALLED_BEFORE_RESPONSE,
   STREAM_IDLE_TIMEOUT,
+  MODEL_REQUEST_DEADLINE,
+  MODEL_CONNECT_TIMEOUT,
   createProxyStallWatch,
   isProxyStallCode,
   terminateStalledResponse,
@@ -195,7 +197,7 @@ test('silence with no downstream byte is a before-response stall answered with 5
   assert.equal(res.head.headers['content-length'], Buffer.byteLength(res.writes[0]),
     'an explicit content-length makes the 504 complete without a terminating chunk');
   assert.deepEqual(body, {
-    error: { type: 'upstream_stalled', code: RESPONSE_STALLED_BEFORE_RESPONSE, message: 'upstream sent no data for 120s' },
+    error: { type: 'upstream_stalled', code: RESPONSE_STALLED_BEFORE_RESPONSE, message: 'upstream made no progress for 120s' },
   });
   assert.equal(res.destroyed, true, 'the socket is destroyed so the proxy releases the dead upstream');
   assert.equal(res.writableEnded, false, 'a polite end would leave the upstream socket open');
@@ -215,7 +217,7 @@ test('a stall after any downstream byte is a stream idle timeout and destroys', 
   watch.arm({ stallTimeoutMs: 20_000 });
   // A flushed header block is a downstream byte even before the first chunk.
   res.flushHeaders();
-  res.write('event: message_start\n\n');
+  res.write('data: {"type":"content_block_delta","delta":{"text":"hello"}}\n\n');
   res.write('event: content_block_delta\n\n');
   assert.deepEqual(timers.intervals(), [20_000]);
   const before = res.events.length;
@@ -226,7 +228,7 @@ test('a stall after any downstream byte is a stream idle timeout and destroys', 
   assert.equal(res.destroyed, true);
 });
 
-test('every downstream progress signal restarts the idle budget', () => {
+test('wrapping progress preserves response return values and one idle timer', () => {
   const timers = timerHarness();
   const req = inferenceRequest();
   const res = fakeResponse();
@@ -239,7 +241,7 @@ test('every downstream progress signal restarts the idle budget', () => {
   assert.equal(timers.pending().length, 1);
   for (const [index, signal] of [
     () => res.writeHead(200, { 'content-type': 'text/event-stream' }),
-    () => res.write('chunk-1'),
+    () => res.write('data: {"type":"content_block_delta","delta":{"text":"hello"}}\n\n'),
     () => res.flushHeaders(),
     () => res.write('chunk-2'),
   ].entries()) {
@@ -307,7 +309,7 @@ test('an unref-able timer can never hold the process open, and stall codes are s
   assert.equal(isProxyStallCode('STREAM_IDLE_TIMEOUT'), true);
   assert.equal(isProxyStallCode('response_stalled_before_response'), true);
   assert.equal(isProxyStallCode('DOWNSTREAM_DISCONNECT'), false);
-  assert.deepEqual([...PROXY_STALL_CODES], [RESPONSE_STALLED_BEFORE_RESPONSE, STREAM_IDLE_TIMEOUT]);
+  assert.deepEqual([...PROXY_STALL_CODES], [RESPONSE_STALLED_BEFORE_RESPONSE, STREAM_IDLE_TIMEOUT, MODEL_REQUEST_DEADLINE, MODEL_CONNECT_TIMEOUT]);
 });
 
 test('termination without a destroy port still finishes the response', () => {
@@ -418,7 +420,7 @@ test('the stalled re-dial is refused with a non-retryable 409, every other 409 u
   assert.deepEqual(seen, ['attempt_stalled', 'proxy_attempt_not_running']);
 });
 
-test('a non-Auto attempt (budget 0) keeps today\'s behaviour: no timer, no wrapper, no stall', async () => {
+test('an explicitly disabled legacy watch (budget 0) does not wrap responses', async () => {
   const harness = admissionHarness({
     stallTimeoutMs: 0,
     handler: admission => (req, res) => {
@@ -447,7 +449,7 @@ test('a mid-stream stall inside the admission is the idle-timeout code', async (
     handler: admission => (req, res) => {
       admission.getProvider('claude', 'p1');
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.write('event: message_start\n\n');
+      res.write('data: {"type":"content_block_delta","delta":{"text":"hello"}}\n\n');
     },
   });
   const req = Object.assign(new EventEmitter(), {
@@ -516,7 +518,7 @@ function autoFixture() {
 }
 
 test('a recorded stall becomes a timeout decision in a safe phase, so Auto switches lines', () => {
-  for (const code of PROXY_STALL_CODES) {
+  for (const code of PROXY_STALL_CODES.filter(code => code !== MODEL_REQUEST_DEADLINE)) {
     const proxyFailure = {
       source: 'proxy_response',
       provider: 'codex',
@@ -634,11 +636,11 @@ test('a stall after visible output is not replayed: it reserves the next line in
 // Wiring: which sessions carry a budget
 // ---------------------------------------------------------------------------
 
-test('only an Auto Provider session carries the stall budget, and the env overrides it', () => {
+test('all chat sessions carry the idle budget, with a compatible Auto override', () => {
   const auto = { id: 's1', providerSelection: { mode: 'auto', candidates: [] } };
   const manual = { id: 's2', providerSelection: { mode: 'manual', candidates: [] } };
   const bare = { id: 's3' };
-  assert.equal(resolveAutoStallTimeoutMs(auto, {}), 120_000);
+  assert.equal(resolveAutoStallTimeoutMs(auto, {}), 300_000);
   assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: '45000' }), 45_000);
   assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: '0' }), 0);
   assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: '-1' }), 0);
@@ -646,7 +648,285 @@ test('only an Auto Provider session carries the stall budget, and the env overri
     'a short budget is clamped up to the reviewed floor');
   assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: '99999999' }), 600_000,
     'a long budget is clamped down to the reviewed ceiling');
-  assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: 'nonsense' }), 120_000);
-  assert.equal(resolveAutoStallTimeoutMs(manual, { MULTICC_AUTO_STALL_TIMEOUT_MS: '45000' }), 0);
-  assert.equal(resolveAutoStallTimeoutMs(bare, {}), 0);
+  assert.equal(resolveAutoStallTimeoutMs(auto, { MULTICC_AUTO_STALL_TIMEOUT_MS: 'nonsense' }), 300_000);
+  assert.equal(resolveAutoStallTimeoutMs(manual, { MULTICC_AUTO_STALL_TIMEOUT_MS: '45000' }), 300_000);
+  assert.equal(resolveAutoStallTimeoutMs(bare, {}), 300_000);
+});
+
+// 公共请求策略回归：虚拟时钟只推进请求时间，不启动真实模型或生产服务。
+function virtualClock() {
+  let at = 1_000;
+  let id = 0;
+  const jobs = new Map();
+  return {
+    now: () => at,
+    setTimeout(fn, ms) { const handle = { id: ++id, unref() {} }; jobs.set(handle, { fn, at: at + ms }); return handle; },
+    clearTimeout(handle) { jobs.delete(handle); },
+    size: () => jobs.size,
+    tick(ms) {
+      const until = at + ms;
+      for (;;) {
+        const next = [...jobs.entries()].filter(([, job]) => job.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        at = next[1].at; jobs.delete(next[0]); next[1].fn();
+      }
+      at = until;
+    },
+  };
+}
+
+const { resolveModelRequestPolicy } = require('../src/chat/model-request-policy');
+const { recoverModelTimeout } = require('../src/chat/model-timeout-recovery');
+const { withModelConnectWatch } = require('../src/providers/model-connect-watch');
+
+test('公共默认值覆盖所有 CLI，并明确区分深度推理与普通请求', () => {
+  for (const cli of ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'codebuddy']) {
+    assert.deepEqual(resolveModelRequestPolicy({ cli }, {}), {
+      stallTimeoutMs: 300_000, requestTimeoutMs: 900_000, connectTimeoutMs: 30_000,
+    });
+    assert.deepEqual(resolveModelRequestPolicy({ cli, effort: 'high' }, {}), {
+      stallTimeoutMs: 600_000, requestTimeoutMs: 1_800_000, connectTimeoutMs: 30_000,
+    });
+  }
+  assert.equal(resolveModelRequestPolicy({}, { MULTICC_MODEL_IDLE_TIMEOUT_MS: '1000' }).stallTimeoutMs, 15_000);
+  const disabled = resolveModelRequestPolicy({}, { MULTICC_MODEL_IDLE_TIMEOUT_MS: '0' });
+  assert.equal(disabled.stallTimeoutMs, 0);
+  assert.equal(disabled.requestTimeoutMs, 900_000, '关闭空闲计时不取消总预算');
+});
+
+for (const protocol of ['claude', 'codex']) {
+  test(`${protocol}：保活不续期、分片有效事件续期、总截止时间不续期`, () => {
+    const clock = virtualClock();
+    const res = fakeResponse();
+    const failures = [];
+    const watch = createProxyStallWatch({ protocol, req: inferenceRequest(protocol), res,
+      observation: { settle: event => failures.push(event) }, ...clock });
+    watch.arm({ stallTimeoutMs: 100, requestTimeoutMs: 250 });
+    const event = protocol === 'claude'
+      ? { type: 'content_block_delta', delta: { text: '你好' } }
+      : { type: 'response.reasoning_summary_text.delta', delta: '你好' };
+    const bytes = Buffer.from(`data: ${JSON.stringify(event)}\r\n\r\n`);
+    clock.tick(80);
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(': keepalive\n\ndata: {"type":"ping"}\n\n');
+    assert.equal(watch.progressed(), false);
+    res.write(bytes.subarray(0, bytes.length - 6));
+    res.write(bytes.subarray(bytes.length - 6));
+    assert.equal(watch.progressed(), true);
+    clock.tick(80); res.write(bytes);
+    clock.tick(80); res.write(bytes);
+    assert.equal(res.destroyed, false);
+    clock.tick(10);
+    assert.equal(res.destroyed, true);
+    assert.equal(failures[0].errorCode, MODEL_REQUEST_DEADLINE);
+    assert.equal(failures.length, 1);
+    assert.equal(clock.size(), 0);
+  });
+
+  test(`${protocol}：只有保活仍按首次有效事件超时，正常结束之后长工具不受计时影响`, () => {
+    const clock = virtualClock();
+    const res = fakeResponse();
+    const failures = [];
+    const watch = createProxyStallWatch({ protocol, req: inferenceRequest(protocol), res,
+      observation: { settle: event => failures.push(event) }, ...clock });
+    watch.arm({ stallTimeoutMs: 100, requestTimeoutMs: 250 });
+    for (let i = 0; i < 4; i++) { clock.tick(20); res.write('data: {"type":"ping"}\n\n'); }
+    clock.tick(20);
+    assert.equal(failures[0].errorCode, RESPONSE_STALLED_BEFORE_RESPONSE);
+    const next = fakeResponse();
+    const nextWatch = createProxyStallWatch({ protocol, req: inferenceRequest(protocol), res: next,
+      observation: { settle: () => assert.fail('工具运行期间不应触发请求超时') }, ...clock });
+    nextWatch.arm({ stallTimeoutMs: 100, requestTimeoutMs: 250 });
+    next.end();
+    clock.tick(3_600_000);
+    assert.equal(clock.size(), 0);
+    assert.equal(next.destroyed, false);
+  });
+
+  test(`${protocol}：固定供应商两次失败共享预算，超时关闭常驻 runner，第三次不重放`, () => {
+    const clock = virtualClock();
+    const runtime = createProviderAttemptRuntime({ runtimeEpoch: 'epoch-budget', now: clock.now });
+    const cs = { _activeTurn: { turnId: 't1' } };
+    const chatSessions = new Map([['s1', cs]]);
+    const stopped = [];
+    const chatStream = { cancel: sid => stopped.push(sid) };
+    let mounted;
+    let admission;
+    admission = createProviderProxyAdmission({ protocol,
+      app: { use(_path, fn) { mounted = fn; }, post(_path, fn) { mounted = fn; } },
+      authorizeProxyRequest: runtime.authorizeProxyRequest, getProvider: () => ({ id: 'p1' }),
+      onOutcome: event => {
+        const outcome = runtime.observeProxyOutcome(event);
+        recoverModelTimeout({ event, outcome, chatSessions, chatStream });
+      }, ...clock,
+    });
+    const handler = () => admission.getProvider(protocol, 'p1');
+    admission.app[protocol === 'claude' ? 'use' : 'post']('/test', handler);
+    const start = attemptNo => {
+      const attempt = beginAttempt(runtime, { cli: protocol, attemptNo, stallTimeoutMs: 100, requestTimeoutMs: 250 });
+      cs._activeRunner = { kind: 'stream', providerAttempt: attempt };
+      const capability = runtime.proxySessionId(attempt);
+      const req = Object.assign(new EventEmitter(), { method: 'POST',
+        url: protocol === 'claude' ? `/p1/${capability}/v1/messages` : `/p1/${capability}/main/responses`,
+        params: { providerId: 'p1', sessionId: capability, role: 'main' } });
+      const res = fakeResponse();
+      mounted(req, res, error => { throw error; });
+      return { attempt, res };
+    };
+    const first = start(1);
+    clock.tick(100);
+    assert.equal(first.res.destroyed, true);
+    const failure = runtime.proxyFailure(first.attempt);
+    assert.equal(failure.requestDeadlineAt, 1_250);
+    assert.equal(failure.retryBudgetExhausted, false);
+    assert.equal(stopped.length, 1);
+    assert.equal(cs._activeRunner.killReason, undefined, '超时不能伪装成用户取消');
+    assert.equal(cs._activeRunner.apiErrorRaw.code, RESPONSE_STALLED_BEFORE_RESPONSE);
+    const policy = createApiErrorPolicyRuntime({ now: clock.now });
+    const decide = raw => policy.evaluate(raw, { phase: 'before_first_token', partialOutput: false, sideEffects: false });
+    // 这里使用极短测试预算，退避已无空间；真实预算另行验证。
+    assert.equal(decide(failure).reason, 'request_budget_exhausted');
+    runtime.finishAttempt(first.attempt, { outcome: 'failed' });
+    clock.tick(25);
+    const second = start(2);
+    assert.equal(second.attempt.requestDeadlineAt, 1_250);
+    clock.tick(100);
+    const final = runtime.proxyFailure(second.attempt);
+    assert.equal(final.retryBudgetExhausted, true);
+    assert.equal(stopped.length, 2);
+    assert.equal(decide(final).action, 'fail_fast');
+    assert.equal(failoverSafety(decide(final), runtime.snapshot('s1')).ok, false);
+    runtime.finishAttempt(second.attempt, { outcome: 'failed' });
+    const fresh = beginAttempt(runtime, { turnId: 't2', requestTimeoutMs: 250 });
+    assert.equal(fresh.requestDeadlineAt, null);
+    assert.equal(fresh.requestFailures, 0);
+  });
+}
+
+test('安全超时只自动重试一次；部分输出、工具副作用与预算用尽均明确失败', () => {
+  const policy = createApiErrorPolicyRuntime({ now: () => 1000, random: () => 0 });
+  const raw = { source: 'proxy_response', code: RESPONSE_STALLED_BEFORE_RESPONSE, requestDeadlineAt: 901_000 };
+  const base = { phase: 'before_first_token', partialOutput: false, sideEffects: false };
+  assert.equal(policy.evaluate(raw, base).action, 'retry');
+  assert.equal(policy.evaluate(raw, { ...base, attempt: 1 }).action, 'fail_fast');
+  for (const facts of [{ partialOutput: true }, { sideEffects: true }]) {
+    assert.equal(policy.evaluate(raw, { ...base, ...facts }).action, 'fail_fast');
+  }
+  assert.equal(policy.evaluate({ ...raw, retryBudgetExhausted: true }, base).action, 'fail_fast');
+  assert.equal(policy.evaluate({ ...raw, code: MODEL_REQUEST_DEADLINE }, base).action, 'fail_fast');
+});
+
+test('子请求和旧 attempt 的超时不能终止当前主 runner', () => {
+  const runtime = attemptRuntime();
+  const attempt = beginAttempt(runtime, { requestTimeoutMs: 900_000 });
+  let stops = 0;
+  const cs = { _activeTurn: { turnId: 't1' }, _activeRunner: { kind: 'stream', providerAttempt: attempt } };
+  const chatSessions = new Map([['s1', cs]]);
+  const event = { ...attempt, roleKind: 'sub', routeAttribution: 'exact', status: 'error', errorCode: STREAM_IDLE_TIMEOUT };
+  assert.equal(recoverModelTimeout({ event, outcome: runtime.observeProxyOutcome(event), chatSessions,
+    chatStream: { cancel() { stops++; } } }), false);
+  assert.equal(recoverModelTimeout({ event: { ...event, turnId: 'old' },
+    outcome: { accepted: true, failure: { code: STREAM_IDLE_TIMEOUT } }, chatSessions,
+    chatStream: { cancel() { stops++; } } }), false);
+  assert.equal(stops, 0);
+});
+
+test('真实 Node HTTP 连接在 DNS 悬挂时受连接预算保护', async () => {
+  const http = require('node:http');
+  const res = fakeResponse();
+  let request;
+  let timeoutCount = 0;
+  const context = { response: res, attempt: { connectTimeoutMs: 30 },
+    stall: { isArmed: () => true, connectTimeout() { timeoutCount++; res.destroy(); request.destroy(); } } };
+  await new Promise((resolve, reject) => {
+    const guard = setTimeout(() => reject(new Error('连接计时器没有结束 DNS 悬挂')), 2000);
+    withModelConnectWatch(context, () => {
+      request = http.get({ hostname: 'model.invalid', lookup() {} });
+      request.on('error', () => {});
+      request.on('close', () => { clearTimeout(guard); resolve(); });
+    });
+  });
+  assert.equal(timeoutCount, 1);
+});
+
+test('真实 Undici 已建立连接后等待响应头，不再受连接预算限制', async () => {
+  const http = require('node:http');
+  const server = http.createServer((_req, res) => setTimeout(() => res.end('ok'), 80));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const response = fakeResponse();
+  let timeouts = 0;
+  const context = { response, attempt: { connectTimeoutMs: 30 },
+    stall: { isArmed: () => true, connectTimeout() { timeouts++; } } };
+  try {
+    const result = await withModelConnectWatch(context, () => fetch(`http://127.0.0.1:${server.address().port}`));
+    assert.equal(await result.text(), 'ok');
+    assert.equal(timeouts, 0, '连接预算不能误当首字节预算');
+  } finally { response.end(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+test('同一 CLI 内部失败重试也计数，成功后才为下一模型请求恢复预算', () => {
+  const clock = virtualClock();
+  const runtime = createProviderAttemptRuntime({ now: clock.now });
+  const attempt = beginAttempt(runtime, { requestTimeoutMs: 900_000 });
+  const event = { ...attempt, roleKind: 'main', routeAttribution: 'exact',
+    requestDeadlineAt: 901_000, status: 'error', errorCode: 'fetch_failed',
+    proxyOutcome: { version: 1, requestId: 'request-a', requestKind: 'inference', termination: 'upstream_failure', httpStatus: null } };
+  assert.equal(runtime.observeProxyOutcome(event).failure.retryBudgetExhausted, false);
+  assert.equal(runtime.snapshot('s1').requestFailures, 1);
+  runtime.observeProxyOutcome({ ...event, status: 'success', errorCode: null,
+    proxyOutcome: { ...event.proxyOutcome, termination: 'completed', requestId: 'request-b' } });
+  assert.equal(runtime.snapshot('s1').requestFailures, 0);
+  assert.equal(runtime.snapshot('s1').requestDeadlineAt, null);
+  assert.equal(runtime.observeProxyOutcome({ ...event, proxyOutcome: { ...event.proxyOutcome, requestId: 'request-c' } }).failure.retryBudgetExhausted, false);
+  assert.equal(runtime.observeProxyOutcome({ ...event, proxyOutcome: { ...event.proxyOutcome, requestId: 'request-d' } }).failure.retryBudgetExhausted, true);
+  assert.equal(runtime.snapshot('s1').stalled, true);
+});
+
+test('进程超时的强杀只针对捕获的旧进程，不会杀掉替换后的 runner', () => {
+  const clock = virtualClock();
+  const signals = [];
+  const proc = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null,
+    kill: signal => signals.push(signal) });
+  const attempt = beginAttempt(attemptRuntime());
+  const cs = { _activeTurn: { turnId: 't1' }, _activeRunner: { kind: 'process', providerAttempt: attempt }, claudeProc: proc };
+  assert.equal(recoverModelTimeout({ event: attempt, outcome: { accepted: true, failure: { code: MODEL_CONNECT_TIMEOUT } },
+    chatSessions: new Map([['s1', cs]]), setTimeout: clock.setTimeout }), true);
+  cs.claudeProc = { kill: () => assert.fail('不能杀新进程') };
+  clock.tick(1_500);
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('真实 Undici 连接悬挂被中止，未准入的 HTTP 请求不受该策略影响', async () => {
+  const { Agent, fetch: request } = require('undici');
+  const dispatcher = new Agent({ connect() {} });
+  const controller = new AbortController();
+  const response = fakeResponse();
+  let timeouts = 0;
+  const context = { response, attempt: { connectTimeoutMs: 30 },
+    stall: { isArmed: () => true, connectTimeout() { timeouts++; controller.abort(); response.destroy(); } } };
+  const guard = setTimeout(() => controller.abort(), 2000);
+  try {
+    await assert.rejects(withModelConnectWatch(context,
+      () => request('http://model.invalid', { dispatcher, signal: controller.signal })));
+    assert.equal(timeouts, 1);
+    const channel = require('node:diagnostics_channel').channel('undici:request:create');
+    channel.publish({ request: {} }); // 无请求作用域，不能启动计时器。
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(timeouts, 1);
+  } finally { clearTimeout(guard); void dispatcher.destroy(); }
+});
+
+test('子请求在二次供应商解析后不继承主请求的重试截止时间', () => {
+  const clock = virtualClock();
+  const res = fakeResponse();
+  const watch = createProxyStallWatch({ protocol: 'claude', req: inferenceRequest(), res,
+    observation: { settle() {} }, ...clock });
+  watch.arm({ requestTimeoutMs: 250, requestDeadlineAt: 1_010, stallTimeoutMs: 0 });
+  watch.isolateRetryBudget();
+  clock.tick(20);
+  assert.equal(res.destroyed, false);
+  assert.equal(watch.deadlineAt(), 1_250);
+  clock.tick(230);
+  assert.equal(res.destroyed, true);
+  assert.equal(clock.size(), 0);
 });

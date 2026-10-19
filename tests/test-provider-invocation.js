@@ -484,20 +484,19 @@ function prepareFor(session, input = {}) {
   return { attempts, invocation };
 }
 
-test('only an Auto session arms a stall watchdog, with the reviewed default budget', () => {
+test('Auto and fixed-provider sessions share the reviewed model request budget', () => {
   const auto = { id: 'session-1', cli: 'claude', provider: 'provider-a', model: 'sonnet',
     providerSelection: { version: 1, mode: 'auto', protocol: 'anthropic', candidates: [] } };
-  assert.equal(prepareFor(auto).invocation.attempt.stallTimeoutMs, 120_000);
-  assert.equal(prepareFor(auto, { env: {} }).invocation.attempt.stallTimeoutMs, 120_000);
-  // A concrete session keeps today's behaviour exactly: no budget, so the proxy
-  // never wraps its response object.
+  assert.equal(prepareFor(auto).invocation.attempt.stallTimeoutMs, 300_000);
+  assert.equal(prepareFor(auto, { env: {} }).invocation.attempt.stallTimeoutMs, 300_000);
+  // 固定供应商也受同一预算保护。
   const manual = { id: 'session-1', cli: 'claude', provider: 'provider-a', model: 'sonnet',
     providerSelection: { version: 1, mode: 'manual', candidates: [] } };
-  assert.equal(prepareFor(manual).invocation.attempt.stallTimeoutMs, 0);
+  assert.equal(prepareFor(manual).invocation.attempt.stallTimeoutMs, 300_000);
   assert.equal(prepareFor(manual, { env: { MULTICC_AUTO_STALL_TIMEOUT_MS: '45000' } })
-    .invocation.attempt.stallTimeoutMs, 0, 'an env var cannot arm a watchdog on a non-Auto session');
+    .invocation.attempt.stallTimeoutMs, 300_000, 'legacy Auto override does not affect a fixed session');
   assert.equal(prepareFor({ id: 'session-1', cli: 'claude', provider: 'provider-a', model: 'sonnet' })
-    .invocation.attempt.stallTimeoutMs, 0);
+    .invocation.attempt.stallTimeoutMs, 300_000);
 });
 
 test('the environment overrides the Auto budget and can switch the watchdog off', () => {
@@ -508,7 +507,7 @@ test('the environment overrides the Auto budget and can switch the watchdog off'
   assert.equal(budget({ MULTICC_AUTO_STALL_TIMEOUT_MS: '0' }), 0, 'zero disables the watchdog');
   assert.equal(budget({ MULTICC_AUTO_STALL_TIMEOUT_MS: '1000' }), 15_000, 'clamped up to the floor');
   assert.equal(budget({ MULTICC_AUTO_STALL_TIMEOUT_MS: '3600000' }), 600_000, 'clamped down to the ceiling');
-  assert.equal(budget({ MULTICC_AUTO_STALL_TIMEOUT_MS: 'later' }), 120_000, 'unparseable keeps the default');
+  assert.equal(budget({ MULTICC_AUTO_STALL_TIMEOUT_MS: 'later' }), 300_000, 'unparseable keeps the default');
 });
 
 test('the budget travels with every physical attempt, the failover one included', () => {
