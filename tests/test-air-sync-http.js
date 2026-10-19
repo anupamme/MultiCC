@@ -55,7 +55,12 @@ test('真实 HTTP/WS：1277 张卡、20 客户端、重连补齐、健康检查�
   while (runtime.index.cursor() === before && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
   assert.notEqual(runtime.index.cursor(), before); assert.equal(reads, 1278);
   for (const ws of clients.slice(1)) {
-    if (!ws.frames.some(e => e.type === 'air_delta')) await new Promise(r => setTimeout(r, 20));
+    // Delivery rides the socket, so the frame lands after flush() returns; wait
+    // for it instead of assuming one turn of the loop is enough (CI is slow).
+    const deltaDeadline = Date.now() + 3000;
+    while (!ws.frames.some(e => e.type === 'air_delta') && Date.now() < deltaDeadline) {
+      await new Promise(r => setTimeout(r, 20));
+    }
     assert.equal(ws.frames.find(e => e.type === 'air_delta').tasks[0].title, '推送后的任务');
   }
   const recovered = await get('/api/air/sync?cursor=' + bootstrap.cursor);
@@ -73,6 +78,12 @@ test('真实 HTTP/WS：1277 张卡、20 客户端、重连补齐、健康检查�
     for (let i = 0; i < 20; i++) { const start = performance.now(); await get('/healthz'); latencies.push(performance.now() - start); await ping(); }
   })()]);
   assert.equal(reads, 2555, '整批变化只由共享生产者分批重建一次');
+  // The reset is pushed, not requested: give the socket its bounded window
+  // before judging what the client received.
+  const resetDeadline = Date.now() + 3000;
+  while (!clients[1].frames.some(e => e.type === 'air_reset') && Date.now() < resetDeadline) {
+    await new Promise(r => setTimeout(r, 20));
+  }
   assert.ok(clients[1].frames.some(e => e.type === 'air_reset'), '大变更使用有界重置而不是向每个客户端推全量卡片');
   const percentile = (values, p) => [...values].sort((a, b) => a - b)[Math.min(values.length - 1, Math.floor(values.length * p))];
   const pages = requests.filter(r => r.path.includes('/page'));

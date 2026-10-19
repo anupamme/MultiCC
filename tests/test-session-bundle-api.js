@@ -517,15 +517,30 @@ async function stopServer() {
   // attribution adopts once they have content), then the directory.
   await git(sourceWorktree, ['reset', '--hard', await git(project, ['rev-parse', 'HEAD'])]);
   const fixtureSessionIds = new Set([sourceId, importedId, legacyId, zipId, crossId, sameRepoId]);
-  // The board listing route is retired; read the durable index the server owns.
-  const board = JSON.parse(fs.readFileSync(path.join(dataRoot, 'task_board.json'), 'utf8'));
-  const ownedTasks = Object.values(board.tasks || {})
-    .filter(task => fixtureSessionIds.has(task.chatSessionId));
-  assert.ok(ownedTasks.some(task => task.chatSessionId === sourceId), 'the seeded room was adopted into a board task');
-  for (const task of ownedTasks) {
-    // force also releases each imported chat's own unmerged fixture branch.
-    response = await api('DELETE', `/api/task-board/tasks/${task.id}`, { force: true });
-    assert.equal(response.status, 200, JSON.stringify(response.data));
+  // The board listing route is retired; read the live index the server owns.
+  // Adoption is asynchronous — the always-on Air producer mints a card for every
+  // chat record that has content, so a room's card can land after a first sweep
+  // (reading task_board.json on disk misses it entirely, and misses any card the
+  // producer writes between that read and the directory delete). Sweep the live
+  // board until a pass finds nothing left to dispose, then delete the directory.
+  async function disposeFixtureTasks() {
+    const snapshot = await api('GET', '/api/air');
+    assert.equal(snapshot.status, 200, JSON.stringify(snapshot.data));
+    const owned = (snapshot.data.tasks || []).filter(task => fixtureSessionIds.has(task.sessionId));
+    for (const task of owned) {
+      // force also releases each imported chat's own unmerged fixture branch.
+      response = await api('DELETE', `/api/task-board/tasks/${task.id}`, { force: true });
+      assert.equal(response.status, 200, JSON.stringify(response.data));
+    }
+    return owned;
+  }
+  const adopted = await disposeFixtureTasks();
+  assert.ok(adopted.some(task => task.sessionId === sourceId), 'the seeded room was adopted into a board task');
+  // A card can still land after the first sweep; keep sweeping until one finds
+  // nothing left to dispose.
+  for (let sweep = 0; sweep < 20; sweep += 1) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    if ((await disposeFixtureTasks()).length === 0) break;
   }
   response = await api('DELETE', `/api/directories/${dirId}?force=1`);
   assert.equal(response.status, 200, JSON.stringify(response.data));
