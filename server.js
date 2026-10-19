@@ -2726,10 +2726,8 @@ const providerLogWatchdog = createProviderLogWatchdog({ listRecords: () => persi
 const logHousekeeping = createLogHousekeeping({ logsDir: path.join(__dirname, 'logs'), logger,
   retainDays: envNumber(process.env.MULTICC_LOG_RETAIN_DAYS), keepTailBytes: envNumber(process.env.MULTICC_LOG_KEEP_TAIL_BYTES) });
 routerToolHost.configure({ records: persistedSessions, dispatchToSession, createTask: input => taskShellHost.createTask(input), orchestrationRuntime, taskBoard: taskBoardRuntime,
-  recordUserInput: signal => sessionWorkHost.recordInput(signal), listSecrets: () => secretsVault.list(),
-  secretTools: createSecretTools({ vault: secretsVault, resolveSessionCwd: id => { const rec = persistedSessions.get(id); return rec ? cwdForSession(rec) : null; } }),
-  cancelActiveTurn: (id, opts) => sessionWorkHost.cancelActiveTurn(id, opts),
-  onDispatchCancelled: id => cancelDispatchRun(id), subscribeDispatchProgress, recordRouterAdmission, imageBridge: createOfficialImageBridgeRuntime({ paths: MULTICC_PATHS, resolveSessionCwd: cwdForSession, providers, officialAccounts, registerArtifact: docsRegistry.register, codexCommand: cliCommands.codex }), getTaskContext: (context, query) => taskShellHost.refillContext(context.sessionId, { ...query, receiptId: context.requestId }) });
+  recordUserInput: signal => sessionWorkHost.recordInput(signal), listSecrets: () => secretsVault.list(), secretTools: createSecretTools({ vault: secretsVault, resolveSessionCwd: id => { const rec = persistedSessions.get(id); return rec ? cwdForSession(rec) : null; } }),
+  cancelActiveTurn: (id, opts) => sessionWorkHost.cancelActiveTurn(id, opts), onDispatchCancelled: id => cancelDispatchRun(id), subscribeDispatchProgress, recordRouterAdmission, imageBridge: createOfficialImageBridgeRuntime({ paths: MULTICC_PATHS, resolveSessionCwd: cwdForSession, providers, officialAccounts, registerArtifact: docsRegistry.register, codexCommand: cliCommands.codex }), getTaskContext: (context, query) => taskShellHost.refillContext(context.sessionId, { ...query, receiptId: context.requestId }) });
 
 waitInjector.init({
   inject: (session, text, opts) => sessionDelivery.deliverContinuation(session, text, opts),
