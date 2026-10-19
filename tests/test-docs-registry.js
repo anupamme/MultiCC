@@ -385,3 +385,20 @@ test('an incomplete dependency scan pauses cleanup but keeps list and unkeep act
     assert.deepEqual(reg.listPermanentArtifactIds(), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); reset(); }
 });
+
+test('registering a permanent root into a full table preserves its incoming dependency graph', () => {
+  reset();
+  const input = { id: 'input-row', title: 'Input', kind: 'file', url: '/artifacts/new-input/data.csv', relatedArtifactIds: ['new-source'] };
+  const source = { id: 'source-row', title: 'Source', kind: 'file', url: '/artifacts/new-source/data.csv' };
+  const filler = Array.from({ length: 498 }, (_, i) => ({ id: 'fill-' + i, title: 'Filler', kind: 'page', url: '/filler/' + i }));
+  reg._resetForTests([input, source, ...filler]);
+  try {
+    const result = reg.register({ title: 'Final', url: '/artifacts/new-final/index.html', permanent: true, relatedArtifactIds: ['new-input'] });
+    assert.equal(result.created, true);
+    assert.equal(reg.list().length, 500);
+    assert.deepEqual(reg.listPermanentArtifactIds().sort(), ['new-final', 'new-input', 'new-source']);
+    assert.equal(reg.list().find(row => row.id === input.id).retained, true);
+    assert.equal(reg.list().find(row => row.id === source.id).retained, true);
+    assert.equal(reg.list().some(row => row.id === 'fill-0'), false, 'eviction selects an unrelated row');
+  } finally { reset(); }
+});

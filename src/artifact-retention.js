@@ -19,7 +19,7 @@ function artifactIdFromUrl(url) {
 function references(text, relativeFile) {
   const ids = new Set();
   const decoded = text.replace(/\\\//g, '/');
-  const links = /(?:^|[\s"'`(<\[={])((?:\/artifacts\/|\.\.\/)[^\s"'`<>\])}]+)/g;
+  const links = /(?:^|[\s"'`(<\[={])((?:\/artifacts\/|\.{1,2}\/)[^\s"'`<>\])}]+)/g;
   for (const match of decoded.matchAll(links)) {
     try {
       const url = new URL(match[1], 'https://artifact.invalid/artifacts/' + relativeFile);
