@@ -142,7 +142,11 @@ function mountCodexQuotaRoutes(app, deps = {}) {
         authFile = deps.resolveAccountAuthFile(accountId);
         if (!authFile) return res.status(404).json({ status: 'no_auth', error: '账号不存在' });
       }
-      const result = await fetchCodexUsage(undefined, authFile ? { authFile } : {});
+      const result = await fetchCodexUsage(undefined, {
+        ...(authFile ? { authFile } : {}),
+        // Tests inject a stub; production keeps the proxy-aware officialFetch.
+        ...(typeof deps.fetch === 'function' ? { fetch: deps.fetch } : {}),
+      });
       const status = result?.status || 'unavailable';
       const httpStatus = status === 'ok' ? 200 : status === 'no_auth' ? 401 : 500;
       // The bar is rendered here, once, so the web and the app display the same

@@ -2,6 +2,15 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.7.0 — Air keeps one source of truth, and every request follows your proxy (2026-10-20)
+
+### Highlights
+
+- **Air has one producer and an incremental sync channel** — the `/api/air` snapshot used to be rebuilt per request from the task board, Git and ownership queries, and roughly seven of ten rounds still ended in a 304 after all that work. A single runtime now owns the data, publishes per-card deltas over a revisioned read index (`src/workspace/air-sync-runtime.js`, `src/workspace/air-read-index.js`, `src/workspace/air-card-cache.js`), and reconciles periodically as a safety net. Web and the App subscribe to the same event stream instead of polling the whole snapshot: the web gains `public/air-sync.js`, and the App's console, directories and task lists all read from a shared `AirSyncService`/`AirSyncStore`.
+- **Every outbound request goes through your proxy** — MultiCC now installs a process-wide proxy from the explicit environment first and the macOS system settings otherwise (`src/network/global-proxy.js`, over Node's own `http.setGlobalProxyFromEnv`), so provider calls, updates and downloads stop bypassing a proxy the user configured; loopback addresses and the system exceptions list stay direct, keeping local CLI traffic on the machine.
+- **Model requests get a real budget, and stalls recover instead of hanging** — the timeout only starts once an upstream inference request is admitted (never counting tool execution or queue waits), connection establishment and stream progress are watched separately via Node diagnostics channels, and a stalled or timed-out turn is recovered from the current attempt's evidence without being mislabelled as a user cancel (`src/chat/model-request-policy.js`, `src/providers/model-connect-watch.js`, `src/providers/model-stream-progress.js`, `src/chat/model-timeout-recovery.js`).
+- **A new `pi` CLI lane** — `src/cli-adapters/pi.js` drives pi through a bundled router extension, with thinking levels and the same completion/error contracts as the other lanes.
+
 ## v2.6.4 — Uncommitted files are readable from the phone, and H.264 taps land where you aim (2026-10-19)
 
 ### Highlights

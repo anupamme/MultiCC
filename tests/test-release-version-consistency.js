@@ -272,15 +272,21 @@ test('core runner covers every selected path and expands declared variants', () 
   // 的进程内服务与 .example.com 字符串。318 + 10 = 328，deterministic 279，
   // isolated 26，flutter 23，commands 308。
   // 补齐已在 HEAD 的逐卡缓存契约，以及本次首页摘要/游标契约：两个 deterministic core。
-  assert.equal(core.length, 330, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 330);
+  // 2026-10-20 v2.7.0 发版复核：+1 core flutter。
+  //   - app/test/air_sync_service_test.dart：Air 增量同步机制（真实 HttpServer + WS、
+  //     分页/重连/epoch 切换），属于主链路回归，留在 core。
+  //   - 同批 app/test/air_indexed_home_test.dart 是 widget 展示测试，按规则归 flow，
+  //     不计入 core。
+  // 330 + 1 = 331，flutter 23 + 1 = 24。
+  assert.equal(core.length, 331, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 331);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
   assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 281);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 26);
-  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 23,
+  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 24,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
 
   const expectedPaths = core.flatMap(entry => Array.from(

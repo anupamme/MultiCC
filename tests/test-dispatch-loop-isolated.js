@@ -70,9 +70,20 @@ async function main() {
       const createTask = ${NEW_TASK};
       let slave = null;
       if (!createTask) {
-        const fleetRes = await fetch(base + '/api/sessions', { headers });
-        const fleet = await fleetRes.json();
-        slave = fleet.find(s => s.dirId === me.dirId && String(s.label||'').includes('slave'));
+        // Task-first: every chat session is adopted onto the task board, and an
+        // adopted session becomes a task-bound hidden room (hidden from the
+        // fleet list). A real master discovers an existing worker the same way
+        // — through the board card that owns it — so look there, with a bounded
+        // wait for the adoption that the Air producer triggers.
+        for (let attempt = 0; attempt < 50 && !slave; attempt += 1) {
+          const snap = await fetch(base + '/api/air', { headers });
+          if (snap.ok) {
+            const board = await snap.json();
+            const card = (board.tasks || []).find(t => t.dirId === me.dirId && t.title === 'slave-session');
+            if (card && card.sessionId) slave = { id: card.sessionId };
+          }
+          if (!slave) await new Promise(resolve => setTimeout(resolve, 200));
+        }
         if (!slave) throw new Error('no slave found');
       }
       const mode = prompt.includes('FAIL_MODE') ? 'failed' : 'completed';
@@ -280,7 +291,9 @@ function sendWsMessage(port, sessionId, text) {
     const slaveEntry = await waitUntil(() => {
       if (!fs.existsSync(slaveLog)) return null;
       const lines = fs.readFileSync(slaveLog, 'utf8').trim().split(/\n/).filter(Boolean).map(JSON.parse);
-      return lines.length > 0 ? lines[0] : null;
+      // Version probes (`fake-cli.js --version`) are logged too; the dispatched
+      // turn is the first record carrying a real prompt.
+      return lines.find(entry => entry.prompt && entry.prompt !== '--version') || null;
     }, 'D1: slave did not receive the dispatched message');
 
     if (NEW_TASK) {
