@@ -38,7 +38,7 @@
   // 手机宽度一行放不下五格，「今日完成」排第二，不用横滑就能点到。
   // 「待办」紧跟「最近」：等输入 / 出错 / 需要交互 / 手动标记的都在这一格（air-task-todo.js）。
   const MOBILE_FILTERS = [['recent', 'airRecentTasks'], ['todo', 'airTodoFilter'], ['today', 'airAdminTileToday'],
-    ['running', 'airAdminTileRunning'], ['waiting', 'airAdminTileWaiting'], ['error', 'airAdminTileError']];
+    ['running', 'airAdminTileRunning'], ['error', 'airAdminTileError']];
   function filterRows(rows, view) {
     if (view === 'recent') return rows.filter(task => task.status !== 'archived');
     if (view === 'all') return rows;

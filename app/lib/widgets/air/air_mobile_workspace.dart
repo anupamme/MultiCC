@@ -61,7 +61,6 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
     (AirDirectoryTaskFilter.todo, 'airTodoFilter'),
     (AirDirectoryTaskFilter.today, 'airAdminTileToday'),
     (AirDirectoryTaskFilter.running, 'airAdminTileRunning'),
-    (AirDirectoryTaskFilter.waiting, 'airAdminTileWaiting'),
     (AirDirectoryTaskFilter.error, 'airAdminTileError'),
   ];
 

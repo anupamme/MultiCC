@@ -5,6 +5,7 @@ const core = require('../task-board/core');
 const { isAbnormalLetter, isGoalState } = require('../classify/vocab');
 const { createAirPinRuntime } = require('./pins');
 const { createAirTodoRuntime } = require('./todos');
+const { createAirTodoIgnoreRuntime } = require('./todo-ignores');
 const { pendingAttention } = require('../task-board/attention');
 
 // Air 是轮询页面：每 15 秒要把「任务板快照」（线上约 580KB、1069 张卡）和
@@ -150,9 +151,32 @@ function mountAirRoutes(app, deps) {
         file: deps.todosFile || (deps.pinsFile ? require('node:path').join(require('node:path').dirname(deps.pinsFile), 'air-todos.json') : undefined),
         listTaskIds: () => boardTasks().map(task => task.id),
         logger: deps.logger || console,
+        // 标记为待办与「手动忽略」互斥：加进待办就清掉它的忽略。
+        onAdded: taskId => todoIgnores().clear(taskId),
       });
     }
     return todoRuntime;
+  };
+  // 手动忽略（./todo-ignores.js）：读时按「任务还在、且忽略之后没有新 updatedAt」
+  // 剪枝，所以 listTasks 给的是完整任务（带 updatedAt），不是 id 数组。
+  let todoIgnoreRuntime = null;
+  const todoIgnores = () => {
+    if (!todoIgnoreRuntime) {
+      const nodePath = require('node:path');
+      const sibling = file => file ? nodePath.join(nodePath.dirname(file), 'air-todo-ignores.json') : undefined;
+      todoIgnoreRuntime = createAirTodoIgnoreRuntime({
+        file: deps.todoIgnoresFile || sibling(deps.todosFile) || sibling(deps.pinsFile),
+        listTasks: () => boardTasks(),
+        readTodos: () => todos().read(),
+        // 忽略一个任务时把它从手动待办里移除（两者互斥）。
+        onIgnored: taskId => {
+          const current = todos().read();
+          if (current.includes(taskId)) todos().replace(current.filter(id => id !== taskId));
+        },
+        logger: deps.logger || console,
+      });
+    }
+    return todoIgnoreRuntime;
   };
   /** 独立任务列表与 pin 共用同一可见集合；会话内尚未隔离的任务只保留消息归属。 */
   function boardTasks() {
@@ -354,7 +378,7 @@ function mountAirRoutes(app, deps) {
       // 生命周期拆解（见 lifecycleByDirectory）：本地/休眠/计划各几个、此刻几个在用。
       worktreeLifecycle: lifecycle.get(d.id) || { resident: 0, retained: 0, hibernated: 0, planned: 0, leased: 0, onDisk: 0, total: 0 },
     })),
-      tasks, taskPins: pins().read(), taskTodos: todos().read(), budgets: admission.budgets, clis: deps.clis, migration, lastRuntime,
+      tasks, taskPins: pins().read(), taskTodos: todos().read(), taskTodoIgnored: todoIgnores().read(), budgets: admission.budgets, clis: deps.clis, migration, lastRuntime,
       // 自动回收的策略（闲置阈值/间隔）由运行时给出，面板据此把「多久没用会被收走」
       // 说准，而不是在客户端再猜一个默认值。
       worktreePolicy: hibernationPolicy,
@@ -505,5 +529,6 @@ function mountAirRoutes(app, deps) {
   app.post('/api/air/tasks/:id/roles', route(req => ({ ok: true, roleBindings: deps.shell.updateRoleBindings(req.params.id, req.body) })));
   pins().mountRoutes(app);
   todos().mountRoutes(app);
+  todoIgnores().mountRoutes(app);
 }
 module.exports = { mountAirRoutes };

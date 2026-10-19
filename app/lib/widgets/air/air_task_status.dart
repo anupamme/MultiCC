@@ -41,7 +41,8 @@ enum AirDirectoryTaskFilter {
   achieved('完成目标'),
   interact('需要交互'),
   all('全部记录'),
-  archived('已归档');
+  archived('已归档'),
+  ignored('已忽略');
 
   const AirDirectoryTaskFilter(this.label);
   final String label;
@@ -62,15 +63,20 @@ enum AirDirectoryTaskFilter {
           task.goalState == 'interact',
     all => true,
     archived => task.status == 'archived',
+    ignored => task.todoIgnored,
   };
 }
 
 /// 「待办」：需要我接手的四类任务放在一起 —— 等待用户输入（waiting）、出错
 /// （error）、执行成功但需要交互（succeeded + goalState=interact），以及手动标记
-/// 为待办的（[AirTask.manualTodo]）。归档的不算；手动标记的任务即便已经完成也
-/// 留着，直到用户自己取消。Web 对应 `public/air-task-todo.js` 的 `isTodo`。
+/// 为待办的（[AirTask.manualTodo]）。归档的和用户手动忽略的都不算；手动标记的
+/// 任务即便已经完成也留着，直到用户自己取消。Web 对应
+/// `public/air-task-todo.js` 的 `isTodo`。
 bool airTaskTodo(AirTask task) {
   if (task.status == 'archived') return false;
+  // 用户说了「这条先别提醒我」：忽略压过运行态和手动标记，直到服务端因为新
+  // 动静（或用户取消忽略）把它从忽略清单里拿掉。统计、徽标都走这一条判定。
+  if (task.todoIgnored) return false;
   if (task.manualTodo) return true;
   final status = airTaskStatus(task);
   return status == CanonicalStatus.waiting ||
@@ -228,17 +234,37 @@ int airTaskUrgency(AirTask task) {
 
 /// 「在等我」的分界线：0 等我回答 · 1 出错要我去处理 · 2 卡在资源 —— 这三类都得
 /// 我动手。3（正在跑 / 在等后台任务）不列进来：跑着的东西不是待办，它不需要我操作。
-/// 控制台那张「等待处理」统计卡走的是同一条线，两处口径必须一致。
-bool airNeedsAttention(AirTask task) => airTaskUrgency(task) < 3;
+bool airNeedsAttention(AirTask task) {
+  // 手动忽略的同样不进「在等我」：这是用户对提醒的直接否决，统计和徽标都要
+  // 跟着闭嘴，否则忽略完数字还在原地跳。
+  if (task.todoIgnored) return false;
+  return airTaskUrgency(task) < 3;
+}
 
-/// 跨所有目录、需要我动手的任务。这条信号原来由侧栏的「跨目录活动」承担，现在
-/// 是控制台的第一个分区，也是侧栏入口上的那个数字 —— 一处定义，两处显示。
+/// 跨所有目录、需要我动手的任务。移动工作区那张「谁在等我」卡片用它。
 ///
 /// 顺序是纯时间倒序（最近动过的最靠前），和 Web 的 `urgentTasks` 一致：刚有动静
-/// 的任务才是眼下要接手的那条。
+/// 的任务才是眼下要接手的那条。控制台的「待办」分区与侧栏徽标另走 [airTodoTasks]
+/// （跨了手动待办与忽略，顺序是「等我最久的在前」）。
 List<AirTask> airUrgentTasks(Iterable<AirTask> tasks) =>
     tasks.where(airNeedsAttention).toList()
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+/// 控制台「待办」分区的完整清单，也是侧栏徽标和统计格的唯一来源。Web 的
+/// `todoTasks(data)` 与它是同一份口径。
+///
+/// 顺序是**最早的消息时间在前**（`lastMessageAt`，没有消息时间才退回
+/// `updatedAt`）：待办不是「最近发生了什么」，而是「哪件事等我最久」——先处理
+/// 老问题才不会再压出新的。同一条时间戳再按 id 兜底，两次渲染的顺序因此稳定。
+List<AirTask> airTodoTasks(Iterable<AirTask> tasks) {
+  int todoAt(AirTask task) =>
+      task.lastMessageAt > 0 ? task.lastMessageAt : task.updatedAt;
+  return tasks.where(airTaskTodo).toList()
+    ..sort((a, b) {
+      final byTime = todoAt(a).compareTo(todoAt(b));
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    });
+}
 
 /// 任务行的第二层信息：状态徽标已经说了「在不在跑」，这里补记录类型、阶段和
 /// 资源去向（同 Web 的 `taskDetail`）。

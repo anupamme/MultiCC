@@ -32,6 +32,7 @@ MockClient _client(
   Map<String, dynamic>? cliAvailability,
   bool installSpecsFail = false,
   List<String>? todos,
+  List<String>? ignored,
   List<String>? dirOrder,
   bool dirOrderFails = false,
   List<String>? uiLayoutBodies,
@@ -126,6 +127,29 @@ MockClient _client(
       headers: headers,
     );
   }
+  // 手动忽略：回执带「这次是忽略还是取消」+ 两份互斥清单（同服务端契约）。
+  if (path == '/api/air/todos/ignore') {
+    final id = '${(jsonDecode(request.body) as Map)['taskId']}';
+    final ignoredList = ignored ?? <String>[];
+    final todoList = todos ?? <String>[];
+    final nowIgnored = !ignoredList.contains(id);
+    if (nowIgnored) {
+      ignoredList.add(id);
+      todoList.remove(id);
+    } else {
+      ignoredList.remove(id);
+    }
+    return http.Response(
+      jsonEncode({
+        'ok': true,
+        'ignored': nowIgnored,
+        'taskIds': ignoredList,
+        'todos': todoList,
+      }),
+      200,
+      headers: headers,
+    );
+  }
   // 远端工作区是快照自带的一趟，跟目录一起铺进列表。
   if (path == '/api/external-fleets') {
     return http.Response(
@@ -163,6 +187,7 @@ MockClient _client(
       ],
       'tasks': tasks ?? _baseTasks,
       'taskTodos': todos ?? const <String>[],
+      'taskTodoIgnored': ignored ?? const <String>[],
     }),
     200,
     headers: headers,
@@ -216,7 +241,7 @@ const List<Map<String, dynamic>> _baseTasks = [
 /// 五格数字各要吃一份不同的料：一条在跑（r1，落在 d1）、一条空闲（t3，落在
 /// d2）、一条今天跑完（n1）、一条很久以前就跑完的（n2，不该算进「今日完成」），
 /// 外加基础夹具那四条。算出来是：
-///   进行中 4（t1 t2 t3 r1）· 等我回复 1（t1）· 异常 1（t2）· 今日完成 1（n1）·
+///   进行中 4（t1 t2 t3 r1）· 待办 2（t1 t2）· 异常 1（t2）· 今日完成 1（n1）·
 ///   全部 4 / 共 7 条记录。
 List<Map<String, dynamic>> _fiveTileTasks() => [
   ..._baseTasks,
@@ -401,8 +426,9 @@ void main() {
     // 统计与工具收进了「更多」，展开后仍照旧工作。
     expect(_tileValue('running', '1'), findsOneWidget);
     expect(find.text('1 个目录正在跑'), findsOneWidget);
-    // 「等我回复」和「异常」是两格：一个有人等我回答，一个是跑出错了。
-    expect(_tileValue('waiting', '1'), findsOneWidget);
+    // 「待办」与「异常」是两格：待办是全部要人接手的（t1 等回答、t2 出错），异常
+    // 只是其中出错的那一部分。
+    expect(_tileValue('todo', '2'), findsOneWidget);
     expect(find.text('等待回答或卡在资源上'), findsOneWidget);
     expect(_tileValue('error', '1'), findsOneWidget);
     expect(find.text('执行出错，需要处理或重试'), findsOneWidget);
@@ -445,23 +471,23 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    expect(_tileBorder(tester, 'waiting'), AppColors.line);
+    expect(_tileBorder(tester, 'todo'), AppColors.line);
 
-    // 「等我回复」那一格：清单就是上面那个数字用的同一份数组，所以数字和清单不会
+    // 「待办」那一格：清单就是上面那个数字用的同一份数组，所以数字和清单不会
     // 分叉；这一格也没有搜索条和删除键 —— 那两样只属于「全部」。
-    await _openTile(tester, 'waiting');
-    expect(_tileBorder(tester, 'waiting'), AppColors.accent);
+    await _openTile(tester, 'todo');
+    expect(_tileBorder(tester, 'todo'), AppColors.accent);
     expect(find.text('ACROSS ALL WORKSPACES'), findsOneWidget);
     expect(_row('t1'), findsOneWidget, reason: 't1 在等我回答');
-    expect(_row('t2'), findsNothing, reason: 't2 是出错，归「异常」那一格');
+    expect(_row('t2'), findsOneWidget, reason: 't2 出错，也是待办');
     expect(find.byKey(const ValueKey('air-console-search')), findsNothing);
     expect(find.byKey(const ValueKey('air-console-delete-t1')), findsNothing);
-    expect(find.text('1 条'), findsOneWidget);
+    expect(find.text('2 条'), findsOneWidget);
 
     // 再点同一格收起。
-    await _openTile(tester, 'waiting');
+    await _openTile(tester, 'todo');
     expect(find.byKey(const ValueKey('air-console-collapse')), findsNothing);
-    expect(_tileBorder(tester, 'waiting'), AppColors.line);
+    expect(_tileBorder(tester, 'todo'), AppColors.line);
 
     // 换一格只换内容，位置还在读数带正下方。
     await _openTile(tester, 'error');
@@ -486,7 +512,7 @@ void main() {
     expect(find.byKey(const ValueKey('air-console-collapse')), findsNothing);
 
     // 点一行交给宿主开那条任务。
-    await _openTile(tester, 'waiting');
+    await _openTile(tester, 'todo');
     await tester.tap(_row('t1'));
     await tester.pumpAndSettle();
     expect(opened, ['t1']);
@@ -526,7 +552,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('任务流：需要你处理 / 正在运行 / 最近使用，各自按更新时间倒序且不重复', (tester) async {
+  testWidgets('任务流：待办 / 正在运行 / 最近使用，待办最老的在前且不重复', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final opened = <String>[];
@@ -547,7 +573,7 @@ void main() {
 
     // 分区顺序：先要动手的，再在跑的，最后是其余的最近使用。
     expect(
-      y(find.text('需要你处理')),
+      y(find.text('待办')),
       lessThan(y(find.text('正在运行'))),
       reason: '要我动手的排在正在运行之前',
     );
@@ -557,12 +583,17 @@ void main() {
       reason: '正在运行排在最近使用之前',
     );
 
-    // 待办按 updatedAt 倒序：t2（出错）比 t1（等回答）新。
+    // 待办按 updatedAt 升序：t1（等回答）比 t2（出错）老，先处理老问题。
     expect(streamRow('attention', 't2'), findsOneWidget);
     expect(streamRow('attention', 't1'), findsOneWidget);
     expect(
-      y(streamRow('attention', 't2')),
-      lessThan(y(streamRow('attention', 't1'))),
+      y(streamRow('attention', 't1')),
+      lessThan(y(streamRow('attention', 't2'))),
+    );
+    // 「等了多久」用相对时间，不再印绝对钟点。
+    expect(
+      find.byKey(const ValueKey('air-console-stream-age-t1')),
+      findsOneWidget,
     );
 
     // 一条任务只落一个分区。
@@ -626,6 +657,67 @@ void main() {
     expect(find.text('已取消待办「整理文档」'), findsOneWidget);
     expect(flag, findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('待办行尾可以忽略：移出待办与统计；「已忽略」档里能找回来取消忽略', (tester) async {
+    _tallCanvas(tester);
+    final settings = await _settings();
+    final requests = <String>[];
+    final todos = <String>[];
+    final ignored = <String>[];
+    final client = _client(requests, todos: todos, ignored: ignored);
+
+    await tester.pumpWidget(_console(settings: settings, client: client));
+    await tester.pumpAndSettle();
+
+    Finder streamRow(String id) =>
+        find.byKey(ValueKey('air-console-stream-attention-$id'));
+    expect(streamRow('t1'), findsOneWidget);
+    expect(streamRow('t2'), findsOneWidget);
+
+    // 出错的 t2 是待办；行尾那颗眼睛按下后立刻从待办消失（乐观更新）。
+    await tester.tap(
+      find.byKey(const ValueKey('air-console-stream-ignore-t2')),
+    );
+    await tester.pumpAndSettle();
+    expect(requests, contains('/api/air/todos/ignore'));
+    expect(ignored, ['t2']);
+    expect(streamRow('t2'), findsNothing);
+    expect(streamRow('t1'), findsOneWidget);
+    expect(find.text('已忽略，有新动静会再提醒'), findsOneWidget);
+
+    // 忽略只把任务移出「待办」；「异常」是独立的一格，故障还在，计数不能跟着
+    // 消失 —— 否则按一下眼睛，一条报错就从统计里被藏起来了。
+    await _expandMore(tester);
+    expect(_tileValue('error', '1'), findsOneWidget);
+    expect(_tileValue('todo', '1'), findsOneWidget);
+
+    // 被忽略的异常仍在异常清单里，而且那一行的按钮已经变成「取消忽略」。
+    await _openTile(tester, 'error');
+    expect(_row('t2'), findsOneWidget, reason: '忽略不该让报错从异常清单消失');
+    expect(_row('t1'), findsNothing);
+    final inlineUnignore = find.byKey(
+      const ValueKey('air-console-ignore-t2'),
+    );
+    expect(inlineUnignore, findsOneWidget);
+    expect(find.byTooltip('取消忽略'), findsOneWidget);
+
+    // 「已忽略」那一档把它找回来，点同一颗按钮取消忽略。
+    await _openTile(tester, 'all');
+    await _pick(tester, 'air-console-status', '已忽略');
+    expect(_row('t2'), findsOneWidget);
+    expect(_row('t1'), findsNothing);
+    final unignore = find.byKey(const ValueKey('air-console-ignore-t2'));
+    await tester.ensureVisible(unignore);
+    await tester.pumpAndSettle();
+    await tester.tap(unignore);
+    await tester.pumpAndSettle();
+    expect(ignored, isEmpty);
+    expect(find.text('已取消忽略'), findsOneWidget);
+    expect(_row('t2'), findsNothing, reason: '取消忽略后它不再属于「已忽略」档');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    client.close();
   });
 
   testWidgets('全部任务的筛选：默认只看没结束的，搜索、状态、目录各收窄一层', (tester) async {
@@ -1015,15 +1107,16 @@ void main() {
     expect(find.text('定时任务 0/0 条启用'), findsNothing);
     // 主体照常：任务和目录才是这一页的主体。
     await _expandMore(tester);
-    expect(_tileValue('waiting', '1'), findsOneWidget);
-    await _openTile(tester, 'waiting');
+    expect(_tileValue('todo', '2'), findsOneWidget);
+    await _openTile(tester, 'todo');
     expect(_row('t1'), findsOneWidget);
+    expect(_row('t2'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     client.close();
   });
 
-  testWidgets('「等我回复」那一格的整页出口只在有东西等我时出现，且不属于别的格', (tester) async {
+  testWidgets('「待办」那一格的整页出口只在有东西等我时出现，且不属于别的格', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final client = _client(<String>[]);
@@ -1032,7 +1125,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // 基础夹具有两条要我动手（t1 等我回答、t2 出错），出口带上同一个总数。
-    await _openTile(tester, 'waiting');
+    await _openTile(tester, 'todo');
     expect(find.text('查看全部 2 条 ›'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
@@ -1043,7 +1136,7 @@ void main() {
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
       findsNothing,
-      reason: '整页出口只挂在「等我回复」那一格后面',
+      reason: '整页出口只挂在「待办」那一格后面',
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -1072,11 +1165,11 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    expect(_tileValue('waiting', '0'), findsOneWidget);
+    expect(_tileValue('todo', '0'), findsOneWidget);
     expect(find.text('当前没有要处理的事'), findsOneWidget);
     expect(find.text('现在没有在跑的任务'), findsOneWidget);
 
-    await _openTile(tester, 'waiting');
+    await _openTile(tester, 'todo');
     expect(find.text('没有正在等我的任务。'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('air-console-attention-all')),
@@ -1090,7 +1183,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('整页「谁在等我」是同一份清单：纯时间倒序，点一条先收它自己再交给宿主', (tester) async {
+  testWidgets('整页「谁在等我」是同一份待办清单：最早的消息在前，点一条先收它自己再交给宿主', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final opened = <String>[];
@@ -1137,31 +1230,27 @@ void main() {
     await tester.pumpAndSettle();
     await _expandMore(tester);
 
-    // 两格加起来仍是 urgent 那个总数（7）；「等我回复」这一格只放等回答的三条，跑出
-    // 错的四条归「异常」那一格。
-    expect(_tileValue('waiting', '3'), findsOneWidget);
+    // 「待办」是等回答与出错两份加起来的那个总数（7）；「异常」只是其中跑出错的四条。
+    expect(_tileValue('todo', '7'), findsOneWidget);
     expect(_tileValue('error', '4'), findsOneWidget);
     expect(_tileValue('running', '2'), findsOneWidget);
 
-    await _openTile(tester, 'waiting');
-    // 出口带着整份清单的总数（不只是这一格里的三条）。
+    await _openTile(tester, 'todo');
+    // 出口带着整份清单的总数。
     expect(find.text('查看全部 7 条 ›'), findsOneWidget);
-    for (final id in const ['w1', 'w2', 'w3']) {
-      expect(_row(id), findsOneWidget, reason: '$id 在等我回答');
-    }
-    for (final id in const ['e1', 'e2', 'e3', 'e4']) {
-      expect(_row(id), findsNothing, reason: '$id 是出错，归「异常」那一格');
+    for (final id in const ['w1', 'w2', 'e1', 'e2', 'e3', 'e4', 'w3']) {
+      expect(_row(id), findsOneWidget, reason: '$id 需要我接手');
     }
     // 执行中的、空闲的从不进这份清单 —— 哪怕它们是最新的两条。
     for (final id in const ['r1', 'r2', 'i1']) {
-      expect(_row(id), findsNothing, reason: '$id 不需要我动手，不属于「谁在等我」');
+      expect(_row(id), findsNothing, reason: '$id 不需要我动手，不属于「待办」');
     }
 
     // 整页：同一份清单铺开。
     await tester.tap(find.byKey(const ValueKey('air-console-attention-all')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-attention')), findsOneWidget);
-    expect(find.text('7 条 · 按最近更新排序，点击直达'), findsOneWidget);
+    expect(find.text('7 条 · 按最早消息排序，点击直达'), findsOneWidget);
     for (final id in const ['w1', 'w2', 'e1', 'e2', 'e3', 'e4', 'w3']) {
       expect(find.byKey(ValueKey('air-attention-task-$id')), findsOneWidget);
     }
@@ -1172,16 +1261,16 @@ void main() {
         reason: '整页是同一份清单，执行中的不该在这里冒出来',
       );
     }
-    // 顺序是纯时间的证据：e2(500) 是一条出错的任务，w3(400) 比它旧但在等我回答
-    // —— 按紧急度分层会把 w3 提到前面，纯时间不会。
+    // 顺序是纯时间的证据：e2(500) 比 w3(400) 新，但整份待办按「最早的消息在前」，
+    // 所以更老的 w3 排在前面 —— 按紧急度分层则会反过来。
     expect(
-      tester.getTopLeft(find.byKey(const ValueKey('air-attention-task-e2'))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey('air-attention-task-w3'))).dy,
       lessThan(
         tester
-            .getTopLeft(find.byKey(const ValueKey('air-attention-task-w3')))
+            .getTopLeft(find.byKey(const ValueKey('air-attention-task-e2')))
             .dy,
       ),
-      reason: '最近更新的排在前面，不按紧急度分层',
+      reason: '最早的消息在前，不按紧急度分层',
     );
     expect(opened, isEmpty, reason: '只是打开清单，不该顺手开一条任务');
 
@@ -1353,7 +1442,7 @@ void main() {
     await _openTile(tester, 'all');
 
     expect(tester.takeException(), isNull);
-    for (final id in const ['running', 'waiting', 'error', 'today', 'all']) {
+    for (final id in const ['running', 'todo', 'error', 'today', 'all']) {
       expect(_tile(id), findsOneWidget);
     }
     expect(find.byKey(const ValueKey('air-console-scope')), findsOneWidget);

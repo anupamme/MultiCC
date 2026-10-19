@@ -400,8 +400,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +7 键（airGitCommit*/airGitCollapse/airGitExpand）：目录 Git 面板一键提交与收缩，实测 9286/587404。
     // +15 键（voiceGuide*/airVoiceSetup*）：麦克风「语音还没准备好」引导卡与语音设置顶部提示，
     //   同时把上一格 airGit* 补进源 json（此前只在生成物里，重新生成会丢），实测 9316/590989。
-    maxLines: 9316,
-    maxBytes: 590989,
+    // +6 键（airTodoSectionTitle/Ignore/Unignore/IgnoredFilter/IgnoredDone/UnignoredDone）：首页「待办」
+    //   区块与手动忽略开关，实测 9332/591747。
+    maxLines: 9332,
+    maxBytes: 591747,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

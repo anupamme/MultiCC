@@ -421,6 +421,7 @@ class AirTask {
     this.resource = const {},
     this.worktreeChanges,
     this.manualTodo = false,
+    this.todoIgnored = false,
   });
 
   final String id;
@@ -464,9 +465,15 @@ class AirTask {
   /// [AirDirectoryTaskFilter.matches] 只看任务本身就能判「待办」。
   final bool manualTodo;
 
+  /// 用户手动「忽略」了这条任务。清单住在服务端（快照的 `taskTodoIgnored`），
+  /// 由 [AirSnapshot.fromJson] 回填到每一行上；任务有新动静后服务端会把它从
+  /// 清单里拿掉，客户端不自己失效。
+  final bool todoIgnored;
+
   static AirTask fromJson(
     Map<String, dynamic> json, {
     bool manualTodo = false,
+    bool todoIgnored = false,
   }) => AirTask(
     id: '${json['id']}',
     dirId: '${json['dirId']}',
@@ -490,6 +497,29 @@ class AirTask {
       (json['worktreeChanges'] as Map?)?.cast<String, dynamic>(),
     ),
     manualTodo: manualTodo,
+    todoIgnored: todoIgnored,
+  );
+
+  /// 乐观更新用：只改用户手动那两格（待办 / 忽略），其余字段原样带过。
+  AirTask copyWith({bool? manualTodo, bool? todoIgnored}) => AirTask(
+    id: id,
+    dirId: dirId,
+    title: title,
+    status: status,
+    recordType: recordType,
+    updatedAt: updatedAt,
+    lastMessageAt: lastMessageAt,
+    readOnly: readOnly,
+    workflowStage: workflowStage,
+    sessionId: sessionId,
+    sourceSessionId: sourceSessionId,
+    providerName: providerName,
+    runState: runState,
+    goalState: goalState,
+    resource: resource,
+    worktreeChanges: worktreeChanges,
+    manualTodo: manualTodo ?? this.manualTodo,
+    todoIgnored: todoIgnored ?? this.todoIgnored,
   );
 
   /// 「完成」在 Air 里有两个词：工作流阶段走 done，归档走 archived。
@@ -507,6 +537,7 @@ class AirSnapshot {
     required this.sessions,
     this.taskPins = const [],
     this.taskTodos = const [],
+    this.taskTodoIgnored = const [],
     this.externalFleets = const [],
     this.worktreePolicy = const AirWorktreePolicy(),
   });
@@ -526,6 +557,10 @@ class AirSnapshot {
   /// 手动标记为待办的任务 id（`air-todos.json`），Web 与各台 App 同一份。
   final List<String> taskTodos;
 
+  /// 用户手动忽略的任务 id（服务端过滤后仍是「有效」的忽略）。任务有新动静时
+  /// 服务端会把它移出这一格，客户端只读。
+  final List<String> taskTodoIgnored;
+
   /// 导入进来的远端工作区。它们同时也以 [AirDirectory] 的样子出现在
   /// [directories] 里 —— 这里额外留一份原始记录，好知道「别名、分享链接、
   /// 能不能操作」这些目录记录放不下的字段。
@@ -543,6 +578,11 @@ class AirSnapshot {
         .map((e) => '$e')
         .toList();
     final todoIds = todos.toSet();
+    // 旧服务没有这一格：缺省空清单，等价于「没有任务被忽略」。
+    final ignored = ((json['taskTodoIgnored'] as List?) ?? const [])
+        .map((e) => '$e')
+        .toList();
+    final ignoredIds = ignored.toSet();
     return AirSnapshot(
     directories: [
       ...((json['directories'] as List?) ?? []).map(
@@ -552,7 +592,12 @@ class AirSnapshot {
     ],
     tasks: ((json['tasks'] as List?) ?? []).map((e) {
       final row = (e as Map).cast<String, dynamic>();
-      return AirTask.fromJson(row, manualTodo: todoIds.contains('${row['id']}'));
+      final id = '${row['id']}';
+      return AirTask.fromJson(
+        row,
+        manualTodo: todoIds.contains(id),
+        todoIgnored: ignoredIds.contains(id),
+      );
     }).toList(),
     clis: ((json['clis'] as List?) ?? const []).map((e) => '$e').toList(),
     sessions: ((json['sessions'] as List?) ?? [])
@@ -562,6 +607,7 @@ class AirSnapshot {
         .map((e) => '$e')
         .toList(),
     taskTodos: todos,
+    taskTodoIgnored: ignored,
     externalFleets: externalFleets,
     worktreePolicy: AirWorktreePolicy.fromJson(
       (json['worktreePolicy'] as Map?)?.cast<String, dynamic>(),
@@ -574,6 +620,39 @@ class AirSnapshot {
 
   /// 这个任务被手动标记为待办了吗。
   bool isTodo(String? taskId) => taskId != null && taskTodos.contains(taskId);
+
+  /// 这个任务被手动忽略了吗（清单已由服务端去掉失效的那些）。
+  bool isTodoIgnored(String? taskId) =>
+      taskId != null && taskTodoIgnored.contains(taskId);
+
+  /// 乐观更新用：拿服务端 / 本地先算好的两份清单重铺每一行。两份清单互斥
+  /// （忽略一条手动待办会同时把它从 `taskTodos` 里拿掉），这里不替服务端推断。
+  AirSnapshot withTodoLists({
+    List<String>? todos,
+    List<String>? ignored,
+  }) {
+    final nextTodos = todos ?? taskTodos;
+    final nextIgnored = ignored ?? taskTodoIgnored;
+    final todoIds = nextTodos.toSet();
+    final ignoredIds = nextIgnored.toSet();
+    return AirSnapshot(
+      directories: directories,
+      tasks: [
+        for (final task in tasks)
+          task.copyWith(
+            manualTodo: todoIds.contains(task.id),
+            todoIgnored: ignoredIds.contains(task.id),
+          ),
+      ],
+      clis: clis,
+      sessions: sessions,
+      taskPins: taskPins,
+      taskTodos: nextTodos,
+      taskTodoIgnored: nextIgnored,
+      externalFleets: externalFleets,
+      worktreePolicy: worktreePolicy,
+    );
+  }
 
   AirDirectory? directoryOf(String? id) {
     for (final directory in directories) {
@@ -720,6 +799,20 @@ class AirRoleBindings {
 
 /// `/api/air` 的客户端。Air 的任务创建是三步事务（建任务 → 绑角色 → 发第一条
 /// 消息），所以三步都收在这里，界面不需要知道中间的 clientMsgId 约定。
+/// `/api/air/todos/ignore` 的回执：这次是忽略还是取消，加上服务端算好的两份
+/// 清单（有效忽略 / 手动待办）。客户端按它重铺快照，不自己猜互斥关系。
+class AirTodoIgnoreResult {
+  const AirTodoIgnoreResult({
+    required this.ignored,
+    this.taskIds = const [],
+    this.todos = const [],
+  });
+
+  final bool ignored;
+  final List<String> taskIds;
+  final List<String> todos;
+}
+
 class AirService {
   AirService({required this.settings, http.Client? httpClient})
     : _http = httpClient ?? http.Client(),
@@ -1036,6 +1129,21 @@ class AirService {
   Future<List<String>> toggleTaskTodo(String taskId) async {
     final result = await _post('/api/air/todos/toggle', {'taskId': taskId});
     return ((result['taskIds'] as List?) ?? const []).map((e) => '$e').toList();
+  }
+
+  /// 忽略 / 取消忽略一条任务，返回服务端算好的三样：这次是忽略还是取消、
+  /// 有效的忽略清单、以及手动待办清单（忽略与手动待办互斥，服务端会同时移除）。
+  Future<AirTodoIgnoreResult> toggleTaskTodoIgnore(String taskId) async {
+    final result = await _post('/api/air/todos/ignore', {'taskId': taskId});
+    return AirTodoIgnoreResult(
+      ignored: result['ignored'] == true,
+      taskIds: ((result['taskIds'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList(),
+      todos: ((result['todos'] as List?) ?? const [])
+          .map((e) => '$e')
+          .toList(),
+    );
   }
 
   /// 建任务。第一条消息由 [sendFirstMessage] 单独发出，中途失败时任务已经存在

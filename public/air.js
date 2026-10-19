@@ -214,8 +214,8 @@
   const taskMessageAt = task => Number(task?.lastMessageAt || task?.updatedAt || 0);
   const taskVisitAt = task => Number(taskVisitedAt[task?.id] || 0);
   const taskSortAt = task => directoryTaskSort === 'visit' ? taskVisitAt(task) : taskMessageAt(task);
-  const compareDirectoryTasks = (a, b) => taskSortAt(b) - taskSortAt(a)
-    || taskMessageAt(b) - taskMessageAt(a)
+  const compareDirectoryTasks = (a, b) => (directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskSortAt(b) - taskSortAt(a))
+    || (directoryTaskFilter.status === 'todo' ? -1 : 1) * (taskMessageAt(b) - taskMessageAt(a))
     || String(a?.id || '').localeCompare(String(b?.id || ''));
   // 目录首页那份任务列表（`#directory-task-list`）的排序：用户 pin 住的那几条
   // 照 pin 顺序排最前，其余保持 [tasks] 原有的相对顺序。与侧栏
@@ -248,7 +248,7 @@
     return window.MultiCCTaskNotify.recentTasks({ tasks: data?.tasks || [], recentTaskIds,
       limit: RECENT_LIMIT, isUnseen: id => taskNotify?.isUnseen(id), statusOf: taskStatus });
   }
-  const urgentTasks = () => window.MultiCCAirAdmin?.urgentTasks?.(data) || [];
+  const todoTasks = () => window.MultiCCAirAdmin?.todoTasks?.(data) || [];
 
   // ── 状态与「在跑」 ──────────────────────────────────────────────────────
   // 判定只有一处：air-admin.js 把 public/status-presentation.js 包了一层给侧栏用。
@@ -553,12 +553,12 @@
   function renderDirectoryOverview() {
     const dir = data?.directories.find(directory => directory.id === directoryId);
     const tasks = (data?.tasks || []).filter(task => task.dirId === directoryId);
-    // 统计口径与 filterTasks 完全同源：taskStatus 是 status-presentation 的权威
-    // 判定（archived/done 生命周期优先），点击卡片 = 按该状态筛选，两者不可能再
-    // 出现「卡片 2 个、列表 29 个」的分叉。
+    // 统计口径与 filterTasks 完全同源：运行中/异常按 taskStatus（archived/done 生命
+    // 周期优先；异常含被手动忽略的），待办按 air-task-todo 的 isTodo。点击卡片 = 按该
+    // 档筛选，两者不可能再出现「卡片 2 个、列表 29 个」的分叉。
     const taskStatusOf = task => window.MultiCCAirAdmin?.taskStatus?.(task) || 'unknown';
     const running = tasks.filter(isRunningTask);
-    const waiting = tasks.filter(task => taskStatusOf(task) === 'waiting');
+    const todos = tasks.filter(task => window.MultiCCAirTaskTodo?.isTodo(task));
     const errored = tasks.filter(task => taskStatusOf(task) === 'error');
     // 与控制台共用同一份「今日完成」判定：本轮成功或旧生命周期 done，并且更新时间
     // 落在本地今天。判定导出自 air-admin，避免两处各算一次后在零点/旧记录上分叉。
@@ -585,7 +585,7 @@
     };
     $('directory-stats').replaceChildren(
       stat(t('airAdminTileRunning'), running.length, '', 'green', 'running'),
-      stat(t('airAdminTileWaiting'), waiting.length, '', 'amber', 'waiting'),
+      stat(t('airTodoFilter'), todos.length, '', 'amber', 'todo'),
       stat(t('airAdminTileError'), errored.length, '', 'red', 'error'),
       stat(t('airAdminTileToday'), finishedToday.length, t('airAdminTileTodayDetail'), 'blue', 'today'),
       stat(t('airAdminTileAll'), tasks.length, t('airDirArchiveWorktrees', {
@@ -660,7 +660,7 @@
       remove.dataset.action = 'delete';
       remove.setAttribute('aria-label', t('airDeleteTaskAria', { title: task.title || t('airUntitledTask') }));
       remove.onclick = event => { event.stopPropagation(); void deleteTaskById(task); };
-      row.append(button, ...[window.MultiCCAirTaskTodo?.rowButton(task)].filter(Boolean), remove);
+      row.append(button, ...(window.MultiCCAirTaskTodo?.rowButtons?.(task) || []).filter(Boolean), remove);
       return row;
     }));
     if (!rows.length) $('directory-task-list').append(node('p', t('airDirNoTasks'), 'directory-task-empty'));
@@ -1555,7 +1555,7 @@
     applyTaskTitleEditing(selectedTask || null);
     $('directory-memo').hidden = !dir || mode !== 'tasks' || !!taskId;
     for (const id of ['quick-merge', 'quick-auto-commit', 'quick-share', 'pin-task',
-      'details-toggle', 'chat-more']) $(id).hidden = !taskId;
+      'todo-task', 'ignore-task', 'details-toggle', 'chat-more']) $(id).hidden = !taskId;
     paintPinButton(); window.MultiCCAirTaskTodo?.paintHeader(taskId);
     $('task-state').disabled = !taskId;
     if (!taskId) { $('task-state').classList.remove('attention'); $('task-state').removeAttribute('title'); }
@@ -1879,9 +1879,9 @@
 
     // 原来挂在「跨目录活动」上的那条常驻信号，现在挂在控制台入口上：不进那一页
     // 也知道别的目录有事在等我。
-    const urgent = urgentTasks();
-    $('console-badge').hidden = !urgent.length;
-    $('console-badge').textContent = urgent.length ? String(urgent.length) : '';
+    const todo = todoTasks();
+    $('console-badge').hidden = !todo.length;
+    $('console-badge').textContent = todo.length ? String(todo.length) : '';
 
     renderSidebarTasks();
     renderPins();
@@ -2870,7 +2870,7 @@
   $('quick-auto-commit').onclick = () => clickFrameAction('auto-commit-btn');
   $('quick-share').onclick = () => clickFrameAction('share-btn');
   $('pin-task').onclick = () => { void togglePin(taskId); };
-  window.MultiCCAirTaskTodo?.mount({ api, notice, taskId: () => taskId, tasks: () => data?.tasks || [], rerender: () => render() });
+  window.MultiCCAirTaskTodo?.mount({ api, notice, taskId: () => taskId, tasks: () => data?.tasks || [], refresh, rerender: () => render() });
   $('details-toggle').onclick = () => { void toggleDetails(); };
   // The conversation frame's chat page owns the More menu (items, handlers,
   // popover layer). The task-header trigger just reaches into that same-origin

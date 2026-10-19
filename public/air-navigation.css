@@ -32,6 +32,9 @@
 .console-priority-card h3 { font-size: 16px; overflow-wrap: anywhere; }
 .console-priority-card p { color: var(--muted); font-size: 13px; }
 .console-priority-card button { align-self: flex-end; color: var(--accent-strong); margin-top: auto; }
+.console-priority-actions { align-self: flex-end; display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.console-priority-actions button { margin-top: 0; }
+.console-priority-ignore { color: var(--muted); }
 /* 桌面：紧凑卡片，列数按宽度自适应（每张最窄 240px），张数由 air-admin.js 的
    fitPriorityCards 按可用高度裁。手机端保持上面的单列样式 + air-mobile.css。 */
 @media (min-width: 761px) {
@@ -42,6 +45,7 @@
   .console-priority-card p { display: none; }
   .console-priority-card small { grid-column: 1; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .console-priority-card button { grid-column: 2; grid-row: 1 / span 3; align-self: center; margin-top: 0; padding: 5px 10px; font-size: 13px; white-space: nowrap; }
+.console-priority-actions { grid-column: 2; grid-row: 1 / span 3; align-self: center; flex-direction: column; align-items: flex-end; margin-top: 0; }
 }
 .console-priority-card.fit-out { display: none; }
 .console-running > h3 { padding: 14px 18px; font-size: 15px; }

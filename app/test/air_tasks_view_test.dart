@@ -486,7 +486,7 @@ void main() {
       find.byKey(const ValueKey('air-directory-schedules')),
       findsOneWidget,
     );
-    for (final status in ['running', 'waiting', 'error', 'today']) {
+    for (final status in ['running', 'todo', 'error', 'today']) {
       await tester.tap(find.byKey(ValueKey('air-stat-$status')));
       await tester.pumpAndSettle();
       expect(
@@ -1249,7 +1249,12 @@ void main() {
     client.close();
   });
 
-  testWidgets('控制台入口带着「谁在等我」的数字，点进去是原生控制台', (tester) async {
+  testWidgets('控制台入口带着「待办」的数字，点进去是原生控制台', (tester) async {
+    // 控制台很长，统计带在底部「更多」里；给一块够高的画布让它整棵建出来。
+    tester.view.physicalSize = const Size(900, 3200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final settings = await _settings();
     final client = MockClient((request) async {
       if (request.url.path == '/api/cron') {
@@ -1305,15 +1310,20 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('air-nav-console')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-console')), findsOneWidget);
-    // 那条等待回复的任务在「等我回复」那一格里（清单默认收起，数字先摆着）。
+    // 统计带住在「更多」里，默认收起：先展开它。
+    await tester.ensureVisible(find.byKey(const ValueKey('air-console-more')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('air-console-more')));
+    await tester.pumpAndSettle();
+    // 那条等待回复的任务在「待办」那一格里（清单默认收起，数字先摆着）。
     expect(
       find.descendant(
-        of: find.byKey(const ValueKey('air-console-tile-waiting')),
+        of: find.byKey(const ValueKey('air-console-tile-todo')),
         matching: find.text('1'),
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(const ValueKey('air-console-tile-waiting')));
+    await tester.tap(find.byKey(const ValueKey('air-console-tile-todo')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-console-task-t1')), findsOneWidget);
     expect(tester.takeException(), isNull);
