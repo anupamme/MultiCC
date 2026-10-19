@@ -85,6 +85,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/air_indexed_home_test.dart",
+      "tier": "flow",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/air_mobile_navigation_test.dart",
       "tier": "flow",
       "lane": "flutter"
@@ -142,6 +147,11 @@
     {
       "path": "app/test/air_sidebar_task_status_test.dart",
       "tier": "other",
+      "lane": "flutter"
+    },
+    {
+      "path": "app/test/air_sync_service_test.dart",
+      "tier": "core",
       "lane": "flutter"
     },
     {

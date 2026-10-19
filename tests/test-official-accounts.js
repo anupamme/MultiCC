@@ -386,20 +386,20 @@ test('quota route: ?account resolves the account auth file; shared default uncha
   const account = store.createCodexAccount({ label: 'acct' });
   writeCodexAuth(store.codexDir(account.id));
 
-  const h = quotaHarness({ resolveAccountAuthFile: id => store.codexAuthFile(id) });
-  await withFetch(
-    (url, opts) => {
+  // The route now fetches through officialFetch (npm undici + proxy), which
+  // bypasses global.fetch — inject the stub through deps instead.
+  const h = quotaHarness({
+    resolveAccountAuthFile: id => store.codexAuthFile(id),
+    fetch: async (url, opts) => {
       assert.equal(opts.headers['ChatGPT-Account-Id'], 'acct-ext-1');
       return { ok: true, status: 200, json: async () => USAGE_BODY };
     },
-    async () => {
-      const res = await h.invoke({ account: account.id });
-      assert.equal(res.statusCode, 200);
-      assert.equal(res.body.status, 'ok');
-      assert.equal(res.body.weekly.usedPercent, 42);
-      assert.ok(res.body.bar, 'bar rendered once, server-side');
-    },
-  );
+  });
+  const res = await h.invoke({ account: account.id });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.status, 'ok');
+  assert.equal(res.body.weekly.usedPercent, 42);
+  assert.ok(res.body.bar, 'bar rendered once, server-side');
 });
 
 test('quota route: account param edge cases fail closed and offline', async () => {
