@@ -347,6 +347,146 @@ void main() {
     expect(find.text('昨天做完的'), findsNothing);
   });
 
+  testWidgets('移动工作区「待办」卡与控制台同口径：含手动待办、排除忽略、最早消息在前', (tester) async {
+    final config = await settings();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final transport = MockClient((req) async {
+      dynamic body = <String, dynamic>{};
+      if (req.url.path == '/api/air') {
+        body = {
+          'ok': true,
+          'clis': ['codex'],
+          'directories': [
+            {'id': 'one', 'name': '项目一', 'path': '/projects/one'},
+          ],
+          // 服务端下发的两份清单，客户端只按它们回填（与目录 / 控制台同源）。
+          'taskTodos': ['manual'],
+          'taskTodoIgnored': ['ignored'],
+          'tasks': [
+            {
+              'id': 'ignored',
+              'dirId': 'one',
+              'title': '被忽略的',
+              'status': 'active',
+              'runState': 'error',
+              'updatedAt': now - 500,
+              'lastMessageAt': now - 500,
+            },
+            {
+              'id': 'new',
+              'dirId': 'one',
+              'title': '较新的待办',
+              'status': 'active',
+              'runState': 'waiting',
+              'updatedAt': now - 1000,
+              'lastMessageAt': now - 1000,
+            },
+            {
+              'id': 'manual',
+              'dirId': 'one',
+              'title': '手动待办',
+              'status': 'active',
+              'runState': 'idle',
+              'updatedAt': now - 8000,
+              'lastMessageAt': now - 8000,
+            },
+            {
+              'id': 'old',
+              'dirId': 'one',
+              'title': '最早的待办',
+              'status': 'active',
+              'runState': 'error',
+              'updatedAt': now - 9000,
+              'lastMessageAt': now - 9000,
+            },
+            {
+              'id': 'newest',
+              'dirId': 'one',
+              'title': '最新的待办',
+              'status': 'active',
+              'runState': 'waiting',
+              'updatedAt': now - 200,
+              'lastMessageAt': now - 200,
+            },
+          ],
+          'sessions': [],
+        };
+      } else if (req.url.path == '/api/settings/power') {
+        body = {'ok': true, 'available': false};
+      } else if (req.url.path == '/api/cron' ||
+          req.url.path == '/api/docs-registry') {
+        body = [];
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: transport),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const ValueKey('air-mobile-todo-card'));
+    expect(card, findsOneWidget);
+    // 卡片标题与控制台 / 整页同一个词（airAdminAttention）。
+    expect(
+      find.descendant(of: card, matching: find.text('待办')),
+      findsOneWidget,
+    );
+    // 手动待办（空闲着但被标记）在卡里。
+    expect(
+      find.descendant(of: card, matching: find.text('手动待办')),
+      findsOneWidget,
+    );
+    // 被忽略的异常不在卡里：忽略压过运行态。
+    expect(
+      find.descendant(of: card, matching: find.text('被忽略的')),
+      findsNothing,
+    );
+    // 最早的消息在前：old（9000ms 前）→ manual（8000ms 前）→ new（1000ms 前）。
+    final yOld = tester
+        .getTopLeft(find.descendant(of: card, matching: find.text('最早的待办')))
+        .dy;
+    final yManual = tester
+        .getTopLeft(find.descendant(of: card, matching: find.text('手动待办')))
+        .dy;
+    final yNew = tester
+        .getTopLeft(find.descendant(of: card, matching: find.text('较新的待办')))
+        .dy;
+    expect(yOld, lessThan(yManual), reason: '等得最久的排最前');
+    expect(yManual, lessThan(yNew), reason: '手动待办也按最早消息参与排序');
+
+    // 卡片只摆等最久的三条，第四条藏在「全部记录 · 4」后面。
+    expect(
+      find.descendant(of: card, matching: find.text('最新的待办')),
+      findsNothing,
+    );
+    final all = find.byKey(const ValueKey('air-mobile-todo-all'));
+    expect(
+      find.descendant(of: card, matching: find.text('全部记录 · 4')),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(all);
+    await tester.tap(all);
+    await tester.pumpAndSettle();
+    // 点「全部」带着「待办」这一格过去：四条都在，被忽略的仍然不在。
+    expect(find.text('最新的待办'), findsOneWidget);
+    expect(find.text('被忽略的'), findsNothing);
+    expect(
+      tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '待办')).selected,
+      isTrue,
+      reason: '卡片「全部」带过来的是「待办」这一格',
+    );
+  });
+
   testWidgets('手机控制台不分目录，目录在最近任务里选，选完留在本页', (tester) async {
     final config = await settings();
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -547,7 +687,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final row = find.byKey(const ValueKey('air-task-t1'));
+    // 标记之后这条任务会同时出现在「待办」卡和最近列表里，所以取第一行来点、
+    // 标记按钮也按「至少一处」断言 —— 两处本来就是同一份数据。
+    final row = find.byKey(const ValueKey('air-task-t1')).first;
     final flag = find.byKey(const ValueKey('air-task-todo-mark-t1'));
     await tester.ensureVisible(row);
     expect(flag, findsNothing);
@@ -556,7 +698,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(toggles, ['t1']);
     expect(find.text('已标记为待办「首页改版」'), findsOneWidget);
-    expect(flag, findsOneWidget);
+    expect(flag, findsWidgets);
 
     await tester.longPress(row);
     await tester.pumpAndSettle();

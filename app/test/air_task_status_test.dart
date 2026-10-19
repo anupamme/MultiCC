@@ -18,6 +18,7 @@ AirTask _task({
   Map<String, dynamic> resource = const {},
   AirWorktreeChanges? worktreeChanges,
   int updatedAt = 0,
+  int lastMessageAt = 0,
   bool manualTodo = false,
   bool todoIgnored = false,
 }) => AirTask(
@@ -27,6 +28,7 @@ AirTask _task({
   status: status,
   recordType: recordType,
   updatedAt: updatedAt,
+  lastMessageAt: lastMessageAt,
   readOnly: false,
   workflowStage: workflowStage,
   runState: runState,
@@ -116,74 +118,81 @@ void main() {
     });
   });
 
-  group('谁在等我', () {
-    test('等待回答 > 出错 > 卡在资源 > 正在跑/等后台任务 > 其它', () {
-      expect(airTaskUrgency(_task(runState: 'waiting')), 0);
-      expect(airTaskUrgency(_task(runState: 'error')), 1);
+  group('待办', () {
+    test('等待回答 / 出错 / 需要交互 / 手动标记都算待办，跑着的不算', () {
+      expect(airTaskTodo(_task(runState: 'waiting')), isTrue);
+      expect(airTaskTodo(_task(runState: 'error')), isTrue);
       expect(
-        airTaskUrgency(
-          _task(
-            runState: 'idle',
-            resource: const {'capacityReason': 'workspace_execution_capacity'},
-          ),
-        ),
-        2,
-      );
-      expect(airTaskUrgency(_task(runState: 'running')), 3);
-      // 在等后台任务：有东西在外面跑，不是等我动手。
-      expect(airTaskUrgency(_task(runState: 'background')), 3);
-      expect(airNeedsAttention(_task(runState: 'background')), isFalse);
-      // 租约已经交出去：还没跑起来，但名额已经不在池子里了。
-      expect(
-        airTaskUrgency(_task(resource: const {'lease': 'starting'})),
-        3,
-      );
-      expect(airTaskUrgency(_task()), 4);
-      expect(airTaskUrgency(_task(status: 'done')), 5);
-      expect(airTaskUrgency(_task(status: 'archived')), 5);
-    });
-
-    test('只有要我动手的才算「在等我」：在跑的不列，空闲 / 已结束的也不列', () {
-      expect(airNeedsAttention(_task(runState: 'waiting')), isTrue);
-      expect(airNeedsAttention(_task(runState: 'error')), isTrue);
-      // 拿不到执行名额同样要我去处理。
-      expect(
-        airNeedsAttention(
-          _task(
-            runState: 'idle',
-            resource: const {'capacityReason': 'workspace_execution_capacity'},
-          ),
-        ),
+        airTaskTodo(_task(runState: 'succeeded', goalState: 'interact')),
         isTrue,
       );
-      // 跑着的东西不是待办：它不需要我操作。
-      expect(airNeedsAttention(_task(runState: 'running')), isFalse);
       expect(
-        airNeedsAttention(_task(resource: const {'lease': 'starting'})),
+        airTaskTodo(_task(runState: 'succeeded', goalState: 'achieved')),
         isFalse,
       );
-      expect(airNeedsAttention(_task(runState: 'idle')), isFalse);
-      expect(airNeedsAttention(_task(status: 'done')), isFalse);
-      expect(airNeedsAttention(_task(status: 'archived')), isFalse);
+      // 手动标记：哪怕这一轮空闲着也留着，直到用户自己取消。
+      expect(airTaskTodo(_task(manualTodo: true)), isTrue);
+      // 跑着 / 等后台任务：有东西在外面跑，不需要我操作。
+      expect(airTaskTodo(_task(runState: 'running')), isFalse);
+      expect(airTaskTodo(_task(runState: 'background')), isFalse);
+      expect(airTaskTodo(_task()), isFalse);
+      expect(airTaskTodo(_task(status: 'done')), isFalse);
+      expect(airTaskTodo(_task(status: 'archived')), isFalse);
+      // 卡在资源只说明还没轮到它跑，不是要人回答 / 处理的那一类。
+      expect(
+        airTaskTodo(
+          _task(
+            runState: 'idle',
+            resource: const {'capacityReason': 'workspace_execution_capacity'},
+          ),
+        ),
+        isFalse,
+      );
+    });
 
-      final rows = airUrgentTasks([
+    test('清单只收待办：在跑的不列，空闲 / 已结束的也不列', () {
+      final rows = airTodoTasks([
         _task(id: 'idle', runState: 'idle'),
         _task(id: 'done', status: 'done'),
         _task(id: 'run', runState: 'running', updatedAt: 999),
         _task(id: 'wait', runState: 'waiting', updatedAt: 100),
         _task(id: 'bad', runState: 'error', updatedAt: 200),
       ]);
-      expect(rows.map((t) => t.id).toList(), ['bad', 'wait']);
+      expect(rows.map((t) => t.id).toList(), ['wait', 'bad']);
     });
 
-    test('清单是纯时间倒序：刚动过的最靠前，不按紧急度分层（同 Web）', () {
-      final rows = airUrgentTasks([
+    test('清单按最早的消息时间升序，不按紧急度分层（同 Web）', () {
+      final rows = airTodoTasks([
         _task(id: 'old', runState: 'waiting', updatedAt: 100),
         _task(id: 'err', runState: 'error', updatedAt: 999),
         _task(id: 'new', runState: 'waiting', updatedAt: 200),
       ]);
-      // 按紧急度分层会得到 new · old · err；纯时间只会是 err · new · old。
-      expect(rows.map((t) => t.id).toList(), ['err', 'new', 'old']);
+      // 按紧急度分层会得到 wait · error；最早的消息在前只会是 old · new · err。
+      expect(rows.map((t) => t.id).toList(), ['old', 'new', 'err']);
+    });
+
+    test('手动待办进清单、忽略的不进；排序看最早消息而不是更新时间', () {
+      final rows = airTodoTasks([
+        _task(
+          id: 'ignored',
+          runState: 'waiting',
+          todoIgnored: true,
+          lastMessageAt: 1,
+        ),
+        _task(
+          id: 'manual',
+          manualTodo: true,
+          updatedAt: 900,
+          lastMessageAt: 900,
+        ),
+        _task(
+          id: 'older',
+          runState: 'waiting',
+          updatedAt: 999,
+          lastMessageAt: 100,
+        ),
+      ]);
+      expect(rows.map((t) => t.id).toList(), ['older', 'manual']);
     });
 
     test('有任务在跑的目录才带标记', () {
@@ -417,7 +426,7 @@ void main() {
       expect(AirSnapshot.fromJson(const {'tasks': []}).taskTodos, isEmpty);
     });
 
-    test('忽略的进不了待办，也不进「在等我」；但异常口径不受影响', () {
+    test('忽略的进不了待办；但异常口径不受影响', () {
       final todo = AirDirectoryTaskFilter.todo;
       final ignoredWaiting = _task(runState: 'waiting', todoIgnored: true);
       final ignoredError = _task(runState: 'error', todoIgnored: true);
@@ -425,10 +434,9 @@ void main() {
       expect(todo.matches(ignoredWaiting), isFalse);
       expect(todo.matches(ignoredError), isFalse);
       expect(todo.matches(ignoredManual), isFalse, reason: '忽略压过手动标记');
-      expect(airNeedsAttention(ignoredWaiting), isFalse);
-      expect(airNeedsAttention(ignoredError), isFalse);
       expect(
-        airUrgentTasks([ignoredWaiting, ignoredError]).map((t) => t.id),
+        airTodoTasks([ignoredWaiting, ignoredError, ignoredManual])
+            .map((t) => t.id),
         isEmpty,
       );
       // 「已忽略」档只收这些任务，别处按原口径照旧。

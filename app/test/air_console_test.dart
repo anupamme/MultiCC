@@ -196,7 +196,7 @@ MockClient _client(
 
 /// 四条任务，四种处境：
 ///   t1 等我回答 · t2 出错（两条都要我动手，t2 更新得更晚）·
-///   t3 空闲（不进「谁在等我」，也不在跑）· t4 已归档（默认筛选里不出现）。
+///   t3 空闲（不进「待办」，也不在跑）· t4 已归档（默认筛选里不出现）。
 const List<Map<String, dynamic>> _baseTasks = [
   {
     'id': 't1',
@@ -391,7 +391,7 @@ void main() {
   // 状态徽标、格上的词都来自 i18n 词典（注册表只给 key），不加载就只有 key。
   setUpAll(() => I18n.init('zh'));
 
-  testWidgets('五张统计格数的是同一份判定：谁在跑、谁在等我、今天跑完了什么', (tester) async {
+  testWidgets('五张统计格数的是同一份判定：谁在跑、待办、今天跑完了什么', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final requests = <String>[];
@@ -1183,7 +1183,7 @@ void main() {
     client.close();
   });
 
-  testWidgets('整页「谁在等我」是同一份待办清单：最早的消息在前，点一条先收它自己再交给宿主', (tester) async {
+  testWidgets('整页「待办」是同一份清单：最早的消息在前，点一条先收它自己再交给宿主', (tester) async {
     _tallCanvas(tester);
     final settings = await _settings();
     final opened = <String>[];
@@ -1250,6 +1250,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('air-console-attention-all')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-attention')), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(AppBar), matching: find.text('待办')),
+      findsOneWidget,
+      reason: '整页标题改成「待办」',
+    );
     expect(find.text('7 条 · 按最早消息排序，点击直达'), findsOneWidget);
     for (final id in const ['w1', 'w2', 'e1', 'e2', 'e3', 'e4', 'w3']) {
       expect(find.byKey(ValueKey('air-attention-task-$id')), findsOneWidget);

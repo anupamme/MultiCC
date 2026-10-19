@@ -69,7 +69,8 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
   /// 新建、这台手机没点开过的任务会被挤到底，而快照里的 tasks 本身是从旧到新排的。
   List<AirTask> get _rows => _rowsOf(withPins: true);
 
-  /// 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），只看谁最近动过。
+  /// 控制台那张卡只摆 3 条，不带 pin（pin 多了会把它整张占满），按待办口径
+  /// 取等我最久的那几条（见 [airTodoTasks]）。
   List<AirTask> _rowsOf({required bool withPins}) {
     final data = widget.data;
     final all = (data?.tasks ?? <AirTask>[])
@@ -114,7 +115,9 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
           (t) => widget.directoryId == null || t.dirId == widget.directoryId,
         )
         .toList();
-    final urgent = airUrgentTasks(scoped);
+    // 与控制台「待办」同一份口径：等回答 / 出错 / 需要交互 / 手动标记，
+    // 排除归档与被忽略，最早的消息在前。
+    final todo = airTodoTasks(scoped);
     final recentAll = _rowsOf(withPins: false);
     final consoleRows = _consoleFilter == null
         ? recentAll
@@ -193,8 +196,9 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
           ] else ...[
             if (widget.setupNotice != null) widget.setupNotice!,
             const SizedBox(height: 20),
-            if (urgent.isNotEmpty)
+            if (todo.isNotEmpty)
               Container(
+                key: const ValueKey('air-mobile-todo-card'),
                 decoration: BoxDecoration(
                   color: AppColors.panel,
                   border: Border.all(color: AppColors.line),
@@ -210,12 +214,16 @@ class _AirMobileWorkspaceState extends State<AirMobileWorkspace> {
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
-                    ...urgent.take(3).map(_task),
-                    if (urgent.length > 3)
+                    ...todo.take(3).map(_task),
+                    if (todo.length > 3)
                       TextButton(
-                        onPressed: () => widget.onRecent(null),
+                        key: const ValueKey('air-mobile-todo-all'),
+                        // 带着「待办」这一格进最近任务页：数量、清单和点开的
+                        // 是同一份清单，不会显示成「全部任务」。
+                        onPressed: () =>
+                            widget.onRecent(AirDirectoryTaskFilter.todo),
                         child: Text(
-                          '${t('airAdminFilterAll')} · ${urgent.length}',
+                          '${t('airAdminFilterAll')} · ${todo.length}',
                         ),
                       ),
                   ],

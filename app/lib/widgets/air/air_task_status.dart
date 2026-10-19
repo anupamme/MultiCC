@@ -1,6 +1,6 @@
 /// Air 侧「这条任务算什么、在不在跑」的唯一判定 —— 对应 Web
 /// `public/air-admin.js` 顶部那一段（`taskStatus` / `isRunning` /
-/// `taskUrgency` / `taskDetail`）。
+/// `taskDetail`）。
 ///
 /// 判定权不在这一层，在 `utils/status_presentation.dart` 的
 /// `statusPresentation`：那边只给 running 设了 spinner，于是「出错的任务绝不动
@@ -198,60 +198,8 @@ Set<String> airRunningDirectories(Iterable<AirTask> tasks) => {
     if (airTaskRunning(task)) task.dirId,
 };
 
-/// 租约已经交出去的状态：这些阶段任务还没跑起来，但名额已经不在池子里了，
-/// 对读者就是「它正在被处理」。
-const Set<String> airRunningLeases = {
-  'reserved',
-  'materializing',
-  'starting',
-  'running',
-  'uncertain',
-};
-
-/// 「谁在等我」的分级权重，越小越急：
-/// 等我回答 → 出错要我去处理 → 卡在资源 → 正在跑/等后台任务。故障排在任何乐观信
-/// 号前面。
-///
-/// 这份权重只用来判断「算不算在等我」（见 [airNeedsAttention]），不再决定谁排
-/// 在前面 —— 排序是纯时间，和 Web 一致。
-int airTaskUrgency(AirTask task) {
-  final status = airTaskStatus(task);
-  if (status == CanonicalStatus.waiting) return 0;
-  if (status == CanonicalStatus.error) return 1;
-  final capacity = task.resource['capacityReason']?.toString() ?? '';
-  if (capacity.isNotEmpty) return 2;
-  // background（在等后台任务）和 running 同级：有东西在外面跑，不是待办。
-  if (status == CanonicalStatus.running ||
-      status == CanonicalStatus.background ||
-      airRunningLeases.contains(task.resource['lease']?.toString())) {
-    return 3;
-  }
-  if (status == CanonicalStatus.done || status == CanonicalStatus.archived) {
-    return 5;
-  }
-  return 4;
-}
-
-/// 「在等我」的分界线：0 等我回答 · 1 出错要我去处理 · 2 卡在资源 —— 这三类都得
-/// 我动手。3（正在跑 / 在等后台任务）不列进来：跑着的东西不是待办，它不需要我操作。
-bool airNeedsAttention(AirTask task) {
-  // 手动忽略的同样不进「在等我」：这是用户对提醒的直接否决，统计和徽标都要
-  // 跟着闭嘴，否则忽略完数字还在原地跳。
-  if (task.todoIgnored) return false;
-  return airTaskUrgency(task) < 3;
-}
-
-/// 跨所有目录、需要我动手的任务。移动工作区那张「谁在等我」卡片用它。
-///
-/// 顺序是纯时间倒序（最近动过的最靠前），和 Web 的 `urgentTasks` 一致：刚有动静
-/// 的任务才是眼下要接手的那条。控制台的「待办」分区与侧栏徽标另走 [airTodoTasks]
-/// （跨了手动待办与忽略，顺序是「等我最久的在前」）。
-List<AirTask> airUrgentTasks(Iterable<AirTask> tasks) =>
-    tasks.where(airNeedsAttention).toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-
-/// 控制台「待办」分区的完整清单，也是侧栏徽标和统计格的唯一来源。Web 的
-/// `todoTasks(data)` 与它是同一份口径。
+/// 控制台「待办」分区的完整清单，也是侧栏徽标、统计格和移动工作区卡片的唯一
+/// 来源。Web 的 `todoTasks(data)` 与它是同一份口径。
 ///
 /// 顺序是**最早的消息时间在前**（`lastMessageAt`，没有消息时间才退回
 /// `updatedAt`）：待办不是「最近发生了什么」，而是「哪件事等我最久」——先处理

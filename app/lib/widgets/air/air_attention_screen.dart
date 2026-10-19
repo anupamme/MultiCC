@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../i18n.dart';
 import '../../services/air_service.dart';
 import '../../theme.dart';
 import 'air_panels.dart';
 
-/// 「谁在等我」的整页。
+/// 「待办」的整页。
 ///
 /// 控制台那一格只放最近更新的几条，完整清单在这里。对应 Web `public/air-admin.js`
 /// 的 `renderAttention`（`?view=attention`）：同一份清单、同一个顺序、同一句总数。
@@ -41,9 +42,9 @@ class AirAttentionScreen extends StatelessWidget {
         foregroundColor: AppColors.text,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: const Text(
-          '谁在等我',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        title: Text(
+          t('airAdminAttention'),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
       ),
       body: ListView(
@@ -63,12 +64,12 @@ class AirAttentionScreen extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
+                          const Text(
                             'ACROSS ALL WORKSPACES',
                             style: TextStyle(
                               color: AppColors.faint,
@@ -77,10 +78,10 @@ class AirAttentionScreen extends StatelessWidget {
                               letterSpacing: 1.1,
                             ),
                           ),
-                          SizedBox(height: 2),
+                          const SizedBox(height: 2),
                           Text(
-                            '谁在等我',
-                            style: TextStyle(
+                            t('airAdminAttention'),
+                            style: const TextStyle(
                               color: AppColors.text,
                               fontSize: 15,
                               fontWeight: FontWeight.w600,
