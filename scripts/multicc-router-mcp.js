@@ -284,8 +284,8 @@ const TOOLS = [
           type: 'string',
           minLength: 1,
           maxLength: 64,
-          pattern: '^[A-Za-z0-9_.-]+$',
-          description: 'Vault entry name, e.g. OPENAI_API_KEY or github_token. Check list_secrets first and reuse an existing name to update it.',
+          pattern: '^[A-Za-z_][A-Za-z0-9_]*$',
+          description: 'Vault entry name; must be a valid env var identifier (letters/digits/underscore, not starting with a digit — no "-" or ".") because it is injected as $NAME. e.g. OPENAI_API_KEY or github_token. Check list_secrets first and reuse an existing name to update it.',
         },
         question: {
           type: 'string',

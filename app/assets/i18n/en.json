@@ -889,7 +889,7 @@
   "secretsFieldName": "Name",
   "secretsFieldValue": "Value (never shown in chat)",
   "secretsFieldDesc": "Description (optional)",
-  "secretsNameInvalid": "Name allows only letters, digits and _ . - (1-64 chars)",
+  "secretsNameInvalid": "Name must be a valid env var name: letters, digits and _, not starting with a digit (1-64 chars)",
   "secretsValueRequired": "Value is required",
   "secretsEmpty": "The vault is empty. Add an entry above, or let an agent call request_secret_input in chat.",
   "secretsDeleteTitle": "Delete {name}?",

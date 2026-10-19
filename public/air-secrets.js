@@ -21,7 +21,7 @@
     if (className) value.className = className;
     return value;
   };
-  const NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+  const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
 
   // render(context) 每进一次面板就重建 DOM，拉到的数据留在模块上（同 air-admin.js 的
   // auxView）：回调里要用的 context 也只能存这里，它由 air.js 每次渲染递进来。

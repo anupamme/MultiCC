@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { isMainResult } = require('../cli-adapters/result-completion');
 const { managedRoute, createRouteRelay } = require('./claude-sdk-route');
 const { fingerprint, processOptions } = require('./claude-sdk-config');
+const { envDigest } = require('../secrets-vault');
 const { createMonitorAdmission, isMonitorHandoffResult } = require('./monitor-admission');
 const { createBackgroundHold } = require('./background-hold');
 
@@ -166,6 +167,7 @@ function createSdkStream({ loadSdk = () => import('@anthropic-ai/claude-agent-sd
       const materialized = processOptions(cfg, s.started, run.relay?.env);
       run.dispose = materialized.dispose;
       run.fingerprint = fingerprint(cfg);
+      run.vaultDigest = envDigest(cfg.env);
       run.model = cfg.sdkOptions.model;
       const options = { ...materialized.options,
         ...(cfg.onBackgroundEvent ? { hooks: { UserPromptSubmit: [{ hooks: [createMonitorAdmission(
@@ -213,10 +215,12 @@ function createSdkStream({ loadSdk = () => import('@anthropic-ai/claude-agent-sd
         const routeChanged = s.run?.relay && (s.run.routeUrl !== s.cfg.env.ANTHROPIC_BASE_URL
           || s.run.routeToken !== s.cfg.env.ANTHROPIC_AUTH_TOKEN);
         const changed = s.run && s.run.fingerprint !== fingerprint(s.cfg);
+        // 保险箱变化不算路由变化：后台任务占着进程时顺延到下个回合，不拒绝本回合。
+        const vaultStale = s.run && s.run.vaultDigest !== envDigest(s.cfg.env);
         if ((routeChanged || changed || s.recycleRequested) && hasBackground(s)) {
           throw Object.assign(new Error('SDK background work still owns the process'), { code: 'SDK_BACKGROUND_ACTIVE' });
         }
-        if (changed || s.recycleRequested) {
+        if (changed || s.recycleRequested || (vaultStale && !hasBackground(s))) {
           await stop(s); s.recycleRequested = false;
         }
         const run = s.run || await start(s);

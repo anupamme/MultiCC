@@ -38,18 +38,18 @@ const JEV_GATEWAYS = Object.freeze({
   vercel: Object.freeze({
     endpoint: DEFAULT_ENDPOINT,
     model: DEFAULT_MODEL,
-    apiKeyName: 'vercel-api-key',
+    apiKeyName: 'VERCEL_API_KEY',
   }),
   openrouter: Object.freeze({
     endpoint: 'https://openrouter.ai/api/alpha/decisions',
     // OpenRouter namespaces community models with `~`; the id is opaque here.
     model: '~typesafe/jev-latest',
-    apiKeyName: 'openrouter-api-key',
+    apiKeyName: 'OPENROUTER_API_KEY',
   }),
   typesafe: Object.freeze({
     endpoint: 'https://api.typesafe.ai/v1/systemone',
     model: 'jev-latest',
-    apiKeyName: 'typesafe-api-key',
+    apiKeyName: 'TYPESAFE_API_KEY',
   }),
 });
 const GATEWAY_NAMES = Object.freeze(Object.keys(JEV_GATEWAYS));
@@ -58,7 +58,7 @@ const DEFAULT_GATEWAY = 'vercel';
 // `jev-`-prefixed vault entry only: the endpoint is user-supplied, so the entry
 // name must not be able to name an unrelated secret (a GitHub token, say).
 const CUSTOM_GATEWAY = 'custom';
-const CUSTOM_API_KEY_NAME = 'jev-custom-api-key';
+const CUSTOM_API_KEY_NAME = 'JEV_CUSTOM_API_KEY';
 const CUSTOM_MODEL = 'jev-latest';
 const MAX_ENDPOINT_CHARS = 300;
 const DEFAULT_TIMEOUT_MS = 2_500;

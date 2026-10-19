@@ -57,7 +57,7 @@
   const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
   const ROUTING_GATEWAY_INFO = Object.freeze({
     vercel: Object.freeze({
-      keyName: 'vercel-api-key',
+      keyName: 'VERCEL_API_KEY',
       labelKey: 'autoEditorJevGatewayVercel', label: 'Vercel',
       stepKey: 'autoEditorJevStepCreateVercel',
       step: '打开 Vercel 控制台 → AI Gateway → API Keys，新建一个 key',
@@ -65,7 +65,7 @@
       placeholder: '粘贴 key（vck_ 开头）',
     }),
     openrouter: Object.freeze({
-      keyName: 'openrouter-api-key',
+      keyName: 'OPENROUTER_API_KEY',
       labelKey: 'autoEditorJevGatewayOpenRouter', label: 'OpenRouter',
       stepKey: 'autoEditorJevStepCreateOpenRouter',
       step: '打开 openrouter.ai/keys，新建一个 key',
@@ -73,7 +73,7 @@
       placeholder: '粘贴 key（sk-or- 开头）',
     }),
     typesafe: Object.freeze({
-      keyName: 'typesafe-api-key',
+      keyName: 'TYPESAFE_API_KEY',
       labelKey: 'autoEditorJevGatewayTypeSafe', label: 'TypeSafe',
       stepKey: 'autoEditorJevStepCreateTypeSafe',
       step: '打开 TypeSafe 控制台，新建一个 API key',
@@ -81,7 +81,7 @@
       placeholder: '粘贴 key',
     }),
     custom: Object.freeze({
-      keyName: 'jev-custom-api-key',
+      keyName: 'JEV_CUSTOM_API_KEY',
       labelKey: 'autoEditorJevGatewayCustom', label: '自定义',
       stepKey: 'autoEditorJevStepCreateCustom',
       step: '填好接口地址和模型名，再粘贴它的 key',

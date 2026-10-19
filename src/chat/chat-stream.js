@@ -4,6 +4,7 @@ const { isMainResult } = require('../cli-adapters/result-completion');
 const { isMonitorHandoffResult } = require('./monitor-admission');
 const { createMonitorControl } = require('./monitor-control');
 const { createBackgroundHold } = require('./background-hold');
+const { envDigest } = require('../secrets-vault');
 
 // ── Persistent streaming Claude process per chat session ──
 //
@@ -112,6 +113,7 @@ function spawnProc(name, cfg) {
   // later provider/env switch (which updates s.env via ensure()) is detectable
   // at the next turn boundary and triggers a --resume respawn.
   s.spawnedFingerprint = routeFingerprint(s.env);
+  s.spawnedVault = envDigest(s.env);
   s.lineBuf = '';
   s.stderrTail = '';
 
@@ -321,6 +323,7 @@ function onExit(name, code, signal, err) {
   // track, and pump() is free to respawn with the current env.
   s.recycling = false;
   s.spawnedFingerprint = null;
+  s.spawnedVault = null;
 
   // Detect "Session ID already in use" — the CLI refuses to start because
   // another process (or a stale lock) holds this session UUID. Generate a
@@ -396,6 +399,9 @@ function pump(name) {
   // preserved because the respawn uses --resume <same session id>. SIGTERM (same
   // as cancel()) gives a deterministic prompt exit — the transcript is already
   // persisted, so nothing is lost.
+  // 保险箱变量也是 spawn 时固定的：变了就按「显式回收」处理（后台任务活跃时顺延，不拒绝回合）。
+  if (isAlive(name) && s.spawnedVault != null && envDigest(s.env) !== s.spawnedVault) s.recycleRequested = true;
+
   if (isAlive(name) && s.spawnedFingerprint !== null &&
       routeFingerprint(s.env) !== s.spawnedFingerprint) {
     if (s.isBackgroundActive?.()) {
@@ -507,7 +513,7 @@ function ensure(name, cfg) {
       proc: null, started: false, busy: false,
       queue: [], current: null, lineBuf: '', stderrTail: '',
       idleTimer: null,
-      recycling: false, spawnedFingerprint: null,
+      recycling: false, spawnedFingerprint: null, spawnedVault: null,
       recycleRequested: false, recycleReason: '',
       lastSpawnWasResume: false,
     };

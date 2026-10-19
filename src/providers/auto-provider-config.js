@@ -55,7 +55,10 @@ const ROUTING_GATEWAYS = new Set([...GATEWAY_NAMES, CUSTOM_ROUTING_GATEWAY]);
 // name an unrelated vault entry (a GitHub token, say) and have it sent to an
 // arbitrary URL. The presets only ever ship their key to their own fixed host,
 // so their names stay free-form.
-const CUSTOM_ROUTING_API_KEY_PREFIX = 'jev-';
+// 新条目一律 JEV_ 开头（保险箱名字必须是合法环境变量名）；旧的 jev- 前缀仍接受，
+// 否则别处已持久化的自定义网关配置会校验失败。
+const CUSTOM_ROUTING_API_KEY_PREFIX = 'JEV_';
+const LEGACY_CUSTOM_ROUTING_API_KEY_PREFIX = 'jev-';
 const DEFAULT_ROUTING_API_KEY = JEV_GATEWAYS[DEFAULT_ROUTING_GATEWAY].apiKeyName;
 const DEFAULT_CUSTOM_ROUTING_API_KEY = CUSTOM_API_KEY_NAME;
 // A custom endpoint speaks the same evaluation contract as the hosted gateways,
@@ -322,7 +325,8 @@ function validateRoutingTarget(input = {}) {
   if (!VAULT_NAME_RE.test(apiKeyName)) {
     return fail('routing.apiKeyName must be a vault entry name', 'invalid_provider_routing');
   }
-  if (gateway === CUSTOM_GATEWAY && !apiKeyName.startsWith(CUSTOM_ROUTING_API_KEY_PREFIX)) {
+  if (gateway === CUSTOM_GATEWAY && !apiKeyName.startsWith(CUSTOM_ROUTING_API_KEY_PREFIX)
+      && !apiKeyName.startsWith(LEGACY_CUSTOM_ROUTING_API_KEY_PREFIX)) {
     return fail(`a custom gateway key must live in a ${CUSTOM_ROUTING_API_KEY_PREFIX}* vault entry`,
       'invalid_provider_routing');
   }

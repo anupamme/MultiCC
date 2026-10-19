@@ -9,7 +9,7 @@ const { JEV_GATEWAYS } = require('../src/providers/jev-client');
 
 const KEY = 'vck_route_test_value_should_never_leak';
 
-function fakeVault(entries = { 'vercel-api-key': KEY }) {
+function fakeVault(entries = { 'VERCEL_API_KEY': KEY }) {
   return {
     NAME_RE,
     reveal(name) { return entries[name] ? { entry: { name, value: entries[name] } } : { error: 'entry not found', status: 404 }; },
@@ -97,9 +97,9 @@ test('an unusable target is refused before anything is read', async () => {
 
 test('the body picks the gateway, and the table supplies its host and model', async () => {
   const entries = {
-    'vercel-api-key': KEY,
-    'openrouter-api-key': 'sk-or-route_test_never_leak',
-    'jev-custom-api-key': 'jev-custom-route_test_never_leak',
+    'VERCEL_API_KEY': KEY,
+    'OPENROUTER_API_KEY': 'sk-or-route_test_never_leak',
+    'JEV_CUSTOM_API_KEY': 'jev-custom-route_test_never_leak',
   };
   const calls = [];
   const routingTest = createRoutingTest({
@@ -110,7 +110,7 @@ test('the body picks the gateway, and the table supplies its host and model', as
   assert.equal(result.status, 200);
   assert.equal(calls[0].url, JEV_GATEWAYS.openrouter.endpoint);
   assert.equal(calls[0].body.model, JEV_GATEWAYS.openrouter.model);
-  assert.equal(calls[0].init.headers.Authorization, `Bearer ${entries['openrouter-api-key']}`);
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${entries['OPENROUTER_API_KEY']}`);
 
   // A custom gateway sends the address the page typed, to its own vault entry.
   await routingTest.run({
@@ -118,8 +118,8 @@ test('the body picks the gateway, and the table supplies its host and model', as
   });
   assert.equal(calls[1].url, 'http://127.0.0.1:8080/v1/evaluate');
   assert.equal(calls[1].body.model, 'my-jev');
-  assert.equal(calls[1].init.headers.Authorization, `Bearer ${entries['jev-custom-api-key']}`);
-  assert.equal(JSON.stringify(result.body).includes(entries['openrouter-api-key']), false);
+  assert.equal(calls[1].init.headers.Authorization, `Bearer ${entries['JEV_CUSTOM_API_KEY']}`);
+  assert.equal(JSON.stringify(result.body).includes(entries['OPENROUTER_API_KEY']), false);
 });
 
 test('a body without a gateway keeps testing the Vercel default', async () => {
@@ -127,7 +127,7 @@ test('a body without a gateway keeps testing the Vercel default', async () => {
   const routingTest = createRoutingTest({ vault: fakeVault(), fetchImpl: fetchReturning({ payload: simpleVerdict }, calls) });
   await routingTest.run({ text: 'hi' });
   // The editor's older build sends only { apiKeyName } — still the Vercel host.
-  await routingTest.run({ apiKeyName: 'vercel-api-key', text: 'hi' });
+  await routingTest.run({ apiKeyName: 'VERCEL_API_KEY', text: 'hi' });
   assert.equal(calls[0].url, JEV_GATEWAYS.vercel.endpoint);
   assert.equal(calls[1].url, JEV_GATEWAYS.vercel.endpoint);
   assert.equal(calls[1].body.model, JEV_GATEWAYS.vercel.model);

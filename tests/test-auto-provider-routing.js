@@ -65,7 +65,7 @@ function pool({ router, tiers = [], maxAttempts = 3, exhausted = [] } = {}) {
         { providerId: 'strongp', priority: 2, tier: 'strong' },
         { providerId: 'spare', priority: 3, tier: 'strong' },
       ],
-      routing: { provider: 'jev', apiKeyName: 'vercel-api-key', ...(tiers.length ? { tiers } : {}) },
+      routing: { provider: 'jev', apiKeyName: 'VERCEL_API_KEY', ...(tiers.length ? { tiers } : {}) },
     },
   };
   return { runtime, routing, session, events, providers };
@@ -261,9 +261,11 @@ test('the custom gateway owns its address, and only under the documented rules',
 // host of its choosing.
 test('a custom gateway can only read keys from its own vault namespace', () => {
   const base = { gateway: 'custom', endpoint: 'https://jev.example/v1', model: 'jev-latest' };
+  // 新条目是 JEV_ 前缀（合法环境变量名）；旧的 jev- 前缀仍被接受，已持久化的配置不会失效。
+  assert.equal(validatedRouting({ ...base, apiKeyName: 'JEV_MINE' }).apiKeyName, 'JEV_MINE');
   assert.equal(validatedRouting({ ...base, apiKeyName: 'jev-mine' }).apiKeyName, 'jev-mine');
-  assert.equal(validatedRouting(base).apiKeyName, 'jev-custom-api-key');
-  for (const apiKeyName of ['github_token', 'vercel-api-key', 'my-key']) {
+  assert.equal(validatedRouting(base).apiKeyName, 'JEV_CUSTOM_API_KEY');
+  for (const apiKeyName of ['github_token', 'VERCEL_API_KEY', 'my-key']) {
     const result = validateProviderSelection(gatewayPool({ ...base, apiKeyName }),
       { cli: 'claude', providers: catalog() });
     assert.equal(result.ok, false, apiKeyName);
@@ -300,7 +302,7 @@ test('the DTO round-trips tiers and routing, and an unrouted pool is unchanged',
   assert.equal(routed.candidates[0].tier, 'weak');
   assert.deepEqual(routed.routing.tiers, ['weak', 'strong']);
   assert.equal(routed.routing.onUnknown, 'weak');
-  assert.equal(routed.routing.apiKeyName, 'vercel-api-key');
+  assert.equal(routed.routing.apiKeyName, 'VERCEL_API_KEY');
   assert.equal(routed.routing.escalation.minConfidence, 0.7);
   // Legacy pool: no routing key at all, so existing wire JSON is byte-identical.
   const plain = providerSelectionDto({
@@ -401,7 +403,7 @@ test('the pool\'s tuned knobs are handed to the evaluation it triggers', async (
   assert.equal(seen[0].model, 'typesafe-ai/jev-preview');
   assert.deepEqual(seen[0].escalation, { minTierProbability: 0.7 });
   assert.deepEqual(seen[0].tiers, ['weak', 'strong']);
-  assert.equal(seen[0].apiKeyName, 'vercel-api-key');
+  assert.equal(seen[0].apiKeyName, 'VERCEL_API_KEY');
 });
 
 test('prepareTurn evaluates through the gateway the pool picked', async () => {
@@ -416,7 +418,7 @@ test('prepareTurn evaluates through the gateway the pool picked', async () => {
   // table existed — a pool that never heard of gateways must not change host.
   assert.equal(seen[0].endpoint, JEV_GATEWAYS.vercel.endpoint);
   assert.equal(seen[0].model, JEV_GATEWAYS.vercel.model);
-  assert.equal(seen[0].apiKeyName, 'vercel-api-key');
+  assert.equal(seen[0].apiKeyName, 'VERCEL_API_KEY');
 
   seen.length = 0;
   session.providerSelection.routing.gateway = 'openrouter';
@@ -425,7 +427,7 @@ test('prepareTurn evaluates through the gateway the pool picked', async () => {
   await routing.prepareTurn({ session, text: '重构整个 provider 层', providers: catalog() });
   assert.equal(seen[0].endpoint, JEV_GATEWAYS.openrouter.endpoint);
   assert.equal(seen[0].model, '~typesafe/jev-latest');
-  assert.equal(seen[0].apiKeyName, 'openrouter-api-key');
+  assert.equal(seen[0].apiKeyName, 'OPENROUTER_API_KEY');
 
   seen.length = 0;
   session.providerSelection.routing.gateway = 'custom';

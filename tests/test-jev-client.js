@@ -199,7 +199,7 @@ test('a missing vault entry fails closed without touching the network', async ()
     fetchImpl: stubFetch({ payload: answerPayload({ choice: 'weak' }), onCall: () => { called += 1; } }),
     resolveApiKey: () => null,
   });
-  const verdict = await instance.classify({ text: 'hi', tiers: TIERS, apiKeyName: 'vercel-api-key' });
+  const verdict = await instance.classify({ text: 'hi', tiers: TIERS, apiKeyName: 'VERCEL_API_KEY' });
   assert.equal(verdict.ok, false);
   assert.equal(verdict.code, 'jev_key_missing');
   assert.equal(called, 0);
@@ -349,14 +349,14 @@ test('the gateway table pins each hosted deployment to its host, model and vault
   assert.deepEqual(JEV_GATEWAYS.vercel, {
     endpoint: DEFAULT_ENDPOINT,
     model: DEFAULT_MODEL,
-    apiKeyName: 'vercel-api-key',
+    apiKeyName: 'VERCEL_API_KEY',
   });
   assert.equal(JEV_GATEWAYS.openrouter.endpoint, 'https://openrouter.ai/api/alpha/decisions');
   assert.equal(JEV_GATEWAYS.openrouter.model, '~typesafe/jev-latest');
-  assert.equal(JEV_GATEWAYS.openrouter.apiKeyName, 'openrouter-api-key');
+  assert.equal(JEV_GATEWAYS.openrouter.apiKeyName, 'OPENROUTER_API_KEY');
   assert.equal(JEV_GATEWAYS.typesafe.endpoint, 'https://api.typesafe.ai/v1/systemone');
   assert.equal(JEV_GATEWAYS.typesafe.model, 'jev-latest');
-  assert.equal(JEV_GATEWAYS.typesafe.apiKeyName, 'typesafe-api-key');
+  assert.equal(JEV_GATEWAYS.typesafe.apiKeyName, 'TYPESAFE_API_KEY');
   // Frozen: a caller that mutated the table would re-point every later call.
   assert.ok(Object.isFrozen(JEV_GATEWAYS) && Object.isFrozen(JEV_GATEWAYS.openrouter));
 });

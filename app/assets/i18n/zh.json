@@ -889,7 +889,7 @@
   "secretsFieldName": "名称",
   "secretsFieldValue": "值（不会出现在对话里）",
   "secretsFieldDesc": "描述（可选）",
-  "secretsNameInvalid": "名称仅限字母数字与 _ . -（1-64 位）",
+  "secretsNameInvalid": "名称须是合法环境变量名：字母、数字、下划线，不能以数字开头（1-64 位）",
   "secretsValueRequired": "值不能为空",
   "secretsEmpty": "保险箱是空的。用上方表单添加，或在聊天里让 agent 调用 request_secret_input 弹安全输入框。",
   "secretsDeleteTitle": "删除 {name}？",

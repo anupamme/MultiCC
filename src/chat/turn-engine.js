@@ -68,6 +68,7 @@ const { summarizeHistoryUsage } = require('../codex/usage');
 const { buildReplayMessages } = require('../routes/chat-history');
 const { fitHistoryFrame } = require('./history-frame-budget');
 const chatStream = require('./chat-stream');
+const secretsVault = require('../secrets-vault');
 const waitInjector = require('../wait/injector');
 const providers = require('../providers/core');
 const { checkEgressIpAllowed } = require('../providers/egress-ip-policy');
@@ -2231,6 +2232,7 @@ function createChatTurnEngine(deps) {
       nativeSessionId: persisted.cliSessionId, allowMissingNativeSession: !persisted.cliSessionId,
       officialOAuth: getClaudeOfficialViaProxy(),
     });
+    secretsVault.applyEnvOverlay(childEnv); // 常驻流不走 spawnProcess；每轮重建，中途改动由各流据 envDigest 在回合边界回收
     const streamSettingsFile = providers.settingsOverrideFor(sessionName, childEnv, invocation.settings);
     // Adapter-declared argv for a protocol whose prompt moves from argv to stdin.
     const streamArgs = invocation.streamArgs || invocation.args;

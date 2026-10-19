@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { releaseResidentRoute, retainResidentRoute } = require('../codex/resident-route');
+const { envDigest } = require('../secrets-vault');
 
 // ── Resident codex app-server process per chat session ──
 //
@@ -161,6 +162,7 @@ function spawnProc(name, s) {
   s.proc = proc;
   if (protocol.retainsHome) proc.once('close', retainResidentRoute(s.env?.CODEX_HOME));
   s.spawnedFingerprint = protocol.fingerprint(s.env);
+  s.spawnedVault = envDigest(s.env);
   s.backgroundActive = 0;
   s.nativeTaskIds = new Set();
   s.lineBuf = '';
@@ -281,6 +283,7 @@ function onExit(name, code, signal, err) {
   s.current = null;
   s.recycling = false;
   s.spawnedFingerprint = null;
+  s.spawnedVault = null;
   s.backgroundActive = 0;
   s.nativeTaskIds?.clear();
   if (wasBusy && cur && typeof cur.reject === 'function') {
@@ -338,6 +341,9 @@ function pump(name) {
   // thread survives the respawn. Live background work owns the child, though:
   // the turn is refused (as chat-stream does) rather than run on the old route
   // or kill the work.
+  // 保险箱变量同样 spawn 时固定：按显式回收处理，后台任务活跃时顺延。
+  if (isAlive(name) && s.spawnedVault != null && envDigest(s.env) !== s.spawnedVault) s.recycleRequested = true;
+
   if (isAlive(name) && s.spawnedFingerprint !== null &&
       PROTOCOLS[s.protocol].fingerprint(s.env) !== s.spawnedFingerprint) {
     if (s.backgroundActive > 0) {
@@ -427,7 +433,7 @@ function ensure(name, cfg) {
       proc: null, started: !!cfg.sessionId, busy: false, backgroundActive: 0,
       queue: [], current: null, lineBuf: '', stderrTail: '',
       idleTimer: null, jsonlParseErrors: 0,
-      recycling: false, spawnedFingerprint: null, recycleRequested: false,
+      recycling: false, spawnedFingerprint: null, spawnedVault: null, recycleRequested: false,
     };
     sessions.set(name, s);
   } else {

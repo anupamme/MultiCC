@@ -583,7 +583,7 @@ test('the fallback choice for an unjudged message is written only when it differ
 test('without a host key API the Jev step names the vault entry and offers no form', () => {
   const { $, routeOn } = mountEditor();
   routeOn();
-  assert.match($('jev').innerText, /vercel-api-key/);
+  assert.match($('jev').innerText, /VERCEL_API_KEY/);
   assert.equal($('jev-form').style.display, 'none');
   assert.equal($('jev-test').style.display, 'none');
 });
@@ -606,7 +606,7 @@ test('the key is checked only once routing is chosen, and a missing key walks th
   routeOn();
   assert.match($('jev-status').textContent, /正在检查/);
   await flush();
-  assert.deepEqual(api.calls.check, ['vercel-api-key']);
+  assert.deepEqual(api.calls.check, ['VERCEL_API_KEY']);
   assert.equal($('jev').classList.contains('missing'), true);
   assert.match($('jev-status').textContent, /还差一步/);
   assert.equal($('steps').style.display, '');
@@ -624,7 +624,7 @@ test('saving a pasted key clears the field at once, stores it under the vault na
   assert.equal($('jev-key-input').value, '', 'the secret does not linger in the form');
   await flush();
   await flush();
-  assert.deepEqual(api.calls.save, [['vercel-api-key', 'vck_example']]);
+  assert.deepEqual(api.calls.save, [['VERCEL_API_KEY', 'vck_example']]);
   assert.equal(api.calls.test.length, 1);
   assert.equal($('jev').classList.contains('ok'), true);
   assert.equal($('jev-form').style.display, 'none');
@@ -644,7 +644,7 @@ test('a rejected key is explained in plain words and the form comes back to repl
   await flush();
   await flush();
   assert.deepEqual(api.calls.test, [{
-    apiKeyName: 'vercel-api-key', gateway: 'vercel', text: '把 README 里的一个错别字改掉',
+    apiKeyName: 'VERCEL_API_KEY', gateway: 'vercel', text: '把 README 里的一个错别字改掉',
   }]);
   assert.equal($('jev-test-result').classList.contains('bad'), true);
   assert.match($('jev-test-result').textContent, /key 无效.*401/);
@@ -749,7 +749,7 @@ test('a pool stored before gateways existed opens on Vercel, and re-saves unchan
   const { container, control, $ } = mountEditor({
     initialSelection: {
       mode: 'auto', protocol: 'anthropic', maxAttempts: 2, sticky: true,
-      routing: { version: 1, provider: 'jev', apiKeyName: 'vercel-api-key', tiers: ['t1', 't2'] },
+      routing: { version: 1, provider: 'jev', apiKeyName: 'VERCEL_API_KEY', tiers: ['t1', 't2'] },
       candidates: [
         { providerId: 'managed-a', priority: 1, enabled: true, tier: 't1' },
         { providerId: 'managed-b', priority: 2, enabled: true, tier: 't2' },
@@ -760,7 +760,7 @@ test('a pool stored before gateways existed opens on Vercel, and re-saves unchan
   assert.equal($('jev-custom').style.display, 'none', 'the custom fields stay out of the way');
   const routing = control.read({ remember: false }).value.routing;
   assert.equal(routing.gateway, 'vercel');
-  assert.equal(routing.apiKeyName, 'vercel-api-key');
+  assert.equal(routing.apiKeyName, 'VERCEL_API_KEY');
   // A preset's host and model come from the server table, so the page writes
   // neither: a persisted copy would outlive a table update.
   assert.equal('endpoint' in routing, false);
@@ -772,20 +772,20 @@ test('switching gateway moves the key, the copy and the custom fields', async ()
   const { container, control, $, routeOn } = mountEditor({ routingKey: api });
   routeOn();
   await flush();
-  assert.deepEqual(api.calls.check, ['vercel-api-key']);
+  assert.deepEqual(api.calls.check, ['VERCEL_API_KEY']);
 
   pickGateway(container, 'typesafe');
   await flush();
   // The previous gateway's verdict is gone, and the new entry is what is checked.
-  assert.deepEqual(api.calls.check, ['vercel-api-key', 'typesafe-api-key']);
+  assert.deepEqual(api.calls.check, ['VERCEL_API_KEY', 'TYPESAFE_API_KEY']);
   assert.equal($('jev-test-result').style.display, 'none', 'a stale verdict never describes another host');
   assert.match(container.querySelector('.multicc-auto-editor-steps').innerText, /TypeSafe 控制台/);
-  assert.equal(control.read({ remember: false }).value.routing.apiKeyName, 'typesafe-api-key');
+  assert.equal(control.read({ remember: false }).value.routing.apiKeyName, 'TYPESAFE_API_KEY');
 
   pickGateway(container, 'custom');
   await flush();
   assert.equal($('jev-custom').style.display, '', 'only the custom gateway shows an address and a model');
-  assert.deepEqual(api.calls.check, ['vercel-api-key', 'typesafe-api-key', 'jev-custom-api-key']);
+  assert.deepEqual(api.calls.check, ['VERCEL_API_KEY', 'TYPESAFE_API_KEY', 'JEV_CUSTOM_API_KEY']);
   // Nothing typed yet, so there is no address to save and the panel says why.
   const refused = control.read({ remember: false });
   assert.equal(refused.code, 'invalid_provider_routing');
@@ -819,7 +819,7 @@ test('a custom gateway writes its address, model and key entry, and a bad addres
     gateway: 'custom',
     endpoint: 'https://jev.example/v1/evaluate',
     model: 'my-jev',
-    apiKeyName: 'jev-custom-api-key',
+    apiKeyName: 'JEV_CUSTOM_API_KEY',
     tiers: ['t1', 't2'],
   });
   // The rule the server enforces on the entry name is the one the page writes:
@@ -852,7 +852,7 @@ test('a gateway switch drops knobs that belonged to the other gateway', () => {
 
   pickGateway(container, 'openrouter');
   const moved = control.read({ remember: false }).value.routing;
-  assert.equal(moved.apiKeyName, 'openrouter-api-key', 'another gateway\'s entry is not this one\'s key');
+  assert.equal(moved.apiKeyName, 'OPENROUTER_API_KEY', 'another gateway\'s entry is not this one\'s key');
   assert.equal('model' in moved, false, 'the old model id belonged to the old gateway');
   assert.equal(moved.onUnknown, 'weak', 'the fallback is not a gateway property');
   assert.equal(moved.timeoutMs, 4_000, 'neither is the timeout');
@@ -873,7 +873,7 @@ test('a custom gateway carries the address and model to the test route', async (
   await flush();
   await flush();
   assert.deepEqual(api.calls.test, [{
-    apiKeyName: 'jev-custom-api-key', gateway: 'custom',
+    apiKeyName: 'JEV_CUSTOM_API_KEY', gateway: 'custom',
     endpoint: 'https://jev.example/v1/evaluate', model: 'my-jev',
     text: '把 README 里的一个错别字改掉',
   }]);
@@ -1019,7 +1019,7 @@ test('a pool saved before cross-CLI and price tiering re-saves byte for byte', (
   // shape too (no tiering key), and no candidate grows a cli/autoModel field.
   const routed = {
     ...stored,
-    routing: { version: 1, provider: 'jev', gateway: 'vercel', apiKeyName: 'vercel-api-key', tiers: ['t1', 't2'] },
+    routing: { version: 1, provider: 'jev', gateway: 'vercel', apiKeyName: 'VERCEL_API_KEY', tiers: ['t1', 't2'] },
     candidates: [
       { providerId: 'managed-a', model: 'model-a', priority: 1, enabled: true, tier: 't1' },
       { providerId: 'managed-b', model: 'model-b', priority: 2, enabled: true, tier: 't2' },

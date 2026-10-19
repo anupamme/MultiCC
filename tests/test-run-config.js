@@ -219,14 +219,14 @@ test('buildAutoSelection：禁用的行不参与，空 providerId 也跳过', ()
 test('buildAutoSelection：按难度 + 交给 Jev = routing/tiering price，不带档位', () => {
   const result = run.buildAutoSelection({
     pick: run.PICK_DIFFICULTY, tiering: run.PRICE_TIERING, rows: rows(),
-    routing: { gateway: 'vercel', apiKeyName: 'vercel-api-key' },
+    routing: { gateway: 'vercel', apiKeyName: 'VERCEL_API_KEY' },
   });
   assert.equal(result.ok, true);
   const value = result.value;
   assert.equal(value.cliSwitch, 'routing');
   assert.equal(value.routing.provider, 'jev');
   assert.equal(value.routing.gateway, 'vercel');
-  assert.equal(value.routing.apiKeyName, 'vercel-api-key');
+  assert.equal(value.routing.apiKeyName, 'VERCEL_API_KEY');
   assert.equal(value.routing.tiering, 'price');
   assert.equal(value.routing.tiers, undefined);
   assert.equal(value.candidates.every(c => c.tier === undefined), true);

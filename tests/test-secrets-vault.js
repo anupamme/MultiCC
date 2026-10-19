@@ -67,7 +67,87 @@ test('name and value validation', () => {
   assert.ok(vault.upsert({ name: 'ok', value: '' }).error);
   assert.ok(vault.upsert({ name: 'ok' }).error);
   assert.ok(vault.upsert({ name: 'ok', value: 'x'.repeat(64 * 1024 + 1) }).error);
-  assert.equal(vault.upsert({ name: 'a.b-c_9', value: 'x' }).created, true);
+  assert.equal(vault.upsert({ name: 'a_b_c9', value: 'x' }).created, true);
+});
+
+test('create rejects names that cannot be injected as env vars', () => {
+  reset();
+  for (const bad of ['ark-seedance-key', 'has.dots', '9LEADING_DIGIT', 'with space', '../etc/passwd', 'A'.repeat(65)]) {
+    const r = vault.upsert({ name: bad, value: 'x' });
+    assert.equal(r.status, 400, bad);
+    assert.match(r.error, /env var identifier/);
+  }
+  assert.equal(vault.upsert({ name: '_LEADING_UNDERSCORE', value: 'x' }).created, true);
+  assert.equal(vault.list().length, 1, 'rejected names never reach the store');
+});
+
+test('legacy illegal-name entries survive reload, stay deletable, and can be renamed', () => {
+  reset();
+  fs.writeFileSync(vault.STORE, JSON.stringify([
+    { name: 'ark-seedance-key', value: 'legacy-secret', description: '宠物视频', source: 'user', createdAt: '2026-10-15T00:00:00.000Z', updatedAt: '2026-10-15T00:00:00.000Z' },
+    { name: 'GOOD_KEY', value: 'good' },
+  ]));
+  vault._loadForTests();
+  assert.deepEqual(vault.list().map(e => e.name), ['ark-seedance-key', 'GOOD_KEY']);
+  assert.deepEqual(Object.keys(vault.envOverlay()), ['GOOD_KEY'], 'legacy name is never injected');
+  assert.equal(vault.upsert({ name: 'ark-seedance-key', value: 'new' }).status, 400, 'cannot write under a legacy name');
+
+  const moved = vault.rename('ark-seedance-key', 'ARK_SEEDANCE_KEY');
+  assert.equal(moved.entry.name, 'ARK_SEEDANCE_KEY');
+  assert.equal(moved.entry.description, '宠物视频');
+  assert.equal(moved.entry.createdAt, '2026-10-15T00:00:00.000Z', 'createdAt survives a rename');
+  assert.equal(vault.reveal('ARK_SEEDANCE_KEY').entry.value, 'legacy-secret', 'value is carried over unchanged');
+  assert.equal(vault.has('ark-seedance-key'), false);
+  assert.equal(vault.envOverlay().ARK_SEEDANCE_KEY, 'legacy-secret');
+
+  vault._loadForTests();
+  assert.deepEqual(vault.list().map(e => e.name), ['ARK_SEEDANCE_KEY', 'GOOD_KEY'], 'rename persisted to disk');
+});
+
+test('rename validates source, target and collisions', () => {
+  reset();
+  vault.upsert({ name: 'A_KEY', value: 'a' });
+  vault.upsert({ name: 'B_KEY', value: 'b' });
+  assert.equal(vault.rename('NOPE', 'C_KEY').status, 404);
+  assert.equal(vault.rename('A_KEY', 'bad-name').status, 400);
+  assert.equal(vault.rename('A_KEY', 'B_KEY').status, 409);
+  assert.equal(vault.reveal('A_KEY').entry.value, 'a', 'failed renames change nothing');
+  assert.equal(vault.rename('A_KEY', 'A_KEY').unchanged, true);
+});
+
+test('rename route returns metadata only', () => {
+  reset();
+  vault.upsert({ name: 'OLD_NAME', value: 'sk-route-secret' });
+  const app = fakeApp();
+  vault.mount(app);
+  const res = invoke(findHandler(app, 'POST', '/api/secrets/:name/rename'), { params: { name: 'OLD_NAME' }, body: { to: 'NEW_NAME' } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.entry.name, 'NEW_NAME');
+  assert.ok(!JSON.stringify(res.body).includes('sk-route-secret'));
+  assert.equal(invoke(findHandler(app, 'POST', '/api/secrets/:name/rename'), { params: { name: 'NEW_NAME' }, body: { to: 'x-y' } }).statusCode, 400);
+});
+
+test('envDigest tracks added, changed and removed entries without exposing values', () => {
+  reset();
+  assert.equal(vault.envDigest({}), '', 'empty vault → empty digest');
+  vault.upsert({ name: 'TOKEN_A', value: 'v1' });
+  // 真实用法：spawn 当时存下摘要，之后每轮拿「新建的 env」去比。
+  const spawned = vault.envDigest(vault.applyEnvOverlay({}));
+  assert.match(spawned, /^[0-9a-f]{64}$/);
+  assert.ok(!spawned.includes('v1'), 'digest is a hash, never the value');
+  const now = () => vault.envDigest(vault.applyEnvOverlay({}));
+  assert.equal(now(), spawned, 'stable while nothing changes');
+
+  vault.upsert({ name: 'TOKEN_B', value: 'v2' });
+  assert.notEqual(now(), spawned, 'added entry → running process is stale');
+
+  const afterAdd = now();
+  vault.upsert({ name: 'TOKEN_A', value: 'v1-new' });
+  assert.notEqual(now(), afterAdd, 'changed value → stale');
+
+  const afterChange = now();
+  vault.remove('TOKEN_B');
+  assert.notEqual(now(), afterChange, 'removed entry → stale');
 });
 
 test('remove and reveal on missing entries', () => {
@@ -145,7 +225,9 @@ test('envOverlay injects clean names and skips routing namespaces', () => {
   vault.upsert({ name: 'OPENAI_API_KEY', value: 'must-not-inject' });
   vault.upsert({ name: 'CODEX_HOME', value: '/must-not-inject' });
   vault.upsert({ name: 'MULTICC_SESSION_ID', value: 'must-not-inject' });
-  vault.upsert({ name: 'has.dots-and-dashes', value: 'not-an-env-name' });
+  // 旧版本留下的非法名条目只能来自磁盘；新建已被 upsert 拒绝。
+  fs.writeFileSync(vault.STORE, JSON.stringify([...vault.list().map(e => vault.reveal(e.name).entry), { name: 'has.dots-and-dashes', value: 'not-an-env-name' }]));
+  vault._loadForTests();
   const overlay = vault.envOverlay();
   assert.deepEqual(Object.keys(overlay).sort(), ['MY_TOKEN', 'github_token']);
   assert.equal(overlay.MY_TOKEN, 'tok-1');

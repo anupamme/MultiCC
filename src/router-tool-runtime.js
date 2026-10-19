@@ -957,10 +957,10 @@ function createRouterToolRuntime({
   async function requestSecretInput(context, args) {
     rejectUnknownArguments(args, new Set(['name', 'question', 'reason']));
     const name = String(args.name == null ? '' : args.name).trim();
-    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) {
       throw new RouterToolError(
         'invalid_arguments',
-        'name must match [A-Za-z0-9_.-] and be 1-64 characters',
+        'name must be a valid env var identifier ([A-Za-z_][A-Za-z0-9_]*) and 1-64 characters',
       );
     }
     const question = cleanText(args.question, 'question', MAX_QUESTION_LENGTH);
