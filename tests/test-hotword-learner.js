@@ -143,6 +143,51 @@ test('chat history scan reads JSONL and array files, skips templates and interna
   assert.equal(learner.list(), 'MultiCC, CC-Switch');
 });
 
+test('model replies add terms only when they recur across many sessions', async () => {
+  const dir = tmpDir();
+  const history = path.join(dir, 'chat_history');
+  fs.mkdirSync(history);
+  const line = (role, content) => JSON.stringify({ role, content });
+  const write = (name, lines) => fs.writeFileSync(path.join(history, name), lines.join('\n'));
+
+  // A term the user never types but the model uses session after session.
+  for (let i = 0; i < 6; i++) write(`a${i}.json`, [line('assistant', `AutoCommit 第${i}次提交`)]);
+  // An all-caps token below the stricter bar is a ticker, not vocabulary.
+  for (let i = 0; i < 9; i++) write(`b${i}.json`, [line('assistant', `GSPC 第${i}次收盘`)]);
+  // One that really is part of the daily vocabulary clears the higher bar.
+  for (let i = 0; i < 10; i++) write(`c${i}.json`, [line('assistant', `CDP 第${i}次连上`)]);
+  // A canned reply that repeats verbatim is a template, not vocabulary.
+  for (let i = 0; i < 4; i++) write(`d${i}.json`, [line('assistant', '模板回复 TemplateOnly 请稍候')]);
+  // Long model output is skipped before mining.
+  for (let i = 0; i < 5; i++) write(`e${i}.json`, [line('assistant', `LongOnlyTerm ${i} ` + 'x'.repeat(1500))]);
+
+  const learner = createHotwordLearner({ file: path.join(dir, 'voice_hotwords.json'), chatHistoryDir: history, log: quiet });
+  await learner.refresh();
+  const byTerm = Object.fromEntries(learner.snapshot().typed.map(t => [t.term, t]));
+  assert.equal(byTerm.AutoCommit.sessions, 6);
+  assert.equal(byTerm.AutoCommit.source, 'assistant');
+  assert.equal(byTerm.CDP.sessions, 10);
+  for (const absent of ['GSPC', 'TemplateOnly', 'LongOnlyTerm']) assert.ok(!byTerm[absent], absent);
+});
+
+test('the user\'s own spelling outranks a model spelling of the same term', async () => {
+  const dir = tmpDir();
+  const history = path.join(dir, 'chat_history');
+  fs.mkdirSync(history);
+  const line = (role, content) => JSON.stringify({ role, content });
+  const write = (name, lines) => fs.writeFileSync(path.join(history, name), lines.join('\n'));
+
+  for (let i = 0; i < 3; i++) write(`u${i}.json`, [line('user', `multicc 第${i}次启动`)]);
+  for (let i = 0; i < 2; i++) write(`v${i}.json`, [line('user', `MultiCC 第${i}次启动`)]);
+  for (let i = 0; i < 6; i++) write(`m${i}.json`, [line('assistant', `MultiCC 第${i}次启动`)]);
+
+  const learner = createHotwordLearner({ file: path.join(dir, 'voice_hotwords.json'), chatHistoryDir: history, log: quiet });
+  await learner.refresh();
+  const typed = learner.snapshot().typed.map(t => [t.term, t.count, t.sessions, t.source]);
+  assert.deepEqual(typed, [['multicc', 5, 5, 'user']]);
+  assert.equal(learner.list(), 'multicc');
+});
+
 test('the voice host only starts learning when the real server opts in', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/voice/host.js'), 'utf8');
   assert.match(src, /if \(autoDownloadAsrModels && voice\.autoHotwordsEnabled && voice\.autoHotwords\)/);
