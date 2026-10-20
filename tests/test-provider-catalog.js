@@ -425,3 +425,39 @@ test('providerDisplayName translates the builtin identity in English', () => {
     if (previous === undefined) delete global.window; else global.window = previous;
   }
 });
+
+test('explicit compatibleClis keeps credential-gated dsh and grok', () => {
+  // 服务端已经算好 compatibleClis；客户端只能按同样的凭据/协议门禁过滤，
+  // 不能再用一份漏掉 dsh / grok 的旧白名单把可用的线路丢掉。
+  const anthropicWithCreds = catalog.normalizeProvider({
+    id: 'claude-deepseek',
+    appType: 'claude',
+    apiFormat: 'anthropic',
+    baseUrl: 'https://api.deepseek.com/anthropic',
+    hasToken: true,
+    compatibleClis: ['claude', 'claude-exp', 'opencode', 'zcode', 'dsh', 'grok'],
+  });
+  assert.deepEqual(anthropicWithCreds.compatibleClis,
+    ['claude', 'claude-exp', 'opencode', 'zcode', 'dsh', 'grok']);
+
+  const anthropicNoCreds = catalog.normalizeProvider({
+    id: 'claude-no-creds',
+    appType: 'claude',
+    apiFormat: 'anthropic',
+    baseUrl: 'https://relay.test/anthropic',
+    hasToken: false,
+    compatibleClis: ['claude', 'zcode', 'dsh', 'grok'],
+  });
+  assert.deepEqual(anthropicNoCreds.compatibleClis, ['claude']);
+
+  const responsesWithCreds = catalog.normalizeProvider({
+    id: 'codex-relay',
+    appType: 'codex',
+    apiFormat: 'openai_responses',
+    baseUrl: 'https://relay.test',
+    hasToken: true,
+    compatibleClis: ['codex', 'kimi', 'dsh', 'grok'],
+  });
+  assert.deepEqual(responsesWithCreds.compatibleClis, ['codex', 'kimi', 'grok'],
+    'dsh only speaks anthropic; grok accepts either protocol');
+});
