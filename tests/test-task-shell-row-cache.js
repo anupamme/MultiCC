@@ -78,10 +78,16 @@ test('entries 缓存同样按内容失效，且只对白名单里的小表开放
   assert.deepEqual(store.cachedEntries('task-first:indexed'), store.entries('task-first:indexed'));
   // receipt 一张表就 201MB：白名单外必须报错，而不是悄悄退化成不缓存。
   assert.throws(() => store.cachedList('receipt'), /row cache not allowed for kind receipt/);
-  assert.throws(() => store.cachedEntries('link'), /row cache not allowed for kind link/);
+  assert.throws(() => store.cachedEntries('receipt'), /row cache not allowed for kind receipt/);
   // 容量判定那两张表在名单里（它们同样是「小表 + 被逐条问到」，见 store.js）。
   assert.deepEqual(store.cachedList('workspace:record'), []);
   assert.deepEqual(store.cachedList('workspace:lease'), []);
+  // link / shell 已进白名单（chatScope / view() 每请求读）：行为与 task 相同。
+  store.set('link', 'sh_1:tsk_1', { shellId: 'sh_1', taskId: 'tsk_1' });
+  assert.deepEqual(store.cachedEntries('link'), store.entries('link'));
+  assert.equal(store.cachedEntries('link')[0], store.cachedEntries('link')[0], 'link 行缓存复用');
+  store.set('shell', 'sh_1', { id: 'sh_1', sourceSessionId: 's1' });
+  assert.deepEqual(store.cachedList('shell').map(s => s.id), ['sh_1']);
 });
 
 // 行缓存接进容量判定（registry.available）之后，「可用」这个答案不许在缓存里变陈旧：

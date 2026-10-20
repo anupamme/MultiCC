@@ -93,9 +93,11 @@ function createTaskShellRuntime(ports) {
     if (linked && !store.get('link', `${s.id}:${id}`)) throw failure('task_not_linked');
     return task;
   }
+  // 行缓存版本：一次解析后复用，避免每个 HTTP 请求把 10MB 的 task 表重新
+  // JSON.parse 一遍（CPU profile 实测占进程 60%）。返回的行对象是共享、只读的。
   function linkedTasks(s) {
-    const ids = new Set(store.list('link').filter(value => value.shellId === s.id).map(value => value.taskId));
-    return store.list('task').filter(task => ids.has(task.id));
+    const ids = new Set(store.cachedEntries('link').filter(([, value]) => value.shellId === s.id).map(([, value]) => value.taskId));
+    return store.cachedList('task').filter(task => ids.has(task.id));
   }
   // One read-only traversal for chat entry, dashboard state and live fan-out.
   // A reference/link does not confer ownership or select another shell's task.
@@ -122,7 +124,7 @@ function createTaskShellRuntime(ports) {
       taskId: null, executionSessionId: sessionId };
   }
   function stateSources(executionSessionId) {
-    return store.list('shell').filter(s => !s.archivedAt
+    return store.cachedList('shell').filter(s => !s.archivedAt
       && getRecord(s.sourceSessionId)?.dirId === s.dirId)
       .filter(s => shellTarget(s).executionSessionId === executionSessionId)
       .map(s => s.sourceSessionId);
@@ -420,7 +422,7 @@ function createTaskShellRuntime(ports) {
     const receipts = store.receiptsForShell(s.id, 100);
     const latestWork = [...receipts].reverse().find(receipt => receipt.payload.intent === 'work' && receipt.status === 'accepted');
     return { ...s, enabled: true, tasks: linkedTasks(s),
-      availableTasks: store.list('task').filter(t => t.dirId === s.dirId).map(t => ({ id: t.id, title: t.title })),
+      availableTasks: store.cachedList('task').filter(t => t.dirId === s.dirId).map(t => ({ id: t.id, title: t.title })),
       tokenSavings: latestWork?.contextSavings || null,
       receipts: receipts.map(r => ({
         id: r.id, clientMsgId: r.payload.clientMsgId, taskId: r.taskId, intent: r.payload.intent,
