@@ -23,35 +23,66 @@ open http://127.0.0.1:8899
 - 端口：`PORT=9000`。模型根目录：`ASR_LOCAL_MODEL_DIR`（默认 `~/.multicc/asr-models`）。
 - 页面会先 `/api/warm` 预加载勾选的引擎；首次加载模型约 1–10 秒。
 
-## 在线 ASR 的口子
+## 在线 ASR
 
-在线引擎直接复用 MultiCC 的 `.env`，默认读主仓根目录的 `.env`
-（`ASR_COMPARE_ENV=/path/to/.env` 可改）。认这几个键：
+在线部分是一张「服务清单 × 协议适配器」表：每个服务在 `server.js` 的 `PROVIDERS` 里
+描述一次（地址、模型、key、说哪种协议），传输层复用同一套代码。加一个同类服务只需要
+加一条数据，不用碰解码逻辑。
 
-| 键 | 默认 |
-|---|---|
-| `WHISPER_BASE_URL` | `https://api.openai.com/v1` |
-| `WHISPER_API_KEY` | 无（缺失时回落 `OPENROUTER_API_KEY`） |
-| `WHISPER_MODEL` | `whisper-1` |
-| `WHISPER_LANGUAGE` | `zh` |
+| id | 服务 | 协议 | 热词方式 |
+|---|---|---|---|
+| `groq` | Groq Whisper Turbo | `openai-transcriptions` | prompt |
+| `openai` | OpenAI gpt-4o-transcribe | `openai-transcriptions` | prompt |
+| `siliconflow` | 硅基流动 SenseVoiceSmall（**与本地同模型**） | `openai-transcriptions` | 无 |
+| `zhipu` | 智谱 GLM-ASR | `openai-transcriptions` | **原生热词数组** |
+| `mistral` | Mistral Voxtral | `openai-transcriptions` | prompt |
+| `deepgram` | Deepgram Nova-3 | `deepgram` | keywords 加权 |
+| `elevenlabs` | ElevenLabs Scribe | `elevenlabs` | 无 |
+| `assemblyai` | AssemblyAI Universal | `assemblyai` | word_boost |
+| `qwen` | 阿里 Qwen3-ASR-Flash | `openai-chat-audio` | context 提示 |
+| `volc` | 火山豆包流式 2.0 | `volc-sauc`（WebSocket 二进制帧） | **原生热词表** |
+| `custom` | 任意 OpenAI 兼容接口 | `openai-transcriptions` | prompt |
 
-任何 OpenAI 兼容的 `/audio/transcriptions` 都能接：OpenAI、Groq、自建代理都行。
-只有「在线」那一项会用到它，本地引擎不联网。
+### 凭据
+
+读主仓根目录的 `.env`（`ASR_COMPARE_ENV=/path/to/.env` 可改），命名规律
+`ASR_<ID>_API_KEY` / `_BASE_URL` / `_MODEL` / `_LANGUAGE`。兼容几个既有名字：
+
+- `groq` 回落到 `WHISPER_API_KEY` / `OPENROUTER_API_KEY`（应用本来就用这几个）
+- `siliconflow` 回落 `SILICONFLOW_API_KEY`、`zhipu` 回落 `ZHIPU_API_KEY`
+- `qwen` 回落 `DASHSCOPE_API_KEY`、`deepgram` / `elevenlabs` / `assemblyai` 回落同名键
+- `volc` 另有 `ASR_VOLC_APP_ID`（可空）和 `ASR_VOLC_RESOURCE_ID`（默认 `volc.bigasr.sauc.duration`）
 
 三种改法，优先级从低到高：
 
-1. `.env` 里的 `WHISPER_*`（进程启动时读一次，改完要重启对比台）；
-2. 页面「在线 ASR 接口」折叠块里填 Base URL / Model / API Key —— 只对本次提交生效，
-   输入框留空则沿用服务端配置；
-3. 直接调接口：`x-cloud-config` 头放 base64 的 `{baseUrl, model, key, language}`。
+1. `.env`（进程启动时读一次，改完要重启对比台）；
+2. 页面上每个服务行点「配置」，填 Base URL / 模型 / Key / 语言 —— 只对本次提交生效，
+   留空沿用服务端配置；
+3. 直接调接口：`x-cloud-config` 头放 base64 的 `{ <id>: {baseUrl, model, key, language} }`。
 
-页面的 `/api/status` 只回 `hasKey: true/false`，**不会把 key 回传给浏览器**。
-错误里带了 `****` 的 key 会被当成掩码丢弃，不会真的拿去请求。
+`/api/status` 只回 `hasKey: true/false`，**不会把 key 回传给浏览器**；带 `****` 的值
+被当成掩码丢弃，不会真的拿去请求。
 
-真正的问题是：**热词在在线这边只能是 prompt 提示，不是解码期偏置。**
-所以卡片上会明确标「热词只作为 Whisper prompt 提示，不是解码期偏置」，
-它可能帮你把 `AutoCommit` 写对，也可能完全不起作用——不像本地 transducer 那样有
-`context_score` 可以调。
+### 热词的差别（这是重点）
+
+在线服务对热词的支持方式完全不同，卡片上会逐条标出实际用的是哪一种：
+
+- `prompt` / `context`：只是个提示，模型可能完全无视（Whisper 系、Qwen）
+- `keywords` / `word_boost`：关键词加权（Deepgram、AssemblyAI）
+- `native`：真正的热词表，由服务端参与解码（智谱、火山）
+
+所以「在线 CER 更低」和「在线能修好 `worktree`」是两件不同的事，尽量分开看。
+
+### 已知限制
+
+- **智谱**单段上限 30 秒 / 25MB，超了会直接报错。
+- **火山**没有可用的本地批量接口：录音文件识别只接受公网可下载的 URL，本机
+  `127.0.0.1` 的音频它取不到。所以这里走的是流式 WebSocket，把整段 PCM 一次推完；
+  需要 `ws` 模块（仓库已有，或设 `WS_MODULE=/path/to/ws`）。
+- **阿里**的「OpenAI 兼容」并不是 `/audio/transcriptions`，而是
+  `/chat/completions` + `input_audio`，所以单独一个协议。
+- 火山这条链路是照协议文档实现的，但**尚未用真实凭证跑通过**；其余各家都用
+  假 key 验证过「地址正确、返回 401」。
 
 ## 页面怎么用
 
@@ -60,8 +91,9 @@ open http://127.0.0.1:8899
 2. **参考文本**：把刚才说的话打进去，每张卡会给出 CER（错字率）和逐字对齐。
 3. **热词权重**：0.5–6，越高越容易把热词塞进结果，也越容易幻觉。建议从 3 起，往下试。
 4. 点「开始录音」说一句、再点停止；或者「选择音频文件」拿现成 wav 复现。
-5. **在线 ASR 接口**那一行是折叠的，点开可临时改 Base URL / 模型 / Key。
-   只要 `.env` 里有 key，页面启动时会自动勾上「在线 Whisper」并显示「已配置」。
+5. **在线 ASR 服务**是折叠的，点开是一行一个服务；勾选即参与对比，点「配置」
+   可临时改地址 / 模型 / Key。`.env` 里有 key 的服务会显示「已配置」并默认勾上。
+   没 key 也能勾——现场填一个就行，只用于这一次请求。
 
 ## 引擎与实测（2026-10-20，6 句 TTS 基准）
 
