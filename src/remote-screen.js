@@ -114,9 +114,13 @@ async function capture(out, region = null) {
 
 const inflight = new Map();
 let lastFrame = null;
+// 帧缓存窗口按主流轮询节奏（500ms 一帧）取 450ms：单个 2fps 观看端隔帧命中，
+// 两个端同时看（web + App）几乎全程共享同一帧，子进程风暴（每帧 snap+3×sips）
+// 直接砍半以上。输入事件会清缓存，点完仍立刻拿到新帧，不影响交互回显。
+const FRAME_CACHE_MS = 450;
 function frame(region = null) {
   const key = JSON.stringify(region);
-  if (lastFrame?.key === key && Date.now() - lastFrame.at < 120) return Promise.resolve(lastFrame);
+  if (lastFrame?.key === key && Date.now() - lastFrame.at < FRAME_CACHE_MS) return Promise.resolve(lastFrame);
   if (inflight.has(key)) return inflight.get(key);
   // Output files cannot be shared across different selections or snapshots.
   fs.mkdirSync(deps.dir, { recursive: true });

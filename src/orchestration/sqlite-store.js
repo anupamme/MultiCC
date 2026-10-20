@@ -498,7 +498,9 @@ function openDatabase({ Database, file, fsImpl }) {
     chmodPrivate(fsImpl, file);
     db = new Database(file);
     db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = FULL');
+    // WAL 的推荐档是 NORMAL：FULL 会在每笔调度记录提交时同步 fsync，
+    // 多车道并发轮次下直接卡住事件循环（见 task-shell/store 同款注释）。
+    db.pragma('synchronous = NORMAL');
     db.pragma('foreign_keys = ON');
     db.pragma('secure_delete = ON');
     db.pragma('busy_timeout = 4000');

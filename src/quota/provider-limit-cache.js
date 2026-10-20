@@ -374,7 +374,9 @@ function openDatabase({ Database, file, fsImpl }) {
     chmodPrivate(fsImpl, file);
     db = new Database(file);
     db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = FULL');
+    // WAL 配套 NORMAL：额度限流缓存不值得为每笔写入付一次同步 fsync
+    // （丢最后几笔只是限流窗口稍旧，见 task-shell/store 同款注释）。
+    db.pragma('synchronous = NORMAL');
     db.pragma('secure_delete = ON');
     db.pragma('busy_timeout = 4000');
     db.pragma('wal_autocheckpoint = 1000');
