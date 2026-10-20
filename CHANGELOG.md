@@ -2,6 +2,20 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.0 — A quota gate that refuses first, a refresh ladder that stops, and the dsh lane back (2026-10-21)
+
+### Highlights
+
+- **Official accounts get a quota guard in front of them** — `authorizeProxyRequest` now checks the account before it spends a request: when any of the 5h / weekly / monthly windows is at or past its threshold the call is refused with the reason, and Auto's candidate pool skips the same accounts. It is on by default at 98%, scoped by default to `*-official` accounts, treats a stale reading as its lower bound, and never blocks a window that publishes no reset time (`src/quota/quota-guard.js`, `src/routes/quota-guard.js`). Every threshold is yours to set: `quota-guard.json` under the data directory (5s mtime cache, hot reload), `MULTICC_QUOTA_GUARD*` environment overrides, and `GET`/`PUT /api/quota/guard`. The Provider page grows a 额度保护 card (switch, three thresholds, scope) that saves as you edit, mirrored in the App's provider sheet.
+- **A refresh ladder that backs off instead of knocking forever** — one account had been retried every twelve minutes for thirteen days, and a three-day window produced 413 identical `claude -p ok` turns. Failures now back off exponentially to a six-hour ceiling, a run of failures — or a single explicit server-side rejection — parks the credential until the credential itself changes, and one expired token gets a small fixed budget of "is it due yet" questions and at most two real turns (`src/claude-auth/oauth-refresh.js`). Failures are classified (rejected / network / unknown) from redacted CLI output instead of being judged by exit code, and the ladder's state is readable through `refresh-health.js`. Claude usage now refreshes only when you ask it to.
+- **The dsh lane works again** — dsh-base removed the synchronous `session.events` read, so the vendored runner threw "not iterable" *after* the answer had already streamed, turning every dsh turn into an error. The runner feature-detects `session.snapshotEvents(fromSeq)` and falls back to `ownEvents()`/`events`, and profiles re-provision themselves (`DSH_PROFILE_VERSION` 3). The web client no longer re-filters the server's `compatibleClis` through a stale whitelist, so dsh and grok keep their line dropdowns and no longer show "no usable route".
+- **Chinese can be typed into the Air console search** — every keystroke rebuilt the whole console page, which silently ended the input-method composition, so pinyin never became characters. Rebuilds are now deferred while a composition is open and replayed once on `compositionend`, on the overview, the all-tasks and the mobile recent lists alike.
+- **Smaller things** — the 服务与文档 group headers collapse and expand (with expand/collapse-all), and the App's remote screen gains a touch controller with direct and trackpad modes (slip-tolerant left-button drag, two-finger scroll, two-finger tap for right click, hold-then-drag in trackpad mode).
+
+### Release tier
+
+- Core grew to 337 entries. The new gates are the quota guard pair (`tests/test-quota-guard.js`, `tests/test-quota-guard-routes.js`), `tests/test-claude-refresh-park.js` (a fake CLI in a temp dir, no network), `tests/test-official-egress-per-account.js` and the App's `remote_touch_controller_test.dart`; none of them touches a real account or device.
+
 ## v2.7.1 — The v2.7.0 changes, cut again with a green release gate (2026-10-20)
 
 `v2.7.0` published its tag but never produced release assets: the shared core

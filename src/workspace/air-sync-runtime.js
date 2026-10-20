@@ -64,7 +64,12 @@ function createAirSyncRuntime({ build, subscribe, taskIdsForSession = () => [], 
     if (['task_board_update', 'task_state', 'status', 'summary', 'session_queue_status', 'session_configuration_applied',
       'session_created', 'session_deleted', 'session_renamed', 'merge_state', 'workspace_state'].includes(event?.type)) {
       const ids = event.taskIds || (event.sessionId ? taskIdsForSession(event.sessionId) : null);
-      invalidate(ids);
+      // 会话出现/消失/改名改的是卡片集合本身：此刻还解析不到任务卡（尚未挂板的新会话、
+      // fork 出来的 worker）也必须走全量构建，否则只有 30s 兜底核对才会把它挂上板，
+      // 新任务在任务板/派发发现里会消失半分钟。元数据档只适用于已知会话的状态类事件。
+      const createsOrRemovesCards = event?.type === 'session_created'
+        || event?.type === 'session_deleted' || event?.type === 'session_renamed';
+      invalidate(createsOrRemovesCards && Array.isArray(ids) && !ids.length ? null : ids);
     }
   });
   function attach(socket, url) {
