@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>本地语音识别对比台</title>
+<title>语音识别对比台</title>
 <style>
   :root {
     --bg: #f6f7f9; --panel: #fff; --line: #e3e6ea; --ink: #1d2129; --muted: #6b7280;
@@ -57,10 +57,18 @@
   .cloud { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fbfcfe; }
   .cloud summary { cursor: pointer; font-size: 13px; color: var(--muted); }
   .cloud summary b { color: var(--ink); }
-  .cloud .grid3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-top: 10px; }
-  .cloud label { display: block; font-size: 12px; color: var(--muted); }
-  .cloud input { width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
-  @media (max-width: 720px) { .cloud .grid3 { grid-template-columns: 1fr; } }
+  .prov { border-top: 1px solid var(--line); padding: 8px 0 4px; display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; }
+  .prov:first-of-type { border-top: 0; }
+  .prov-fields { grid-column: 1 / -1; }
+  .prov-head { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .prov-head input { margin: 0; }
+  .prov-head.no-key { color: var(--muted); }
+  .prov-name { font-weight: 500; }
+  .prov-toggle { margin-left: auto; padding: 3px 10px; font-size: 12px; border-radius: 8px; }
+  .prov-fields { display: grid; grid-template-columns: 2fr 1.2fr 1.2fr 0.6fr; gap: 8px; margin: 8px 0 4px 24px; }
+  .prov-fields label { display: block; font-size: 11px; color: var(--muted); }
+  .prov-fields input { width: 100%; margin-top: 3px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; font: inherit; background: #fff; }
+  @media (max-width: 720px) { .prov-fields { grid-template-columns: 1fr; } }
   .hist { margin-top: 8px; }
   .hist details { border-top: 1px solid var(--line); padding: 8px 0; }
   .hist summary { cursor: pointer; font-size: 13px; color: var(--muted); }
@@ -70,8 +78,8 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>本地语音识别对比台</h1>
-  <div class="sub">同一个页面、同一段录音，几家本地模型并排出结果。热词走各模型的解码期偏置（Zipformer transducer 专有）。</div>
+  <h1>语音识别对比台</h1>
+  <div class="sub">同一个页面、同一段录音，本地模型和在线服务并排出结果。本地热词走解码期偏置（Zipformer transducer 专有），在线各家对热词的支持方式不同。</div>
 
   <div class="panel">
     <div class="row">
@@ -98,13 +106,10 @@
     <div class="engines" id="engines"></div>
 
     <details class="cloud" id="cloudBox">
-      <summary>在线 ASR 接口（OpenAI 兼容 <code>/audio/transcriptions</code>）· <b id="cloudState">读取中…</b></summary>
-      <div class="grid3">
-        <label>Base URL<input id="cloud-url" placeholder="https://api.groq.com/openai/v1"></label>
-        <label>Model<input id="cloud-model" placeholder="whisper-large-v3-turbo"></label>
-        <label>API Key<input id="cloud-key" type="password" placeholder="留空沿用应用配置"></label>
-      </div>
-      <div class="hint">默认沿用应用 .env 里的 Whisper 配置，也可以在这里临时指向任何兼容接口。Key 只在本机内存里用于这一次请求，不落盘、不回显。热词框的内容会作为 Whisper 的 prompt 提示（不是解码期偏置）。</div>
+      <summary>在线 ASR 服务 · <b id="cloudState">读取中…</b></summary>
+      <div id="provList"></div>
+      <div class="hint">配置来自 .env（<code>ASR_&lt;服务&gt;_API_KEY</code>；Groq 兼容旧的 <code>WHISPER_*</code>），也可以在这里为单次请求临时填。
+        Key 只在本进程内存里用于这一次请求，不落盘、不回显。热词能不能用取决于服务：智谱 / 火山有原生热词表，Whisper 系只能当 prompt 提示。</div>
     </details>
 
     <div class="controls">
@@ -129,9 +134,54 @@
 <script>
 const $ = id => document.getElementById(id);
 const state = { engines: ['sense', 'bi', 'bi-hw'], running: false };
+const provRows = {};   // provider id -> row element, for reading overrides
 let media = null, recorder = null, chunks = [], timerId = null, t0 = 0;
 
 function fmtMs(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
+function setEngine(id, on) {
+  state.engines = on ? [...new Set([...state.engines, id])] : state.engines.filter(x => x !== id);
+}
+
+// 在线服务：一行一个，勾选即参与本次对比。有 key 的默认勾上；没 key 也能勾，
+// 页面上临时填一个即可（服务端从不回传已配置的 key）。
+function buildProviders(list) {
+  const box = $('provList');
+  box.innerHTML = '';
+  let ready = 0;
+  for (const p of list) {
+    if (p.hasKey) ready++;
+    const on = !!p.hasKey;
+    if (on) setEngine(p.id, true);
+    const row = document.createElement('div');
+    row.className = 'prov';
+    row.innerHTML = `
+      <label class="prov-head${p.hasKey ? '' : ' no-key'}">
+        <input type="checkbox" ${on ? 'checked' : ''}>
+        <span class="prov-name">${esc(p.label)}</span>
+        <span class="badge ${p.hasKey ? 'ok' : ''}">${p.hasKey ? '已配置' : '未配置'}</span>
+        <span class="badge">${esc(p.protocol)}</span>
+      </label>
+      <button type="button" class="prov-toggle">配置</button>
+      <div class="prov-fields" hidden>
+        <label>Base URL<input data-f="baseUrl" value="${esc(p.baseUrl || '')}"></label>
+        <label>模型<input data-f="model" value="${esc(p.model || '')}"></label>
+        <label>API Key<input data-f="key" type="password" placeholder="${p.hasKey ? '已配置（留空沿用）' : '未配置：在这里填'}"></label>
+        <label>语言<input data-f="language" value="${esc(p.language || '')}"></label>
+      </div>`;
+    row.querySelector('.prov-head input').addEventListener('change', e => {
+      setEngine(p.id, e.target.checked);
+      row.querySelector('.prov-head').classList.toggle('no-key', !e.target.checked && !p.hasKey);
+    });
+    row.querySelector('.prov-toggle').addEventListener('click', () => {
+      const f = row.querySelector('.prov-fields');
+      f.hidden = !f.hidden;
+    });
+    provRows[p.id] = row;
+    box.appendChild(row);
+  }
+  $('cloudState').textContent = `${ready}/${list.length} 已配置`;
+  $('cloudState').style.color = ready ? 'var(--ok)' : 'var(--warn)';
+}
 
 async function boot() {
   try {
@@ -145,14 +195,6 @@ async function boot() {
       $('msg').style.color = 'var(--bad)';
     }
     if (st.hotwords && !$('hotwords').value) $('hotwords').value = st.hotwords;
-    // 在线口子：默认沿用应用配置；有 key 就默认勾上，没 key 也不禁用（页面上可临时填）。
-    const cloud = st.cloud || {};
-    $('cloud-url').value = cloud.baseUrl || '';
-    $('cloud-model').value = cloud.model || '';
-    $('cloud-key').placeholder = cloud.hasKey ? '已配置（留空沿用）' : '未配置：在这里填一个';
-    $('cloudState').textContent = cloud.hasKey ? '已配置' : '未配置';
-    $('cloudState').style.color = cloud.hasKey ? 'var(--ok)' : 'var(--warn)';
-    if (cloud.hasKey && !state.engines.includes('cloud')) state.engines = ['cloud', ...state.engines];
     for (const [id, spec] of Object.entries(st.engines)) {
       const ok = st.models[spec.base || id];
       const el = document.createElement('label');
@@ -160,11 +202,12 @@ async function boot() {
       el.innerHTML = `<input type="checkbox" ${state.engines.includes(id) ? 'checked' : ''} ${ok ? '' : 'disabled'}> ${spec.label}${ok ? '' : '（未下载）'}`;
       el.querySelector('input').addEventListener('change', e => {
         const on = e.target.checked;
-        state.engines = on ? [...new Set([...state.engines, id])] : state.engines.filter(x => x !== id);
+        setEngine(id, on);
         el.classList.toggle('on', on);
       });
       $('engines').appendChild(el);
     }
+    buildProviders(st.providers || []);
     // Warm the plain engines in the background; the first recording otherwise
     // pays the model load (~1-10s) on top of its own decode time.
     fetch('/api/warm', { method: 'POST', headers: { 'x-engines': state.engines.join(',') } }).catch(() => {});
@@ -218,12 +261,21 @@ async function submit(buffer, mime, audioUrl) {
   };
   const hw = $('hotwords').value.trim();
   if (hw) hdrs['x-hotwords'] = btoa(unescape(encodeURIComponent(hw)));
-  if (state.engines.includes('cloud')) {
+  // 只把勾选中的在线服务的字段发上去；key 留空就沿用服务端配置。
+  const overrides = {};
+  for (const id of state.engines) {
+    const row = provRows[id];
+    if (!row) continue;
     const cfg = {};
-    const url = $('cloud-url').value.trim(); if (url) cfg.baseUrl = url;
-    const model = $('cloud-model').value.trim(); if (model) cfg.model = model;
-    const key = $('cloud-key').value.trim(); if (key) cfg.key = key;
-    if (Object.keys(cfg).length) hdrs['x-cloud-config'] = btoa(unescape(encodeURIComponent(JSON.stringify(cfg))));
+    for (const f of ['baseUrl', 'model', 'language', 'key']) {
+      const el = row.querySelector(`[data-f="${f}"]`);
+      const v = el && el.value.trim();
+      if (v) cfg[f] = v;
+    }
+    if (Object.keys(cfg).length) overrides[id] = cfg;
+  }
+  if (Object.keys(overrides).length) {
+    hdrs['x-cloud-config'] = btoa(unescape(encodeURIComponent(JSON.stringify(overrides))));
   }
   const t0 = performance.now();
   let out;
