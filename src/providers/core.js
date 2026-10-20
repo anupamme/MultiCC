@@ -894,25 +894,34 @@ function updateProvider(appType, id, { name, baseUrl, authToken, model, models, 
     if ([name, baseUrl, authToken, model, models, apiFormat, settingsConfig, aliasMap].some(v => v !== undefined)) {
       throw new Error('请在官方账号中管理登录和切换账号');
     }
-    const officialProviderId = `${appType}-official`;
+    // The allowlist override belongs to the entry being edited: the terminal
+    // alias keeps its own record, each account entry gets its own — never a
+    // vendor-wide shared one (an unrestricted account must stay unrestricted).
+    const targetId = isOfficialProviderId(appType, id)
+      ? id
+      : officialCatalog.normalize(appType, id);
     const list = loadStore();
     const normalized = normalizeEgressIpAllowlist(egressIpAllowlist);
-    let p = list.find(x => x.appType === appType && x.id === officialProviderId);
+    let p = list.find(x => x.appType === appType && x.id === targetId);
     if (!p && normalized.length) {
-      p = { id: officialProviderId, appType, source: 'builtin-override' };
+      p = { id: targetId, appType, source: 'builtin-override' };
       list.push(p);
     }
     if (p) {
       if (normalized.length) p.egressIpAllowlist = normalized;
       else {
         delete p.egressIpAllowlist;
-        // Nothing else lives on this override record — drop the empty stub.
-        const idx = list.indexOf(p);
-        if (idx !== -1) list.splice(idx, 1);
+        // Drop the record only when it is a pure allowlist stub; a record that
+        // carries anything else (e.g. a legacy import with a name) keeps its
+        // identity and just loses the restriction.
+        if (p.source === 'builtin-override') {
+          const idx = list.indexOf(p);
+          if (idx !== -1) list.splice(idx, 1);
+        }
       }
     }
     saveStore(list);
-    return { id: officialProviderId, appType };
+    return { id: targetId, appType };
   }
   const list = loadStore();
   const p = list.find(x => x.appType === appType && x.id === id);
@@ -963,7 +972,15 @@ function updateProvider(appType, id, { name, baseUrl, authToken, model, models, 
 
 function deleteProvider(appType, id) {
   if (officialCatalog && id === `${appType}-official`) throw new Error(`“同 ${appType === 'codex' ? 'Codex' : 'Claude'} 终端”为内置线路，不能删除`);
-  if (officialCatalog && isOfficialProviderId(appType, id)) return officialCatalog.delete(appType, id);
+  if (officialCatalog && isOfficialProviderId(appType, id)) {
+    const deleted = officialCatalog.delete(appType, id);
+    // The account's allowlist override record (if any) outlived its synthetic
+    // provider — drop it so store reads never see a dead entry's restriction.
+    const list = loadStore();
+    const next = list.filter(p => !(p.appType === appType && p.id === id));
+    if (next.length !== list.length) saveStore(next);
+    return deleted;
+  }
   const list = loadStore();
   const next = list.filter(p => !(p.appType === appType && p.id === id));
   if (next.length === list.length) return false;

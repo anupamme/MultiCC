@@ -64,10 +64,11 @@ function createOfficialCatalog({ readRecords, readSelection, writeSelection, lis
   // The synthetic object is rebuilt from scratch on every read (login/account
   // state can't be cached), but a handful of advanced settings — e.g. the
   // egress-IP allowlist — are user-editable and must survive that rebuild.
-  // They live in an override record in the SAME store, keyed by the official id
-  // and shared by every account of the vendor.
-  function overrideOf(type) {
-    return readRecords().find(p => p.id === officialId(type) && p.appType === type) || null;
+  // They live in an override record in the SAME store, keyed by the provider
+  // id of the entry being edited: one record for the terminal alias, one per
+  // account entry. Editing one entry's allowlist never touches another's.
+  function overrideOf(type, id) {
+    return readRecords().find(p => p.id === id && p.appType === type) || null;
   }
   function accountName(account, accountId) {
     const label = account && String(account.label || '').trim();
@@ -75,7 +76,7 @@ function createOfficialCatalog({ readRecords, readSelection, writeSelection, lis
     return label || email || accountId.slice(0, 6);
   }
   function provider(type, id = officialId(type), accountId = 'global') {
-    const override = overrideOf(type);
+    const override = overrideOf(type, id);
     const account = accountId === 'global' ? null : accountsOf(type).find(a => a.id === accountId) || null;
     const cliName = type === 'codex' ? 'Codex' : 'Claude';
     const terminal = id === officialId(type);
@@ -123,8 +124,13 @@ function createOfficialCatalog({ readRecords, readSelection, writeSelection, lis
   return {
     active, provider, normalize, defaultAccount, isOfficialId: isOfficialProviderId,
     list(type) {
+      // Store records whose id is an official shape (the terminal alias or a
+      // per-account allowlist override) are replaced by the synthetic entries
+      // above — they must never surface as duplicates. Content-based
+      // isOfficial() alone is not enough for codex, whose per-account override
+      // records carry an empty settingsConfig by design.
       return [...TYPES.flatMap(t => listOfficial(t)), ...readRecords().filter(p => !isOfficial(p)
-        && !TYPES.some(t => p.id === officialId(t)))].filter(p => !type || p.appType === type);
+        && !TYPES.some(t => isOfficialProviderId(t, p.id)))].filter(p => !type || p.appType === type);
     },
     get(type, id) {
       const vendor = TYPES.find(t => (!type || type === t) && id === officialId(t));

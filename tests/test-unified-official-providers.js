@@ -43,6 +43,26 @@ test('terminal routes stay fixed while every signed-in account is its own provid
   assert.equal(catalog.get('codex', 'relay'), records[4]);
   assert.equal(catalog.normalize('qoder', null), null);
 });
+test('egress-IP allowlist overrides are per entry: terminal, and each account, own theirs', () => {
+  const { catalog, records } = fixture();
+  // Override records as updateProvider persists them: one on the terminal
+  // alias, one on account A only. Codex's copy carries an empty
+  // settingsConfig, which content-based isOfficial() does not recognise.
+  records.push({ id: 'claude-official', appType: 'claude', source: 'builtin-override', egressIpAllowlist: ['9.9.9.9'] });
+  records.push({ id: `claude-official-${A}`, appType: 'claude', source: 'builtin-override', egressIpAllowlist: ['1.1.1.1'] });
+  records.push({ id: `codex-official-${A}`, appType: 'codex', source: 'builtin-override', egressIpAllowlist: ['2.2.2.2'] });
+  assert.deepEqual(catalog.get('claude', 'claude-official').egressIpAllowlist, ['9.9.9.9']);
+  assert.deepEqual(catalog.get('claude', `claude-official-${A}`).egressIpAllowlist, ['1.1.1.1']);
+  assert.equal(catalog.get('claude', `claude-official-${B}`).egressIpAllowlist, undefined,
+    'an account that never configured an allowlist stays unrestricted');
+  assert.deepEqual(catalog.get('codex', `codex-official-${A}`).egressIpAllowlist, ['2.2.2.2']);
+  assert.equal(catalog.get('codex', `codex-official-${B}`).egressIpAllowlist, undefined);
+  // None of the override records may surface as an extra provider row.
+  const ids = catalog.list().map(p => p.id);
+  for (const id of ['claude-official', `claude-official-${A}`, `codex-official-${A}`]) {
+    assert.equal(ids.indexOf(id), ids.lastIndexOf(id), `${id} appears exactly once`);
+  }
+});
 test('terminal routes remain visible and usable even when no managed account is signed in', () => {
   const { catalog } = fixture({ accounts: { claude: [A], codex: [] }, loggedOut: [A] });
   const official = catalog.list().filter(p => p.builtinOfficial);
