@@ -8,6 +8,13 @@
 //   * each new correction (POST /api/voice/feedback) is learned immediately;
 //   * the chat history is rescanned once a day.
 //
+// The scan reads the user's own messages, and — with a much higher bar — the
+// assistant's: a term the user never types but the model writes consistently
+// (CLI, AutoCommit, APK) is still a word the recogniser keeps getting wrong.
+// Model text is far noisier (code, paths, stock tickers), so it must recur
+// across many sessions, and one-off tickers are filtered by rhythm rather than
+// by a list: an all-caps token has to be seen in twice as many sessions.
+//
 // voice_examples.json only keeps the last 50 corrections, so pair counts live
 // here and accumulate. The scan reads only the tail of each session file
 // (chat_history is ~GBs of JSONL on a long-lived install) and yields between
@@ -28,6 +35,12 @@ const MAX_MESSAGE_CHARS = 1500;
 const KEPT_CHARS = 800;
 const MIN_TYPED_COUNT = 3;
 const MIN_TYPED_SESSIONS = 2;
+// Model-sourced terms need far more evidence than the user's own words: they
+// must recur across sessions, and an all-caps token (where stock tickers and
+// generic shouting live) needs twice as many.
+const MIN_MODEL_SESSIONS = 5;
+const MIN_MODEL_CAPS_SESSIONS = 10;
+const ALL_CAPS = /^[A-Z0-9]+$/;
 const MAX_TYPED = 80;
 const MAX_KEPT_TEXTS = 1000;
 const MAX_SEEN = 500;
@@ -42,20 +55,26 @@ function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return null; }
 }
 
-// Session files are JSONL now; older ones are a single JSON array. Either way
-// only user messages matter.
-function userMessagesOf(text) {
+// Session files are JSONL now; older ones are a single JSON array. Both are
+// flattened to {role, content} so one scan can look at user and model text.
+function messagesOf(text) {
   const out = [];
-  const take = m => { if (m && m.role === 'user' && typeof m.content === 'string') out.push(m.content); };
+  const take = m => {
+    if (m && typeof m.role === 'string' && typeof m.content === 'string') out.push({ role: m.role, content: m.content });
+  };
   const trimmed = text.trimStart();
   if (trimmed.startsWith('[')) {
     try { const arr = JSON.parse(trimmed); if (Array.isArray(arr)) { arr.forEach(take); return out; } } catch (_) {}
   }
   for (const line of text.split('\n')) {
-    if (!line.includes('"role":"user"')) continue;
+    if (!line.includes('"role"')) continue;
     try { take(JSON.parse(line)); } catch (_) {}
   }
   return out;
+}
+
+function userMessagesOf(text) {
+  return messagesOf(text).filter(m => m.role === 'user').map(m => m.content);
 }
 
 async function readTail(file, bytes) {
@@ -169,33 +188,59 @@ function createHotwordLearner({ file, examplesFile, chatHistoryDir, log = consol
     files.sort((a, b) => b.mtime - a.mtime);
 
     const messages = [];
-    const prefixCount = new Map();
+    const modelMessages = [];
     for (const { name } of files.slice(0, MAX_FILES)) {
       let text;
       try { text = await readTail(path.join(chatHistoryDir, name), TAIL_BYTES); } catch (_) { continue; }
-      for (const content of userMessagesOf(text)) {
-        if (content.length > MAX_MESSAGE_CHARS || isMachineText(content)) continue;
-        const prefix = content.slice(0, 24);
-        prefixCount.set(prefix, (prefixCount.get(prefix) || 0) + 1);
-        messages.push({ session: name, text: content });
+      for (const { role, content } of messagesOf(text)) {
+        if (content.length > MAX_MESSAGE_CHARS) continue;
+        if (role === 'user') {
+          if (isMachineText(content)) continue;
+          messages.push({ session: name, text: content });
+        } else if (role === 'assistant') {
+          modelMessages.push({ session: name, text: content });
+        }
       }
       await new Promise(r => setImmediate(r));
     }
-    // A prompt that recurs verbatim is a template (cron jobs, task board).
-    const own = messages.filter(m => prefixCount.get(m.text.slice(0, 24)) < 3);
+    // A prompt that recurs verbatim is a template (cron jobs, task board), and
+    // so is a canned reply. Drop those from both sides before mining.
+    const own = dropTemplates(messages);
+    const fromModel = dropTemplates(modelMessages);
 
-    const typed = [...miner.mineTypedTerms(own).values()]
-      .filter(t => t.count >= MIN_TYPED_COUNT && t.sessions.size >= MIN_TYPED_SESSIONS)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, MAX_TYPED)
-      .map(t => ({ term: t.term, count: t.count, sessions: t.sessions.size }));
+    const userTerms = [...miner.mineTypedTerms(own).values()]
+      .filter(t => t.count >= MIN_TYPED_COUNT && t.sessions.size >= MIN_TYPED_SESSIONS);
+    // Model text only adds terms the user never wrote; the user's own spelling
+    // always wins, so those entries are merged second and never overwrite.
+    const modelTerms = [...miner.mineTypedTerms(fromModel).values()]
+      .filter(t => t.sessions.size >= (ALL_CAPS.test(t.term) ? MIN_MODEL_CAPS_SESSIONS : MIN_MODEL_SESSIONS));
+
+    const seen = new Set();
+    const typed = [];
+    for (const t of [...userTerms.map(t => ({ t, source: 'user' })), ...modelTerms.map(t => ({ t, source: 'assistant' }))]) {
+      const key = t.t.term.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      typed.push({ term: t.t.term, count: t.t.count, sessions: t.t.sessions.size, source: t.source });
+    }
+    typed.sort((a, b) => b.count - a.count);
+    typed.length = Math.min(typed.length, MAX_TYPED);
 
     load();
     state.typed = typed;
     state.scannedAt = new Date(now()).toISOString();
     for (const m of own.slice(-MAX_KEPT_TEXTS)) rememberKept(m.text);
     save();
-    log.log(`[multicc/hotwords] Scanned ${Math.min(files.length, MAX_FILES)} sessions: ${typed.length} typed terms, ${result().active.length} active hotwords`);
+    log.log(`[multicc/hotwords] Scanned ${Math.min(files.length, MAX_FILES)} sessions: ${typed.length} typed terms (${typed.filter(t => t.source === 'assistant').length} from model replies), ${result().active.length} active hotwords`);
+  }
+
+  function dropTemplates(list) {
+    const counts = new Map();
+    for (const m of list) {
+      const prefix = m.text.slice(0, 24);
+      counts.set(prefix, (counts.get(prefix) || 0) + 1);
+    }
+    return list.filter(m => counts.get(m.text.slice(0, 24)) < 3);
   }
 
   function refresh() {
@@ -258,4 +303,4 @@ function createHotwordLearner({ file, examplesFile, chatHistoryDir, log = consol
   };
 }
 
-module.exports = { createHotwordLearner, userMessagesOf, isMachineText };
+module.exports = { createHotwordLearner, messagesOf, userMessagesOf, isMachineText };
