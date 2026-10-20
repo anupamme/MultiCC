@@ -200,6 +200,37 @@ test('expired memory cache serves a fresh disk catalog immediately and refreshes
   assert.deepEqual(revalidated.models.map(entry => entry.model), ['gpt-bg']);
 });
 
+test('expired memory cache with a stale disk file still answers from memory and never blocks on a spawn', async () => {
+  let now = 60 * 60 * 1000;
+  let discoveries = 0;
+  let resolveDiscovery;
+  const gate = new Promise(resolve => { resolveDiscovery = resolve; });
+  const runtime = createCodexModelsRuntime({
+    now: () => now,
+    discover: async () => {
+      discoveries += 1;
+      if (discoveries === 1) return { models: [model('gpt-seed')], cliVersion: '0.153.4' };
+      await gate;
+      return { models: [model('gpt-bg')], cliVersion: '0.153.4' };
+    },
+    // Nobody spawned Codex for 90 minutes, so models_cache.json is past the
+    // 1-hour disk-fresh window — the old SWR branch would miss and block.
+    readDisk: () => ({ models: [model('gpt-disk')], fetchedAt: now - 90 * 60 * 1000, cliVersion: '0.153.4' }),
+  });
+  assert.equal((await runtime.list()).source, 'cli');
+  now += 16 * 60 * 1000; // memory TTL lapse
+  const warm = await runtime.list();
+  assert.equal(warm.source, 'memory_cache', 'memory fallback must not wait for the hung discovery');
+  assert.deepEqual(warm.models.map(entry => entry.model), ['gpt-seed']);
+  assert.equal(warm.stale, true);
+  assert.equal(warm.diagnostic.code, 'stale_cache');
+  assert.equal(discoveries, 2, 'background revalidation should have started');
+  resolveDiscovery();
+  await new Promise(resolve => setImmediate(resolve));
+  now += 1000;
+  assert.deepEqual((await runtime.list()).models.map(entry => entry.model), ['gpt-bg']);
+});
+
 test('a login failure stands down the warm-disk path from the next picker open', async () => {
   let now = 60 * 60 * 1000;
   let discoveries = 0;
