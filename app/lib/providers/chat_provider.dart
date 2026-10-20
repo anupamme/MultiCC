@@ -2227,9 +2227,9 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// Read (with [force], refresh) this session's account Claude usage. A plain
-  /// call only READS the server's per-account cache — the 30-40s scrape runs for
-  /// `force` or at a task boundary — so the connect hook can always ask, and the
-  /// old "under 24h, don't ask" gate only hid what the account already had.
+  /// call only READS the server's per-account cache — the 30-40s scrape runs
+  /// ONLY for `force` (the bar's tap) — so the connect hook can always ask, and
+  /// the old "under 24h, don't ask" gate only hid what the account already had.
   Future<void> refreshClaudeUsage({bool force = false}) async {
     if (!_cli.isClaudeFamily) return;
     if (_claudeUsageFetching) return;

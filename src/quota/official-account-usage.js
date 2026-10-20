@@ -1,25 +1,28 @@
 'use strict';
 // Keeps per-account official usage fresh in the provider-limit cache.
 //
-// Every signed-in official account is its own provider
-// (`<type>-official-<accountId>`, see providers/official-catalog.js), and an
-// Auto pool may hold several of them. The passive rate-limit headers only
-// describe the account that is serving the turn, so without a sweep the idle
-// accounts never have usage data and Auto cannot tell which one has headroom.
-// This sweeper polls each signed-in account at a slow cadence — only when a
-// vendor has two or more accounts, since one account has nothing to choose
-// between — and records the windows under that account's provider id.
+// Only Codex is swept. Claude was swept here too (the same vendor poll every ten
+// minutes, plus a first tick right after boot), and that is deliberately gone: a
+// Claude reading now comes from the passive rate-limit event of a live turn, or
+// from the user's own ⟳ (see quota/claude-usage-queue.js) — never from a poll the
+// user did not ask for. Nothing in this file queries the Claude usage endpoint.
 //
-// Claude: OAuth usage endpoint → { five_hour, seven_day } with a 0..100
-// `utilization` (measured live, see routes/claude-usage-quota.js SCALE note).
-// Codex: the same weekly-window poll the turn-end poller runs, but against the
-// account's own auth.json.
+// Codex accounts are still swept because each is its own provider
+// (`codex-official-<accountId>`, see providers/official-catalog.js) and an Auto
+// pool may hold several of them. The passive rate-limit header only describes
+// the account that is serving the turn, so without a sweep the idle accounts
+// never have usage data and Auto cannot tell which one has headroom. It runs
+// only when a vendor has two or more signed-in accounts — one account has
+// nothing to choose between. The poll is the same weekly-window read the
+// turn-end poller runs, but against the account's own auth.json.
 
-const { fetchUsage } = require('../claude-auth/official-oauth');
 const { pollCodexUsage } = require('../usage-limit-poller');
 const { accountProviderId } = require('../providers/official-catalog');
 
 const DEFAULT_INTERVAL_MS = 10 * 60_000;
+// The Claude OAuth body → window rows map. The sweeper no longer uses it; it
+// stays here because the manual per-account read (routes/claude-accounts.js,
+// wired in server.js) records what the user asked for under the same shape.
 const CLAUDE_WINDOWS = Object.freeze([
   { key: 'five_hour', window: '5h', label: 'Current session' },
   { key: 'seven_day', window: '7d', label: 'Weekly' },
@@ -65,8 +68,8 @@ function codexDtoWindows(dto) {
 }
 
 function createOfficialAccountUsageSweeper({
-  accounts, credentials, recorder, fetchImpl = globalThis.fetch, logger = console,
-  intervalMs = DEFAULT_INTERVAL_MS, now = Date.now, pollCodex = pollCodexUsage, readClaudeUsage = fetchUsage,
+  accounts, recorder, logger = console,
+  intervalMs = DEFAULT_INTERVAL_MS, now = Date.now, pollCodex = pollCodexUsage,
 } = {}) {
   if (!accounts || !recorder) throw new TypeError('[official-account-usage] requires { accounts, recorder }');
   // accountKey → epoch ms before which this account must not be polled (429 /
@@ -76,17 +79,6 @@ function createOfficialAccountUsageSweeper({
   let running = null;
 
   const signedIn = list => (Array.isArray(list) ? list : []).filter(a => a && a.loggedIn);
-
-  async function sweepClaude(account) {
-    if (!credentials || typeof credentials.readAccountToken !== 'function') return false;
-    const cred = await credentials.readAccountToken(account.id);
-    if (!cred || !cred.token) return false;
-    const usage = await readClaudeUsage(fetchImpl, cred.token);
-    const windows = claudeUsageWindows(usage);
-    if (!windows.length) return false;
-    recorder.recordOfficialWindows('claude', accountProviderId('claude', account.id), { windows, fetchedAt: now() });
-    return true;
-  }
 
   async function sweepCodex(account) {
     if (typeof accounts.codexDir !== 'function') return false;
@@ -99,25 +91,20 @@ function createOfficialAccountUsageSweeper({
   }
 
   async function sweepOnce({ force = false } = {}) {
-    const jobs = [
-      ['claude', typeof accounts.listClaudeAccounts === 'function' ? signedIn(accounts.listClaudeAccounts()) : [], sweepClaude],
-      ['codex', typeof accounts.listCodexAccounts === 'function' ? signedIn(accounts.listCodexAccounts()) : [], sweepCodex],
-    ];
+    const list = typeof accounts.listCodexAccounts === 'function' ? signedIn(accounts.listCodexAccounts()) : [];
+    if (!force && list.length < 2) return 0;
     let recorded = 0;
-    for (const [vendor, list, sweep] of jobs) {
-      if (!force && list.length < 2) continue;
-      for (const account of list) {
-        const key = `${vendor}:${account.id}`;
-        if ((blockedUntil.get(key) || 0) > now()) continue;
-        try {
-          if (await sweep(account)) recorded++;
-        } catch (error) {
-          const status = error && error.status;
-          const backoff = status === 429 ? Math.max(Number(error.retryAfterMs) || 0, intervalMs)
-            : status === 401 ? 6 * intervalMs : 0;
-          if (backoff) blockedUntil.set(key, now() + backoff);
-          logger.warn && logger.warn(`[official-account-usage] ${vendor} ${account.id} poll failed: ${(error && error.message) || error}`);
-        }
+    for (const account of list) {
+      const key = `codex:${account.id}`;
+      if ((blockedUntil.get(key) || 0) > now()) continue;
+      try {
+        if (await sweepCodex(account)) recorded++;
+      } catch (error) {
+        const status = error && error.status;
+        const backoff = status === 429 ? Math.max(Number(error.retryAfterMs) || 0, intervalMs)
+          : status === 401 ? 6 * intervalMs : 0;
+        if (backoff) blockedUntil.set(key, now() + backoff);
+        logger.warn && logger.warn(`[official-account-usage] codex ${account.id} poll failed: ${(error && error.message) || error}`);
       }
     }
     return recorded;

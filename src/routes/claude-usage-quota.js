@@ -7,9 +7,9 @@
 // provider is resolved to the official account it borrows, see
 // ../quota/claude-usage-queue.js), and `force=1` is the user's own refresh.
 // Without `force` the route never scrapes: it answers with what that account's
-// cache already holds, or `status:'idle'` when it has never been read. The one
-// automatic scrape is a task boundary (a turn ending, see
-// ../chat/usage-limit-wiring.js).
+// cache already holds, or `status:'idle'` when it has never been read. `force=1`
+// (the user's own refresh) is the ONLY thing that scrapes — there is no timer
+// and no turn-boundary warm-up behind this reading.
 //
 // Two sources, tried in order:
 //
@@ -564,10 +564,10 @@ function mountClaudeUsageQuotaRoutes(app, recordClaude) {
 }
 
 // The queue's scrape is this module's own, so the two are wired together here
-// rather than in server.js: the route above, the unified quota-bar refresh
-// (routes/quota-bars.js) and the turn-boundary warm-up (chat/usage-limit-wiring)
-// all reach the same cache through the module, and none of them can start a
-// second browser for an account that was read inside the last minute.
+// rather than in server.js: the route above and the unified quota-bar refresh
+// (routes/quota-bars.js) both reach the same cache through the module, and
+// neither can start a second browser for an account that was read inside the
+// last minute.
 configureClaudeUsageQueue({ fetchUsage: fetchClaudeUsage });
 
 module.exports = {

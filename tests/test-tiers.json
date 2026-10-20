@@ -3934,6 +3934,11 @@
       ]
     },
     {
+      "path": "tests/test-provider-quota-guard-card.js",
+      "tier": "other",
+      "lane": "deterministic"
+    },
+    {
       "path": "tests/test-provider-quota-ui.js",
       "tier": "other",
       "lane": "deterministic",
@@ -4157,6 +4162,16 @@
       "entrypoints": [
         "npm:test:contracts"
       ]
+    },
+    {
+      "path": "tests/test-quota-guard-routes.js",
+      "tier": "core",
+      "lane": "deterministic"
+    },
+    {
+      "path": "tests/test-quota-guard.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-quota-managed-browser.js",

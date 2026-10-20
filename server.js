@@ -719,10 +719,10 @@ const _state = stateBootstrap.state;
 const persistedSessions = _state.persistedSessions; mountPublicSessionAccessGuard(app, { records: persistedSessions, logger, v1NotFound: (req, res) => v1Error(req, res, 404, 'session not found', 'session_not_found') });
 
 // 供应商余量共享缓存：写入成功后向使用该线路的会话同步展示快照。
-const { createProviderLimitCache } = require('./src/quota/provider-limit-cache'); const { createLimitRecorder } = require('./src/quota/limit-cache-recorder'); const { createQuotaBarCache } = require('./src/quota/quota-bar-cache');
+const { createProviderLimitCache } = require('./src/quota/provider-limit-cache'); const { createLimitRecorder } = require('./src/quota/limit-cache-recorder'); const { createQuotaBarCache } = require('./src/quota/quota-bar-cache'); const { createQuotaGuard } = require('./src/quota/quota-guard');
 const providerLimitCache = createProviderLimitCache({ file: MULTICC_PATHS.providerLimitDbFile, legacyJsonFile: MULTICC_PATHS.providerLimitCacheFile });
 const limitRecorder = createLimitRecorder({ cache: providerLimitCache, persistedSessions, providers }); require('./src/quota/provider-limit-sync').connectProviderLimitSync({ cache: providerLimitCache, persistedSessions, providers, broadcast: (id, data) => chatBroadcast(id, data) });
-const quotaBarCache = createQuotaBarCache({ file: MULTICC_PATHS.quotaBarCacheFile });
+const quotaBarCache = createQuotaBarCache({ file: MULTICC_PATHS.quotaBarCacheFile }); const quotaGuard = createQuotaGuard({ cache: providerLimitCache, configFile: MULTICC_PATHS.quotaGuardFile, logger }); // 官方账号额度保护：任一窗口到达阈值即停发请求直到重置；阈值/开关见 src/quota/quota-guard.js（quota-guard.json 或 MULTICC_QUOTA_GUARD_*）
 // Host-injected store port. Production delegates directly to StateStore's
 // atomic tmp+fsync+rename write. Isolated integration tests may place a marker
 // inside their temporary MULTICC_DATA_DIR to inject EIO deterministically.
@@ -1310,7 +1310,7 @@ const livenessRuntime = createLivenessRuntime({
   probeSession: async (sessionId, sig) => livenessProcessProbe.probe(
     sig && Number.isInteger(sig.pid) ? sig.pid : null, livenessRolloutPath(persistedSessions.get(sessionId))),
 });
-const providerAttemptRuntime = createProviderAttemptRuntime({ emit: chatBroadcast, audit: (id, event) => turnEventJournal.note(id, event), resolveProviderRevision: attempt => createProviderRevision({ cli: attempt.cli, providerId: attempt.providerId, protocol: attempt.protocol, model: attempt.model, summary: attempt.providerId === '_default_' ? null : providerRouterRuntime.getProviderSummary(undefined, attempt.providerId) }), resolveTerminalRoute: sessionId => terminalProxyRoutes.lookup(sessionId) });
+const providerAttemptRuntime = createProviderAttemptRuntime({ emit: chatBroadcast, audit: (id, event) => turnEventJournal.note(id, event), resolveProviderRevision: attempt => createProviderRevision({ cli: attempt.cli, providerId: attempt.providerId, protocol: attempt.protocol, model: attempt.model, summary: attempt.providerId === '_default_' ? null : providerRouterRuntime.getProviderSummary(undefined, attempt.providerId) }), resolveTerminalRoute: sessionId => terminalProxyRoutes.lookup(sessionId), quotaGuard });
 const terminalProxyRoutes = createTerminalProxyRoutes({ persistedSessions, persist: savePersistedSessionsBestEffort, encode: (id, token) => providerAttemptRuntime.encodeProxyRoute(id, token) }); // 终端那条托管路由的能力：存在会话记录上，跨重启有效
 function handleProxyUsage(event) {
   const tagged = providerAttemptRuntime.attributeProxyUsage(event);
@@ -1341,7 +1341,7 @@ providerRouterRuntime.mountProtocolProxies(app, {
   onActivity: event => { const bound = providerAttemptRuntime.onProxyActivity(event); if (bound) livenessRuntime.recordProxyActivity({ ...event, sessionId: bound.sessionId }); },
   ...createProxyBroadcasters(chatBroadcast, { resolveCli: name => (persistedSessions.get(name) || {}).cli, recordLimit: limitRecorder.recordSession, attemptRuntime: providerAttemptRuntime, audit: (id, event) => turnEventJournal.note(id, event) }),
 });
-app.use(express.json({ limit: '50mb' })); serviceRoutes.mountManagement(app);
+app.use(express.json({ limit: '50mb' })); serviceRoutes.mountManagement(app); require('./src/routes/quota-guard').mountQuotaGuardRoutes(app, { file: MULTICC_PATHS.quotaGuardFile }); // GET/PUT /api/settings/quota-guard —— 官方账号额度保护阈值（写 quota-guard.json，约 5 秒热生效）
 // Codex 协议代理端点：官方 relay 与 responses-compat（XFYun 流稳定化）。
 // Responses↔Chat 转换桥已退役——主流国产服务商均已原生支持 /responses。
 // 必须在 express.json() 之后挂载，以便 req.body 已解析。详见 docs/codex-proxy-contract.md。
@@ -2141,7 +2141,7 @@ mountOpenCodeQuotaRoutes(app); mountQoderQuotaRoutes(app); mountCodexQuotaRoutes
 // Vendor routes feed results into the provider-limit cache via the recorder;
 // Qoder/OpenCode/Codex are account-level, so only ark/kimi/claude feed here.
 mountArkQuotaRoutes(app, limitRecorder.recordVendor); mountKimiQuotaRoutes(app, { recordVendor: limitRecorder.recordVendor }); mountClaudeUsageQuotaRoutes(app, limitRecorder.recordClaude); mountAliyunQuotaRoutes(app); require('./src/routes/quota-bars').mountQuotaBarRoutes(app, { quotaBarCache, recordVendor: limitRecorder.recordVendor, recordClaude: limitRecorder.recordClaude });
-mountCodexOAuthRoutes(app, { getStatus: () => codexOAuthRefresh.status(), directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id) }); mountCodexAccountRoutes(app, { accounts: officialAccounts, providers, directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id), refresherStatus: id => codexAccountRefresh.status(id), cliLogin }); mountClaudeAccountRoutes(app, { accounts: officialAccounts, providers, credentials: claudeAccountCredentials, logger, cliLogin, recordUsage: (providerId, usage) => limitRecorder.recordOfficialWindows('claude', providerId, { windows: require('./src/quota/official-account-usage').claudeUsageWindows(usage) }) }); require('./src/quota/official-account-usage').createOfficialAccountUsageSweeper({ accounts: officialAccounts, credentials: claudeAccountCredentials, recorder: limitRecorder, logger }).start(); // multi-account management under /api/{codex,claude}/accounts — see src/routes/{codex,claude}-accounts.js
+mountCodexOAuthRoutes(app, { getStatus: () => codexOAuthRefresh.status(), directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id) }); mountCodexAccountRoutes(app, { accounts: officialAccounts, providers, directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id), refresherStatus: id => codexAccountRefresh.status(id), cliLogin }); mountClaudeAccountRoutes(app, { accounts: officialAccounts, providers, credentials: claudeAccountCredentials, logger, cliLogin, recordUsage: (providerId, usage) => limitRecorder.recordOfficialWindows('claude', providerId, { windows: require('./src/quota/official-account-usage').claudeUsageWindows(usage) }) }); require('./src/quota/official-account-usage').createOfficialAccountUsageSweeper({ accounts: officialAccounts, recorder: limitRecorder, logger }).start(); // multi-account management under /api/{codex,claude}/accounts — see src/routes/{codex,claude}-accounts.js
 const claudeOAuthSurface = createClaudeOAuthSurface({ refresher: claudeOAuthRefresh, directories, createSessionRecord, persistedSessions, destroySessionCascade, sessionPersistence, appendEvent }); claudeOAuthSurface.mountRoutes(app); // see src/routes/claude-oauth.js header
 // Token APIs remain between the two Provider route phases so the established
 // route ordering stays byte-compatible while accounting lives in one runtime.
@@ -2290,11 +2290,11 @@ const subscribeDispatchProgress = createDispatchProgressSubscription({
   streamReplayOf: id => chatSessions.get(id)?.streamReplay,
 });
 
-// Usage-limit poller — the active-poll half of the limit subsystem. Claude 5h /
+// Usage-limit poller — a turn's own provider only; Claude readings are manual-refresh (see src/chat/usage-limit-wiring.js).
 const usageLimitPoller = require('./src/chat/usage-limit-wiring').createUsageLimitWiring({
   persistedSessions, providers, chatBroadcast,
   createPoller: require('./src/usage-limit-poller').createUsageLimitPoller,
-  recordLimit: limitRecorder.recordSession, recordClaude: limitRecorder.recordClaude,
+  recordLimit: limitRecorder.recordSession,
 });
 
 // ── WeChat Bridge ──
@@ -2592,7 +2592,7 @@ const chatTurnEngine = createChatTurnEngine({
   detached,
   routerToolHost,
   turnProgressHeartbeat,
-  providerRouterRuntime, providerAttemptRuntime, providerLimitCache,
+  providerRouterRuntime, providerAttemptRuntime, providerLimitCache, quotaGuard,
   apiErrorHost,
   codexUsageHost,
   usageLimitPoller,

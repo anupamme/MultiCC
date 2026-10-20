@@ -20,30 +20,15 @@ const {
   labelRoutedProvider, labelRoutedBalance,
 } = require('../quota/quota-bar-view');
 const { rememberClaudeLive, renderClaudeBar } = require('../quota/claude-bar-state');
-const {
-  DEFAULT_KEY, configureClaudeKeyResolver, claudeProviderKey, enqueueClaudeUsage,
-} = require('../quota/claude-usage-queue');
+const { DEFAULT_KEY, configureClaudeKeyResolver } = require('../quota/claude-usage-queue');
 
-// A task boundary is the one automatic moment a Claude scrape is allowed (the
-// other is the user's own ⟳): a turn ending is when the account's numbers have
-// just moved, and the reading is then there for every session on that account.
-// The queue enforces the one-a-minute floor and joins an open scrape, so a
-// boundary costs nothing when someone else already read the account.
-function warmClaudeUsage(sessionName, recordClaude) {
-  try {
-    const key = claudeProviderKey(sessionName);
-    if (!key) return;
-    enqueueClaudeUsage(key).then(entry => {
-      if (entry && recordClaude && claudeProviderKey(sessionName) === key) {
-        recordClaude(sessionName, entry.result, renderClaudeBar(sessionName)?.text);
-      }
-    }).catch(() => {});
-  } catch (_) {
-    // best-effort: never disturb the chat flow
-  }
-}
+// No automatic Claude scrape is started from here. A turn ending used to warm
+// the account's reading; that was removed on request — a Claude reading is now
+// taken only when the user refreshes the bar (`force=1`) or when the passive
+// rate-limit event of the turn itself reports a window. See
+// ../quota/claude-usage-queue.js for the one door a scrape may come through.
 
-function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, createPoller, recordLimit, recordClaude }) {
+function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, createPoller, recordLimit }) {
   if (!persistedSessions || !providers || typeof chatBroadcast !== 'function' || typeof createPoller !== 'function') {
     throw new Error('createUsageLimitWiring requires persistedSessions, providers, chatBroadcast, createPoller');
   }
@@ -125,18 +110,7 @@ function createUsageLimitWiring({ persistedSessions, providers, chatBroadcast, c
       }
     },
   });
-  // The task boundary is where an automatic Claude reading is allowed, and a
-  // turn ending is the one hook every session passes through — so it is warmed
-  // here rather than at a new call site (turn-engine is at its line budget, and
-  // a poller wrapper costs it nothing). Everything else the poller exposes
-  // (`_refresh`, `_cache`, the turn-start hook) is passed through untouched.
-  return {
-    ...poller,
-    onTurnComplete(sessionName) {
-      warmClaudeUsage(sessionName, recordClaude);
-      return poller.onTurnComplete(sessionName);
-    },
-  };
+  return poller;
 }
 
 module.exports = { createUsageLimitWiring };

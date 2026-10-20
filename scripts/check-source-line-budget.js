@@ -403,8 +403,12 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +6 键（airTodoSectionTitle/Ignore/Unignore/IgnoredFilter/IgnoredDone/UnignoredDone）：首页「待办」
     //   区块与手动忽略开关，实测 9332/591747。
     // +1 双语键（aiConfigDefaultFollowPi）：Pi 原生模型默认配置文案。
-    maxLines: 9352,
-    maxBytes: 592981,
+    // +17 双语键（airQuotaGuard*）：Provider 页的「官方账号额度保护」卡片。重新生成时
+    //   还对上了一次既有漂移——提交在库里的生成物（9351）比由同一份词典重跑出来的
+    //   （9381）少，说明上一格登记之后词典又被改过而没重跑生成器（taskDirectoryHint*
+    //   新增、taskAttributionDirHint/Move 退役）。实测 9416/597136。
+    maxLines: 9416,
+    maxBytes: 597136,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

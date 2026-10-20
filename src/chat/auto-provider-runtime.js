@@ -43,6 +43,12 @@ function createAutoProviderRuntime(options = {}) {
     throw new TypeError('[auto-provider] providers catalog is required');
   }
   const limitCache = options.providerLimitCache || null;
+  // Hard account protection (src/quota/quota-guard), distinct from the steering
+  // hint inside chooseCandidate: a guarded candidate is withdrawn from the pool
+  // entirely, sticky or not, because the goal is to stop spending before the
+  // window empties rather than to prefer a roomier line.
+  const quotaGuard = options.quotaGuard && typeof options.quotaGuard.check === 'function'
+    ? options.quotaGuard : null;
   const staleAfterMs = Math.max(1_000, Number(options.limitCacheStaleMs) || STALE_MS_DEFAULT);
   const now = typeof options.now === 'function' ? options.now : Date.now;
   const emit = typeof options.emit === 'function' ? options.emit : () => {};
@@ -151,6 +157,12 @@ function createAutoProviderRuntime(options = {}) {
         try { entry = limitCache.get(provider.appType, provider.id); } catch (_) { entry = null; }
       }
       const limit = limitState(entry, { now: Number(now()), staleAfterMs });
+      let guard = null;
+      if (quotaGuard && provider) {
+        try { guard = quotaGuard.check({ appType: provider.appType, providerId: provider.id }); }
+        catch (_) { guard = null; }
+      }
+      const guarded = !!(guard && guard.blocked);
       return Object.freeze({
         ...candidate,
         index,
@@ -159,8 +171,8 @@ function createAutoProviderRuntime(options = {}) {
         protocol: protocolOf(provider),
         trustDomain: trustDomainOf(provider),
         model: candidate.model || provider && provider.model || null,
-        limitState: limit.state,
-        limitReason: limit.reason,
+        limitState: guarded ? 'exhausted' : limit.state,
+        limitReason: guarded ? `quota_guard_${guard.kind}` : limit.reason,
         usedPercent: limit.usedPercent == null ? null : limit.usedPercent,
         cli,
       });
