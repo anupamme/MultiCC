@@ -216,6 +216,13 @@ function createClaudeAccountRefreshSupervisor(options = {}) {
           deferCooldownMs: options.deferCooldownMs,
           keychainService: keychainServiceFor(configDir),
           credentialsFile: path.join(configDir, '.credentials.json'),
+          // Shared durable health: the account id is the key, so a parked
+          // account stays parked across restarts and a re-login (which
+          // rewrites this account's credential) releases it.
+          health: options.health || null,
+          healthKey: id,
+          parkAfterFailures: options.parkAfterFailures,
+          maxCooldownMs: options.maxCooldownMs,
           isEnabled: () => true,
           // An inherited CLAUDE_SECURESTORAGE_CONFIG_DIR would override the
           // per-account slot, so it is removed, not just left alone.
@@ -264,7 +271,23 @@ function createClaudeAccountRefreshSupervisor(options = {}) {
     // The common case touches nothing — no Keychain write, no CLI.
     if (expiresAt - now() > bufferMs) return { outcome: 'fresh' };
     const refresher = refresherFor(id);
-    const retryAfter = refresher.status().retryAfter;
+    const status = refresher.status();
+    // A parked credential has already been rejected or has failed repeatedly.
+    // Seeding the slot and running the ladder again cannot change that — the
+    // refresher releases the park itself when the credential is replaced — so
+    // the cheapest possible answer is the correct one, and no CLI process or
+    // Keychain write happens in the meantime.
+    if (status.parked) {
+      // The slot the refresher reads is only seeded inside the ladder, so a
+      // parked account has to be tested against its own file: a later expiry
+      // than the one that was parked means someone logged in again, and only
+      // then does seeding the slot make sense again.
+      const parkedExpiry = Number(status.parked.credentialExpiresAt) || 0;
+      const renewed = parkedExpiry > 0 && expiresAt > parkedExpiry;
+      if (!renewed) return { outcome: 'parked', detail: status.parked.failureClass || null };
+      logger.info('claude_account_cli_refresh_renewed', { accountId: id, parkedExpiry, expiresAt });
+    }
+    const retryAfter = status.retryAfter;
     if (retryAfter && retryAfter > now()) return { outcome: 'cooldown', retryInMs: retryAfter - now() };
     // Spacing gate (see DEFAULT_MIN_CHECK_GAP_MS). Only the autonomous triggers
     // are held back; a manual call always runs. The stamp is left by *every*
