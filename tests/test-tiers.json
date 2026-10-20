@@ -665,6 +665,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/remote_touch_controller_test.dart",
+      "tier": "core",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/role_tokens_test.dart",
       "tier": "other",
       "lane": "flutter"
@@ -2366,6 +2371,11 @@
       ]
     },
     {
+      "path": "tests/test-claude-refresh-park.js",
+      "tier": "core",
+      "lane": "isolated"
+    },
+    {
       "path": "tests/test-claude-sdk-host.js",
       "tier": "core",
       "lane": "deterministic",
@@ -3679,6 +3689,11 @@
       "entrypoints": [
         "npm:test:provider-router"
       ]
+    },
+    {
+      "path": "tests/test-official-egress-per-account.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-official-fetch.js",

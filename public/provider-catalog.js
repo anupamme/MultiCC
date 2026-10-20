@@ -571,8 +571,12 @@
     const apiFormat = API_FORMATS.has(value.apiFormat)
       ? value.apiFormat
       : (appType === 'claude' ? 'anthropic' : 'openai_responses');
-    // zcode / kimi 这两条车道自己不带上游：一条线路要同时有 baseUrl 和 token 才跑得动
-    // （kimi 只认 openai_responses）。
+    // zcode / dsh / grok 这些车道自己不带上游：一条线路要同时有 baseUrl 和 token
+    // 才跑得动。dsh 只认 anthropic；grok 两种协议都吃；kimi 只认 openai_responses。
+    // 服务端会显式下发 compatibleClis（含 dsh / grok）；下面的 fallback 只服务缺少
+    // 该字段的老 DTO，保守地不推断新车道。过滤白名单必须与
+    // src/providers/core.js 的 compatibleClisForFormat / CREDENTIAL_GATED_CLIS 同步
+    // —— 漏掉 dsh 会让 DSH 卡显示「没有可用线路」。
     const credentialCompatible = !!safeBaseUrl(value.baseUrl) && value.hasToken === true;
     const defaultClis = [
       ...(apiFormat === 'anthropic' ? ['claude', 'claude-exp', 'opencode'] : ['codex', 'codex-exp', 'opencode', 'kimi']),
@@ -587,8 +591,10 @@
       protocol: apiFormat,
       wireApi: ['messages', 'responses', 'chat_completions', 'chat-completions'].includes(value.wireApi) ? value.wireApi : '',
       compatibleClis: Object.freeze((Array.isArray(value.compatibleClis) ? value.compatibleClis : defaultClis)
-        .filter(cli => ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'zcode', 'kimi'].includes(cli)
+        .filter(cli => ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'zcode', 'kimi', 'dsh', 'grok'].includes(cli)
           && (cli !== 'zcode' || credentialCompatible)
+          && (cli !== 'dsh' || (credentialCompatible && apiFormat === 'anthropic'))
+          && (cli !== 'grok' || credentialCompatible)
           && (cli !== 'kimi' || (credentialCompatible && apiFormat === 'openai_responses')))),
       baseUrl: safeBaseUrl(value.baseUrl),
       model,

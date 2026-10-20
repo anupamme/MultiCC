@@ -278,15 +278,27 @@ test('core runner covers every selected path and expands declared variants', () 
   //   - 同批 app/test/air_indexed_home_test.dart 是 widget 展示测试，按规则归 flow，
   //     不计入 core。
   // 330 + 1 = 331，flutter 23 + 1 = 24。
-  assert.equal(core.length, 331, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 331);
+  // 2026-10-21 v2.8.0 发版复核：+6 core（331 → 337）。
+  //   - tests/test-quota-guard.js、tests/test-quota-guard-routes.js（deterministic）：
+  //     额度保护闸门的判定与路由契约，纯函数 + 进程内路由，不碰真账号。
+  //   - tests/test-chat-stream-resume-startup-death.js（deterministic）：启动期死亡后的
+  //     流恢复，属于主链路回归。
+  //   - tests/test-claude-refresh-park.js（isolated）：刷新阶梯的退避/停泊与健康文件，
+  //     mkdtemp 里的假 CLI 脚本，不碰网络与真账号，但会起子进程所以记 isolated。
+  //   - tests/test-official-egress-per-account.js（deterministic）：官方条目的出口 IP
+  //     白名单必须钉在正在编辑的那条配置上，属于安全边界。
+  //   - app/test/remote_touch_controller_test.dart（flutter）：触摸手势→RFB 指针的坐标
+  //     与状态机契约，纯 Dart 不碰 Widget，按非 UI Flutter 计入 core。
+  // 337，deterministic 285，isolated 27，flutter 25。
+  assert.equal(core.length, 337, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 337);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 281);
-  assert.equal(core.filter(entry => entry.lane === 'isolated').length, 26);
-  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 24,
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 285);
+  assert.equal(core.filter(entry => entry.lane === 'isolated').length, 27);
+  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 25,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
 
   const expectedPaths = core.flatMap(entry => Array.from(
@@ -294,8 +306,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 310,
-    '307 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 315,
+    '312 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],
