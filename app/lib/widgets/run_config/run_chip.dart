@@ -197,13 +197,43 @@ class _RunChipState extends State<RunChip> {
         : (live.providerSelection ?? runtime?.providerSelection);
     final label = selection != null
         ? _autoLabel(cli, selection, live)
-        : _fixedLabel(cli, runtime);
+        : _fixedLabel(cli, _withActualRoute(runtime, live, pending));
     return _chip(
       context: context,
       mgr: mgr,
       cli: cli,
       label: label,
       pending: pending,
+    );
+  }
+
+  /// 会话记录里 provider 为空（旧任务 / 起点没落盘）时，胶囊不能就此说成「官方 ·
+  /// 默认」：历史里的路由事件已经告诉了这个会话真正跑过哪条线路与模型
+  /// （[ChatProvider.activeProviderId]），用它补上。下轮生效的改动（[pending]）
+  /// 是用户刚选的整份期望值，不掺旧路由。
+  SessionCliConfig? _withActualRoute(
+    SessionCliConfig? runtime,
+    ChatProvider live,
+    bool pending,
+  ) {
+    if (pending || runtime == null) return runtime;
+    if ((runtime.provider ?? '').isNotEmpty) return runtime;
+    final id = live.activeProviderId;
+    if (id == null || id.isEmpty) return runtime;
+    final model = live.activeProviderModel;
+    return SessionCliConfig(
+      cli: runtime.cli,
+      provider: id,
+      providerName: live.activeProviderName,
+      providerSelection: runtime.providerSelection,
+      model: (runtime.model ?? '').isNotEmpty ? runtime.model : model,
+      effectiveModel: (runtime.effectiveModel ?? '').isNotEmpty
+          ? runtime.effectiveModel
+          : model,
+      effort: runtime.effort,
+      effectiveEffort: runtime.effectiveEffort,
+      agent: runtime.agent,
+      subagent: runtime.subagent,
     );
   }
 
