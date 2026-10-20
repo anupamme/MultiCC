@@ -25,7 +25,8 @@ function relevance(query, text) {
 // One shared bigram (会话, 输出 …) is not evidence that a fact is about the
 // query. Longer queries must overlap proportionally before a memory is pulled in.
 function minRelevance(query) {
-  return Math.max(1, Math.ceil(terms(query).length * 0.15));
+  const n = terms(query).length;
+  return Math.max(n >= 4 ? 2 : 1, Math.ceil(n * 0.15));
 }
 function clipTokens(text, budget) {
   if (estimateTokens(text) <= budget) return text;
