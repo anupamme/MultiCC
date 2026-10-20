@@ -39,7 +39,7 @@ function credential({ expiresIn = -60_000, refreshIn = 10 * 24 * HOUR } = {}) {
   };
 }
 
-function fixture({ stored = credential(), stderr = 'some transient error', health = null } = {}) {
+function fixture({ stored = credential(), stderr = 'some transient error', health = null, authStatus = null } = {}) {
   const store = { value: stored };
   const calls = [];
   let clock = T0;
@@ -57,6 +57,9 @@ function fixture({ stored = credential(), stderr = 'some transient error', healt
     readFile: async () => JSON.stringify(store.value),
     run: async (file, args) => {
       calls.push({ file, args });
+      if (authStatus && args[0] === 'auth' && args[1] === 'status') {
+        return { code: 0, stdout: JSON.stringify(authStatus), stderr: '', timedOut: false };
+      }
       return { code: 1, stdout: '', stderr, timedOut: false };
     },
     health,
@@ -100,8 +103,8 @@ test('a failure records the CLI stderr so the next diagnosis needs no guesswork'
   assert.match(parked.fields.action, /log in again/);
 });
 
-test('repeated transient failures back off exponentially, then park', async () => {
-  const h = fixture();
+test('repeated network failures back off exponentially, then park', async () => {
+  const h = fixture({ stderr: 'getaddrinfo ENOTFOUND api.anthropic.com' });
   const outcomes = [];
   for (let i = 0; i < 6; i++) {
     outcomes.push(await h.refresher.check());
@@ -118,6 +121,59 @@ test('repeated transient failures back off exponentially, then park', async () =
   const again = await h.refresher.check();
   assert.equal(again.outcome, 'parked');
   assert.equal(h.cliCalls().length, callsBefore, 'a parked account must not spawn the CLI again');
+});
+
+test('a probe is a real API turn, and only two of them are ever spent per token', async () => {
+  const h = fixture();
+  const probes = () => h.cliCalls().filter(call => call.args[0] === '-p').length;
+  const first = await h.refresher.check();
+  assert.equal(first.outcome, 'failed');
+  assert.equal(probes(), 1);
+  h.advance(10 * MIN);
+  const second = await h.refresher.check();
+  assert.equal(second.outcome, 'parked', 'the second identical probe is the last one');
+  assert.equal(probes(), 2);
+  h.advance(HOUR);
+  const third = await h.refresher.check();
+  assert.equal(third.outcome, 'parked');
+  assert.equal(probes(), 2, 'a parked account must never turn the API again');
+});
+
+test('the CLI saying "not logged in" parks at once instead of escalating to a turn', async () => {
+  const h = fixture({ authStatus: { loggedIn: false, authMethod: 'none' } });
+  const result = await h.refresher.check();
+  assert.equal(result.outcome, 'needs-login');
+  assert.equal(result.detail, 'cli_reports_not_logged_in');
+  assert.equal(h.cliCalls().length, 1, 'no probe may follow a missing login');
+
+  const parked = h.logs.find(l => l.event === 'claude_oauth_refresh_parked');
+  assert.ok(parked);
+  assert.match(parked.fields.action, /log in again/);
+
+  const callsBefore = h.cliCalls().length;
+  h.advance(5 * MIN);
+  const again = await h.refresher.check();
+  assert.equal(again.outcome, 'needs-login', 'the login banner must outlive the first attempt');
+  assert.equal(h.cliCalls().length, callsBefore, 'and the ladder must stay closed');
+});
+
+test('a token the CLI keeps declining is asked twice, then left alone until it is due', async () => {
+  const h = fixture({
+    stored: credential({ expiresIn: 15 * MIN }),
+    authStatus: { loggedIn: true, authMethod: 'oauth_token' },
+  });
+  const first = await h.refresher.check();
+  assert.equal(first.outcome, 'deferred');
+  h.advance(90_000);
+  const second = await h.refresher.check();
+  assert.equal(second.outcome, 'deferred');
+  assert.ok(second.nextAttemptInMs > 90_000,
+    'after the second answer the next question waits for the token to be nearly dead');
+  const callsBefore = h.cliCalls().length;
+  h.advance(MIN);
+  const third = await h.refresher.check();
+  assert.equal(third.outcome, 'cooldown');
+  assert.equal(h.cliCalls().length, callsBefore, 'no polling inside the wait');
 });
 
 test('a server rejection parks after a single attempt', async () => {
