@@ -1220,7 +1220,14 @@ button.admin-stat:hover { transform: translateY(-1px); }
 /* 按目录视图：一行一条的是同一张卡片（.air-doc-card），只是被分进了区块。 */
 .air-doc-group { display: grid; border-bottom: 1px solid #e6edf4; }
 .air-doc-group:last-child { border-bottom: 0; }
-.air-doc-group-head { display: flex; align-items: baseline; gap: 8px; padding: 11px 17px 7px; border-bottom: 1px solid #e6edf4; background: #f7fafd; }
+/* 组头是一颗按钮：整行可点，点一下收起/展开这一组（aria-expanded 跟着变）。
+   收起时组里只剩这一行，长列表才看得过来。 */
+.air-doc-group-head { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 11px 17px 7px; border: 0; border-bottom: 1px solid #e6edf4; background: #f7fafd; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.air-doc-group-head:hover { background: #eef5fc; }
+.air-doc-group-head:focus-visible { outline: 2px solid #7ab0e6; outline-offset: -2px; }
+.air-doc-group-head:last-child { border-bottom: 0; }
+.air-doc-group-caret { flex: 0 0 auto; width: 10px; color: #6f89a2; font-size: 10px; line-height: 1.3; }
+.air-doc-group-head:hover .air-doc-group-caret { color: var(--accent-strong); }
 .air-doc-group-head strong { color: #3f6e97; font-size: 11px; }
 .air-doc-group-head small { min-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; white-space: nowrap; text-overflow: ellipsis; }
 .air-doc-group .air-doc-card:last-child { border-bottom: 0; }
@@ -2478,6 +2485,10 @@ dialog { border-color: var(--hairline); border-radius: 22px; box-shadow: var(--s
 .air-docs-filters .air-docs-scope{margin:0;flex-shrink:0}
 .air-docs-filters input{flex:1;min-width:180px;max-width:480px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
 .air-docs-filters small{color:var(--muted)}
+/* 分组视图里一次收起/展开所有组；平铺视图没有组，按钮隐藏。 */
+.air-doc-collapse-all{min-height:30px;padding:0 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--muted);font:inherit;font-size:12px;cursor:pointer}
+.air-doc-collapse-all:hover{border-color:#9cc3e4;color:var(--accent-strong)}
+.air-doc-collapse-all[hidden]{display:none}
 @media(max-width:420px){.air-docs-scope button{padding:0 10px}.air-docs-filters input{width:100%;max-width:none}}
 
 /* 目录 Git 面板的收缩键：只占一个小方块，收起后面板只剩抬头。 */

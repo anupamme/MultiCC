@@ -954,6 +954,37 @@
   // 最近一次拉到的条目：两个视图都从这里画，切换视图时才有东西可画。
   let docsEntries = [], docsQuery = '';
 
+  // 分组视图里，组头本身就是开关：点一下收起/展开这一组，长列表才看得过来。
+  // 收起状态按「排列方式 + 分组 key」记（同一个任务按目录看与按任务看是两条
+  // 不同的分组轴），存在本机，刷新后还是上次的样子；读写失败一律当展开。
+  const DOCS_COLLAPSED_KEY = 'air:docs-collapsed';
+  let docsCollapsed = new Set();
+  try {
+    const saved = JSON.parse(localStorage.getItem(DOCS_COLLAPSED_KEY) || '[]');
+    if (Array.isArray(saved)) docsCollapsed = new Set(saved.filter(key => typeof key === 'string'));
+  } catch (_) {}
+  const docsGroupId = key => `${docsScope}:${key}`;
+  function saveDocsCollapsed() {
+    try { localStorage.setItem(DOCS_COLLAPSED_KEY, JSON.stringify([...docsCollapsed])); } catch (_) {}
+  }
+  function toggleDocsGroup(key) {
+    const id = docsGroupId(key);
+    if (docsCollapsed.has(id)) docsCollapsed.delete(id); else docsCollapsed.add(id);
+    saveDocsCollapsed();
+    paintDocs();
+  }
+  // 全部收起 / 全部展开：只作用于当前画出来的组（搜索过滤后的那一批），
+  // 免得把没显示的组一起改掉。
+  function toggleDocsGroups(groups) {
+    const allCollapsed = groups.every(group => docsCollapsed.has(docsGroupId(group.key)));
+    for (const group of groups) {
+      const id = docsGroupId(group.key);
+      if (allCollapsed) docsCollapsed.delete(id); else docsCollapsed.add(id);
+    }
+    saveDocsCollapsed();
+    paintDocs();
+  }
+
   function isLoopback(hostname) {
     return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(String(hostname || '').toLowerCase());
   }
@@ -1041,13 +1072,20 @@
     return card;
   }
 
+  // 组头是一颗按钮（不是装饰性的标题行）：整行可点，aria-expanded 说明这一组
+  // 现在是展开还是收起。收起时组内卡片整个不渲染，只留标题行和条数。
   function renderDocGroup(group) {
+    const collapsed = docsCollapsed.has(docsGroupId(group.key));
     const section = make('section', null, 'air-doc-group');
-    const head = make('div', null, 'air-doc-group-head');
-    head.append(make('strong', `${group.name} (${group.entries.length})`));
+    const head = make('button', null, 'air-doc-group-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', String(!collapsed));
+    head.append(make('span', collapsed ? '▸' : '▾', 'air-doc-group-caret'), make('strong', `${group.name} (${group.entries.length})`));
     // 绝对路径是次要信息：目录名重名时（同名项目放在不同父目录下）靠它分辨。
     if (group.path) head.append(make('small', group.path));
-    section.append(head, ...group.entries.map(renderDocEntry));
+    head.onclick = () => toggleDocsGroup(group.key);
+    section.append(head);
+    if (!collapsed) section.append(...group.entries.map(renderDocEntry));
     return section;
   }
 
@@ -1083,10 +1121,23 @@
       const text = [entry.title, entry.url, entry.note, entry.taskTitle, entry.taskId, entry.dir, entry.dirName, entry.sessionId].filter(Boolean).join(' ').toLocaleLowerCase();
       return terms.every(term => text.includes(term));
     });
-    list.replaceChildren(...(docsScope === 'time' ? rows.map(renderDocEntry) : docsGroups(rows).map(renderDocGroup)));
+    const grouped = docsScope === 'time' ? null : docsGroups(rows);
+    list.replaceChildren(...(grouped ? grouped.map(renderDocGroup) : rows.map(renderDocEntry)));
     if (!rows.length) list.append(make('p', t(terms.length ? 'docsNoMatch' : 'airAdminNoDocs'), 'admin-empty'));
     const count = el('air-doc-matches');
     if (count) { count.textContent = t('docsMatches', { shown: rows.length, total: docsEntries.length }); count.hidden = !terms.length; }
+    // 分组视图才有「全部收起/展开」：平铺视图没有组可收，按钮直接不占位。
+    const collapseAll = el('air-doc-collapse-all');
+    if (collapseAll) {
+      collapseAll.hidden = !grouped || !grouped.length;
+      if (grouped && grouped.length) {
+        const expanded = grouped.some(group => !docsCollapsed.has(docsGroupId(group.key)));
+        const key = expanded ? 'docsCollapseAll' : 'docsExpandAll';
+        collapseAll.textContent = t(key);
+        collapseAll.setAttribute('data-i18n', key);
+        collapseAll.onclick = () => toggleDocsGroups(grouped);
+      }
+    }
   }
 
   function setDocsScope(scope) {
@@ -1161,7 +1212,12 @@
     search.placeholder = t('docsSearch'); search.setAttribute('aria-label', t('docsSearch')); search.setAttribute('data-i18n-placeholder', 'docsSearch');
     search.oninput = () => { docsQuery = search.value; paintDocs(); };
     const matches = make('small'); matches.id = 'air-doc-matches'; matches.setAttribute('role', 'status');
-    filters.append(docsScopeSwitch(), search, matches);
+    // 分组视图才亮出来（paintDocs 按当前是否有组决定 hidden）。
+    const collapseAll = make('button', null, 'air-doc-collapse-all');
+    collapseAll.type = 'button'; collapseAll.id = 'air-doc-collapse-all';
+    collapseAll.setAttribute('aria-controls', 'air-doc-list');
+    collapseAll.hidden = true;
+    filters.append(docsScopeSwitch(), search, matches, collapseAll);
     wrap.append(top, filters, list);
     el('admin-content').replaceChildren(wrap);
     void loadDocs();

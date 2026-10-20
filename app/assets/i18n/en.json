@@ -1070,6 +1070,8 @@
   "docsSearch": "Search titles, links, directories or tasks",
   "docsNoMatch": "No matching services or documents",
   "docsMatches": "Showing {shown} of {total}",
+  "docsCollapseAll": "Collapse all",
+  "docsExpandAll": "Expand all",
   "artifactKeptRelated": "Kept with a related artifact",
   "taskArtifactsUpdateFailed": "Update failed. Please retry",
   "docsNoDir": "No workspace",

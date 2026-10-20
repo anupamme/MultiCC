@@ -1070,6 +1070,8 @@
   "docsSearch": "搜索标题、链接、目录或任务",
   "docsNoMatch": "没有匹配的服务或文档",
   "docsMatches": "显示 {shown} / {total} 条",
+  "docsCollapseAll": "全部收起",
+  "docsExpandAll": "全部展开",
   "artifactKeptRelated": "随关联产物保留",
   "taskArtifactsUpdateFailed": "更新失败，请重试",
   "docsNoDir": "未归属目录",

@@ -403,8 +403,11 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +6 键（airTodoSectionTitle/Ignore/Unignore/IgnoredFilter/IgnoredDone/UnignoredDone）：首页「待办」
     //   区块与手动忽略开关，实测 9332/591747。
     // +1 双语键（aiConfigDefaultFollowPi）：Pi 原生模型默认配置文案。
-    maxLines: 9352,
-    maxBytes: 592981,
+    // +2 双语键（docsCollapseAll/docsExpandAll）：服务与文档的分组头可收起/展开 + 全部收起/展开。
+    //   重新生成时一并吸收了源 json 已领先生成物的那批键（taskDirectoryHint*、airStream* 等，
+    //   此前只在 app/assets/i18n 里），生成物实测 9386 / 595190，按真实高水位抬一格。
+    maxLines: 9386,
+    maxBytes: 595190,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
