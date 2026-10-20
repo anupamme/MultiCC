@@ -163,7 +163,13 @@ async function run(ctx, parsed, exit) {
   await agent.whenIdle();
   await sessions.flush(agent.session);
 
-  const last = [...agent.session.events].reverse().find(e => e.seq >= firstSeq && e.type === 'turn/end');
+  // dsh-base 2026-09-09 removed the synchronous `session.events` reads; the
+  // replacement is snapshotEvents(fromSeq). Feature-detect so the runner keeps
+  // working against bundles from either side of that change.
+  const settleEvents = typeof agent.session.snapshotEvents === 'function'
+    ? agent.session.snapshotEvents(firstSeq)
+    : (agent.session.ownEvents ? agent.session.ownEvents() : agent.session.events || []);
+  const last = [...settleEvents].reverse().find(e => e.seq >= firstSeq && e.type === 'turn/end');
   const reason = last?.data?.reason ?? {};
   line({ type: 'session_finished', sessionId: String(agent.session.id) });
   if (reason.kind === 'completed') {

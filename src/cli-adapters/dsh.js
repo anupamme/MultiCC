@@ -24,7 +24,7 @@ const { renderPrompt } = require('../message-composer');
  * `dsh web` Models page can also store a key through the credentials service.
  */
 const DSH_PROFILE = 'multicc';
-const DSH_PROFILE_VERSION = 2; // runner now bounds completion evidence to this turn
+const DSH_PROFILE_VERSION = 3; // runner reads turn/end via snapshotEvents (session.events removed upstream 2026-09-09)
 const DSH_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 
 function dshProfileDir(homeDir) { return path.join(homeDir, '.dsh', 'profiles', DSH_PROFILE); }
@@ -173,4 +173,4 @@ function createDshAdapter({ cmd, homeDir, runnerSrcDir } = {}) {
   };
 }
 
-module.exports = { createDshAdapter, ensureDshProfile, DSH_MODELS, DSH_PROFILE };
+module.exports = { createDshAdapter, ensureDshProfile, DSH_MODELS, DSH_PROFILE, DSH_PROFILE_VERSION };

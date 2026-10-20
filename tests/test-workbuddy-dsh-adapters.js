@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createCodebuddyAdapter, CODEBUDDY_REASONING_LEVELS } = require('../src/cli-adapters/codebuddy');
-const { createDshAdapter, ensureDshProfile, DSH_MODELS, DSH_PROFILE } = require('../src/cli-adapters/dsh');
+const { createDshAdapter, ensureDshProfile, DSH_MODELS, DSH_PROFILE, DSH_PROFILE_VERSION } = require('../src/cli-adapters/dsh');
 
 const codebuddy = createCodebuddyAdapter({ cmd: 'codebuddy' });
 const envelope = {
@@ -91,7 +91,7 @@ assert.deepStrictEqual(
 const patchText = fs.readFileSync(path.join(profileDir, 'cordis.patch.yml'), 'utf8');
 assert.match(patchText, /- id: headless-runner\n {2}disabled: true/);
 assert.match(patchText, /- insert:\n {4}- id: multicc-runner/);
-assert.match(fs.readFileSync(path.join(profileDir, '.multicc-profile-version'), 'utf8'), /^2\n$/);
+assert.match(fs.readFileSync(path.join(profileDir, '.multicc-profile-version'), 'utf8'), new RegExp(`^${DSH_PROFILE_VERSION}\\n$`));
 assert.ok(fs.existsSync(path.join(profileDir, 'node_modules', 'multicc-dsh-runner', 'lib', 'index.js')));
 
 // Second run must be a no-op: count writes through a spying fsImpl.
