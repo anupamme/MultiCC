@@ -47,11 +47,10 @@ function buildHumanAssistPrompt(assistRoot) {
 }
 
 // Plan + progress reporting, injected as a PER-TURN layer into every chat turn
-// (message-composer, kind 'turn-plan'). A per-turn layer rather than a
-// system-prompt block because it has to be re-read on every turn of a long
-// session, and it is deliberately absent from aux sessions (internal
-// classification/attribution jobs) and gateway sessions (whose model is a
-// router with machine-parsed output) — see the layer's gate in message-composer.
+// (message-composer, kind 'turn-plan'). It is deliberately absent from aux
+// sessions (internal classification/attribution jobs) and gateway sessions
+// (whose model is a router with machine-parsed output) — see the layer's gate
+// in message-composer.
 //
 // Modelled on hierarchical-planning agents (eko-style generate → execute): split
 // the request into subtasks before acting, then report per-subtask achievement.
@@ -59,7 +58,32 @@ function buildHumanAssistPrompt(assistRoot) {
 // half is what makes 「达成目标」 judgeable instead of a claim. Mirrors the
 // classify prompt's own criteria (src/classify/vocab.js): 已完成 == goal
 // achieved, never "the turn wrapped up".
-function buildPlanProgressPrompt() {
+//
+// COST: the block is ~1.7K characters and the user prompt is replayed on every
+// turn, so re-sending it every turn is a fixed per-turn growth of the context.
+// Only the first turn of a native session needs the whole policy — and so does
+// the first turn after the host pruned the transcript, because the block that
+// used to sit earlier in the conversation is gone (see markPlanContextReset).
+// Every other turn gets the one-line reminder, which restates exactly what the
+// classifier reads back: what landed, with evidence, and what did not.
+const PLAN_REMINDER = '[Plan + outcome - every turn] Keep the plan already in this conversation (tick steps off, do not restate it). Before ending a turn in which the work moved, say in the conversation\'s language which steps landed and with what evidence ("3/5 done"), what is still open, and who acts next — the status badge reads only what you write here, so never present an unfinished step as complete.\n\n';
+
+// Sessions whose next turn must carry the full block again because the view the
+// model had lost it. Session-scoped and in-memory on purpose: a server restart
+// loses the marker, which costs one extra full block and nothing else.
+const planResetPending = new Set();
+
+function markPlanContextReset(sessionName) {
+  const name = String(sessionName || '').trim();
+  if (name) planResetPending.add(name);
+}
+
+function buildPlanProgressPrompt(persisted, sessionName, opts) {
+  // No turn state at all (direct calls, hosts that never pass opts) keeps the
+  // full block: that is the pre-existing behaviour and cannot under-instruct.
+  const firstTurn = !opts || opts.isFirstTurn !== false;
+  const resetPending = sessionName ? planResetPending.delete(String(sessionName)) : false;
+  if (!firstTurn && !resetPending) return PLAN_REMINDER;
   return [
     '[Plan the work and report the outcome - every turn] The status system (the succeeded/waiting badge, the summary line, the task board, the notifications) reads THIS conversation and nothing else. Anything you do not say here is invisible to it, and a claim with no visible result behind it counts as unfinished. So:',
     '  (1) Decompose before you act. For any request that takes more than one step, first give a short plan: 2-6 concrete steps, each with a verifiable outcome (a file changed, a command and what it printed, a behaviour you observed) rather than an activity ("analyse", "look into", "optimise"). Cover EVERY part of what was asked, including parallel asks buried in one sentence — a step missing from the plan is a step nobody will do.',
@@ -125,4 +149,5 @@ module.exports = {
   buildSubagentProviderHint,
   buildHumanAssistPrompt,
   buildPlanProgressPrompt,
+  markPlanContextReset,
 };

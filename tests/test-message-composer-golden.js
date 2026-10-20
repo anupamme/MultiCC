@@ -637,11 +637,14 @@ console.log('── Suite 6: sub-agent provider hint ──');
 // ═══════════════════════════════════════════════════════════════════════
 // Suite 7: turn-plan layer (per-turn plan + progress reporting)
 //
-// Injected on EVERY chat turn (that is the point: the goal/achievement
-// judgement the classify prompt makes reads the whole conversation, so the
-// instruction has to be in front of the model on every turn, not once in a
-// system prompt). Two session types are deliberately excluded, and this suite
-// pins both the inclusion and the exclusions.
+// Rides EVERY chat turn (that is the point: the goal/achievement judgement
+// the classify prompt makes reads the whole conversation, so the instruction
+// has to be in front of the model on every turn, not once in a system prompt)
+// — but its SIZE is turn-aware: the full ~1.7K block on a native session's
+// first turn and on the turn after a context reset (markPlanContextReset),
+// a one-line reminder on every other turn, because the full block is still
+// sitting in the replayed transcript. Two session types are deliberately
+// excluded; this suite pins inclusion, sizing, re-arming and the exclusions.
 // ═══════════════════════════════════════════════════════════════════════
 console.log('');
 console.log('── Suite 7: turn-plan layer ──');
@@ -713,9 +716,35 @@ console.log('── Suite 7: turn-plan layer ──');
     assert(block.includes(kw), `7f block states: ${kw}`);
   }
 
+  // 7h: continuation turns carry the ONE-LINE reminder, not the full block —
+  // the full policy from the first turn is still in the replayed transcript,
+  // so re-sending it would be a fixed per-turn growth of the context.
+  const reminder = buildPlanProgressPrompt(null, 's7h-continuation', { isFirstTurn: false });
+  assert(reminder.startsWith('[Plan + outcome'), '7h builder returns the reminder for continuations');
+  assert(reminder.length < block.length / 3, '7h the reminder is a fraction of the full block');
+  assert(reminder.includes('never present an unfinished step as complete'), '7h reminder keeps the never-claim-done rule');
+  const cont = composeMessage({ text, persisted: basePersisted({ type: null }), sessionName: 's7h-continuation', opts: { isFirstTurn: false }, deps });
+  const contLayer = cont.contextLayers.find(l => l.kind === 'turn-plan');
+  assert(!!contLayer && contLayer.text === reminder, '7h continuation layer text is the reminder');
+  assert(!!contLayer && contLayer.text.endsWith('\n\n'), '7h reminder keeps its own trailing separator');
+
+  // 7i: after a context reset (transcript pruned / native rotated) the NEXT
+  // turn re-carries the full block — the dropped turns may have taken the
+  // original full block with them — and the turn after falls back to the
+  // reminder.
+  const { markPlanContextReset } = require('../src/chat/host-prompts');
+  const rs = 's7i-reset';
+  markPlanContextReset(rs);
+  const reset1 = composeMessage({ text, persisted: basePersisted({ type: null }), sessionName: rs, opts: { isFirstTurn: false }, deps });
+  const resetLayer = reset1.contextLayers.find(l => l.kind === 'turn-plan');
+  assert(!!resetLayer && resetLayer.text === block, '7i post-reset turn re-carries the full block');
+  const reset2 = composeMessage({ text, persisted: basePersisted({ type: null }), sessionName: rs, opts: { isFirstTurn: false }, deps });
+  const reset2Layer = reset2.contextLayers.find(l => l.kind === 'turn-plan');
+  assert(!!reset2Layer && reset2Layer.text === reminder, '7i the following turn is back to the reminder');
+
   // 7g: wiring. The layer only exists if the composition root actually hands the
   // builder over and the turn engine forwards it; a builder nobody injects is
-  // the silent failure this asserts against.
+  // the silent failure this asserts against. Same for the reset marker.
   const fs = require('node:fs');
   const path = require('node:path');
   const root = path.join(__dirname, '..');
@@ -723,6 +752,8 @@ console.log('── Suite 7: turn-plan layer ──');
   const engine = fs.readFileSync(path.join(root, 'src', 'chat', 'turn-engine.js'), 'utf8');
   assert(server.includes('buildPlanPrompt: buildPlanProgressPrompt'), '7g server.js injects the builder');
   assert(/buildPlanPrompt,/.test(engine), '7g turn-engine forwards it into the composer deps');
+  assert(server.includes('markPlanContextReset,'), '7g server.js injects the reset marker');
+  assert(/markPlanContextReset\?\.\(sessionName\)/.test(engine), '7g turn-engine consumes the reset marker at the prune site');
 })();
 
 // ═══════════════════════════════════════════════════════════════════════
