@@ -187,7 +187,10 @@ function createTaskShellStore(file) {
   // （线上 445 + 187 行）。实测一轮 Air 快照问 251 次 = 176ms，占整轮的 96%；
   // 接上缓存后降到 5ms。行数会随 worktree 数增长，但始终是「本地 worktree 的
   // 数量级」，不是 receipt 那种按轮次累积的量级。
-  const CACHEABLE = new Set(['task', 'task-first:indexed', 'workspace:record', 'workspace:lease']);
+  // link / shell 与 task 同一量级（线上 1k 行 / 0.1-0.3MB），却被 chatScope /
+  // view() 的每个 HTTP 请求整表解析 —— 2026-10-21 CPU profile：linkedTasks 的
+  // 两次全表 JSON.parse 占进程 CPU 的 ~60%（App 每次打开会话都走一遍）。
+  const CACHEABLE = new Set(['task', 'link', 'shell', 'task-first:indexed', 'workspace:record', 'workspace:lease']);
   const rowCache = new Map();
   function cached(shape, kind, build) {
     if (!CACHEABLE.has(kind)) throw new Error(`row cache not allowed for kind ${kind}`);
