@@ -2382,7 +2382,7 @@ function createChatTurnEngine(deps) {
         logger.warn('chat_stream_ended_early', {
           sessionId: sessionName,
           provider: provider.name,
-          code: err && err.code || null,
+          code: err && err.code || null, message: sanitizeApiErrorMessage(String(err && err.message || '').slice(-240)),
           killed: !!runner.killReason,
         });
       },

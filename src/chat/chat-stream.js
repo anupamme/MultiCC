@@ -170,25 +170,20 @@ function isMissingResumeResult(evt) {
 // provider layer: no provider request ran, and requiring this to be the first
 // event guarantees that retrying the same queued message cannot duplicate
 // visible output or tool side effects.
-function recoverMissingResume(name, evt) {
-  const s = sessions.get(name);
-  const cur = s && s.current;
-  if (!s || !cur || !s.lastSpawnWasResume || cur.eventCount !== 0
-      || cur.resumeRecoveryAttempt >= 1 || !isMissingResumeResult(evt)) return false;
-
-  const proc = s.proc;
+// The CLI reports the missing target before it ever reads our message, and
+// pump() holds the message in the queue until the monitor-control handshake is
+// ready — so the affected message is `s.current` only once it was dispatched,
+// otherwise it is still `s.queue[0]`. Either way it is the one to retry.
+function rotateMissingResume(name, s, target) {
   const previousSessionId = s.sessionId;
   const nextSessionId = crypto.randomUUID();
-  cur.resumeRecoveryAttempt += 1;
-  cur.firstByteReported = false;
-  s.current = null;
-  s.busy = false;
+  target.resumeRecoveryAttempt += 1;
+  target.firstByteReported = false;
   s.sessionId = nextSessionId;
   s.started = false;
   s.stderrTail = '';
   s.recycleRequested = false;
   s.recycleReason = '';
-  s.queue.unshift(cur);
 
   if (typeof s.onNewSessionId === 'function') {
     try { s.onNewSessionId(nextSessionId); } catch (_) {}
@@ -199,10 +194,26 @@ function recoverMissingResume(name, evt) {
         previousSessionId, sessionId: nextSessionId,
       });
       const replacementText = typeof recovery === 'string' ? recovery : recovery && recovery.text;
-      if (typeof replacementText === 'string' && replacementText.trim()) cur.text = replacementText;
+      if (typeof replacementText === 'string' && replacementText.trim()) target.text = replacementText;
     } catch (_) {}
   }
   console.warn(`[multicc/chat-stream] [${name}] resume target missing; rotating native session and retrying`);
+}
+
+function recoverMissingResume(name, evt) {
+  const s = sessions.get(name);
+  const cur = s && s.current;
+  const target = cur || (s && !s.busy ? s.queue[0] : null);
+  if (!s || !target || !s.lastSpawnWasResume || (cur && cur.eventCount !== 0)
+      || target.resumeRecoveryAttempt >= 1 || !isMissingResumeResult(evt)) return false;
+
+  const proc = s.proc;
+  if (cur) {
+    s.current = null;
+    s.busy = false;
+  }
+  rotateMissingResume(name, s, target);
+  if (cur) s.queue.unshift(cur);
 
   if (proc && proc.exitCode === null && !proc.killed) {
     if (!killForRecycle(name, s)) s.proc = null;
@@ -329,6 +340,17 @@ function onExit(name, code, signal, err) {
   // another process (or a stale lock) holds this session UUID. Generate a
   // fresh UUID, re-queue the in-flight message, and retry the spawn.
   const stderr = (s.stderrTail || '').trim();
+  // Same recovery as recoverMissingResume for the case where 'exit' beat the
+  // stdout result event (that handler ignores a replaced proc). Without it the
+  // respawn below would `--resume` the same dead id forever.
+  const missingTarget = cur || s.queue[0];
+  if (/No conversation found with session ID/i.test(stderr) && s.lastSpawnWasResume
+      && missingTarget && (!cur || cur.eventCount === 0) && missingTarget.resumeRecoveryAttempt < 1) {
+    rotateMissingResume(name, s, missingTarget);
+    if (cur) s.queue.unshift(cur);
+    setImmediate(() => pump(name));
+    return;
+  }
   if (/already in use/i.test(stderr)) {
     const crypto = require('crypto');
     s.sessionId = crypto.randomUUID();
