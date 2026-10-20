@@ -280,6 +280,7 @@ function createChatTurnEngine(deps) {
     buildDispatchContextPrompt,
     buildGoalLimitNote,
     buildPlanPrompt,
+    markPlanContextReset,
     appendChatMessage,
     loadChatHistory,
     // Read-only transcript view; see the WS replay below for why the cloning
@@ -494,17 +495,16 @@ function createChatTurnEngine(deps) {
     // Only surface a notice when the model's own view changed. A pure
     // pre-compaction cut is invisible to it and would just be noise.
     if (report.contextAffected) {
-      const detail = report.lostTurns > 0
-        ? `已丢弃 ${report.lostTurns} 轮最早的对话`
-        : `已压缩 ${report.elidedEntries} 条过大的工具输出`;
+      const detail = report.lostTurns > 0 ? `已丢弃 ${report.lostTurns} 轮最早的对话` : `已压缩 ${report.elidedEntries} 条过大的工具输出`;
       chatBroadcast(sessionName, {
         type: 'system',
         subtype: 'context_pruned',
         message: `上下文已自动整理：${mb(report.beforeBytes)} → ${mb(report.afterBytes)}，${detail}。`,
       });
-      // The live process still holds the untrimmed context in memory; only a
-      // restart (with --resume on the trimmed file) picks the change up.
+      // The live process still holds the untrimmed context in memory; only a restart picks the trimmed file up.
       try { chatStream.recycle(sessionName, 'transcript-pruned'); } catch (_) {}
+      // The pruned turns may have dropped the full [Plan the work] block; the turn that resumes the trimmed file re-arms it.
+      markPlanContextReset?.(sessionName);
     }
     return report;
   }

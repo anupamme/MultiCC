@@ -294,11 +294,16 @@ function composeMessage({ text, persisted, sessionName, opts, deps }) {
       if (handoff) contextLayers.push({ kind: 'cli-handoff', order: 15, text: handoff });
     }
 
-    // order 18: plan + progress reporting. Injected on EVERY chat turn (the
-    // caller supplies the builder; a host without one gets no layer), because it
-    // is the agent-side half of the goal/achievement contract the classify
-    // prompt reads back: state the decomposition, then state which steps
-    // actually landed and with what evidence.
+    // order 18: plan + progress reporting — the agent-side half of the
+    // goal/achievement contract the classify prompt reads back: state the
+    // decomposition, then state which steps actually landed and with what
+    // evidence. The layer rides every chat turn (a host without a builder gets
+    // no layer), but its SIZE is turn-aware: the builder receives
+    // { isFirstTurn } and decides full policy vs one-line reminder (see
+    // src/chat/host-prompts.js — the first turn of a native session and the
+    // turn after a context reset carry the full ~1.7K block; every other turn
+    // carries a reminder, because the full block is still sitting in the
+    // replayed transcript and re-sending it is a fixed per-turn growth).
     //
     // Deliberately NOT injected into:
     //  • aux sessions — internal classification/attribution jobs whose output is
@@ -308,7 +313,7 @@ function composeMessage({ text, persisted, sessionName, opts, deps }) {
     // `bare` (continue/retry) already skips every layer, this one included.
     if (typeof deps.buildPlanPrompt === 'function'
       && persisted.type !== 'aux' && persisted.type !== 'gateway') {
-      const plan = deps.buildPlanPrompt(persisted, sessionName);
+      const plan = deps.buildPlanPrompt(persisted, sessionName, { isFirstTurn });
       if (plan) contextLayers.push({ kind: 'turn-plan', order: 18, text: plan });
     }
 
