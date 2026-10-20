@@ -13,7 +13,10 @@ function createContextPlanner({ store, getRecord, getHistory, getTask, graphCont
       || (prior.nativeId && record.cliSessionId && prior.nativeId !== record.cliSessionId);
     const ledger = reset ? {} : prior.sources;
     const lifecycle = getTask(task.id) || task;
-    const query = text + '\n' + task.title;
+    // The title steers the cold start. On a continuation it is the same words
+    // every turn, so it would keep surfacing one more slice of title-adjacent
+    // memory per turn; only what this turn says can make a fact newly relevant.
+    const query = reset ? text + '\n' + task.title : text;
     const memories = memory?.retrieve({ ...record, taskBoundTaskId: task.id }, query) || { candidates: [], inventory: [], diagnostics: [] };
     const graph = graphContextOf(task.id, { query }) || { candidates: [], sources: [] };
     const inventory = [
