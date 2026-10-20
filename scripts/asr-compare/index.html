@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>本地语音识别对比台</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --line: #e3e6ea; --ink: #1d2129; --muted: #6b7280;
+    --accent: #2563eb; --accent-soft: #eff4ff; --bad: #d92d20; --bad-soft: #fef3f2;
+    --ok: #067647; --ok-soft: #ecfdf3; --warn: #b54708; --warn-soft: #fffaeb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .col { flex: 1 1 320px; min-width: 0; }
+  label.f { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+  textarea, input[type=text] { width: 100%; border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; font: inherit; resize: vertical; background: #fff; }
+  textarea { min-height: 116px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line); background: #fff; padding: 10px 16px; }
+  button:hover { border-color: #c9ced6; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary.rec { background: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .timer { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 56px; }
+  .engines { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .eng { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 12px; font-size: 13px; background: #fff; cursor: pointer; }
+  .eng.on { border-color: var(--accent); background: var(--accent-soft); }
+  .eng input { margin: 0; }
+  .score-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .score-val { font-variant-numeric: tabular-nums; width: 28px; text-align: right; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .card h3 { font-size: 13px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card .text { white-space: pre-wrap; word-break: break-word; min-height: 44px; }
+  .card.err { background: var(--bad-soft); border-color: #fda29b; }
+  .card.err .text { color: var(--bad); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eef1f5; color: var(--muted); font-weight: 500; }
+  .badge.ok { background: var(--ok-soft); color: var(--ok); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  .badge.bad { background: var(--bad-soft); color: var(--bad); }
+  mark { background: #ffe1e1; color: var(--bad); border-radius: 3px; padding: 0 1px; }
+  .align { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--muted); }
+  .align div { margin-top: 4px; }
+  .status { font-size: 12px; color: var(--muted); }
+  .status b { color: var(--ink); font-weight: 600; }
+  .hist { margin-top: 8px; }
+  .hist details { border-top: 1px solid var(--line); padding: 8px 0; }
+  .hist summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .hist audio { width: 100%; margin-top: 8px; height: 32px; }
+  #msg { font-size: 13px; color: var(--bad); min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>本地语音识别对比台</h1>
+  <div class="sub">同一个页面、同一段录音，几家本地模型并排出结果。热词走各模型的解码期偏置（Zipformer transducer 专有）。</div>
+
+  <div class="panel">
+    <div class="row">
+      <div class="col">
+        <label class="f">热词（每行一个；英文会按模型要求自动转大写）</label>
+        <textarea id="hotwords" placeholder="MultiCC&#10;AutoCommit&#10;聊天记录"></textarea>
+        <div class="hint">热词只对勾选了「+ 热词」的引擎生效。带 <code>:分数</code> 可单条加权，例如 <code>MultiCC :5</code>。</div>
+      </div>
+      <div class="col">
+        <label class="f">参考文本（可选：你实际说的话，用于算错字率）</label>
+        <textarea id="reference" placeholder="把刚才说的那句话打在这里，就能看到每个模型错在哪几个字。"></textarea>
+        <div class="hint">不填也能用，只是不显示 CER 和逐字对齐。</div>
+      </div>
+    </div>
+
+    <div class="score-row">
+      <span class="f" style="margin:0">热词权重</span>
+      <input type="range" id="score" min="0.5" max="6" step="0.5" value="3">
+      <span class="score-val" id="scoreVal">3</span>
+      <span class="hint" style="margin:0">越高越容易把热词塞进结果，也越容易幻觉</span>
+    </div>
+
+    <label class="f" style="margin-top:14px">参与对比的引擎</label>
+    <div class="engines" id="engines"></div>
+
+    <div class="controls">
+      <button id="rec" class="primary">● 开始录音</button>
+      <span class="timer" id="timer">0.0s</span>
+      <button id="pick">选择音频文件…</button>
+      <input type="file" id="file" accept="audio/*" hidden>
+      <label class="eng on" style="margin-left:auto"><input type="checkbox" id="post" checked> SenseVoice 应用后处理纠错</label>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div id="status" class="status" style="margin-bottom:12px"></div>
+  <div class="cards" id="cards"></div>
+
+  <div class="panel hist" id="history" hidden>
+    <label class="f">历史录音</label>
+    <div id="histList"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { engines: ['sense', 'bi', 'bi-hw'], running: false };
+let media = null, recorder = null, chunks = [], timerId = null, t0 = 0;
+
+function fmtMs(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
+
+async function boot() {
+  try {
+    const st = await (await fetch('/api/status')).json();
+    const missing = Object.entries(st.models).filter(([, v]) => !v).map(([k]) => k);
+    $('status').innerHTML = `sherpa-onnx-node <b>${st.sherpaVersion || '?'}</b> · 模型目录 <b>${st.modelRoot}</b>` +
+      (missing.length ? ` · <span style="color:var(--warn)">未下载: ${missing.join(', ')}</span>` : '');
+    if (st.sherpaVersion && st.transducerOk === false) {
+      $('msg').innerHTML = `当前 sherpa-onnx-node ${st.sherpaVersion} 的流式 transducer 解码会返回空串。` +
+        `请用 <code>SHERPA_ONNX_NODE=/path/to/node_modules/sherpa-onnx-node node scripts/asr-compare/server.js</code> 指向 1.13.8+ 再启动。`;
+      $('msg').style.color = 'var(--bad)';
+    }
+    if (st.hotwords && !$('hotwords').value) $('hotwords').value = st.hotwords;
+    for (const [id, spec] of Object.entries(st.engines)) {
+      const ok = st.models[spec.base || id];
+      const el = document.createElement('label');
+      el.className = 'eng' + (state.engines.includes(id) ? ' on' : '');
+      el.innerHTML = `<input type="checkbox" ${state.engines.includes(id) ? 'checked' : ''} ${ok ? '' : 'disabled'}> ${spec.label}${ok ? '' : '（未下载）'}`;
+      el.querySelector('input').addEventListener('change', e => {
+        const on = e.target.checked;
+        state.engines = on ? [...new Set([...state.engines, id])] : state.engines.filter(x => x !== id);
+        el.classList.toggle('on', on);
+      });
+      $('engines').appendChild(el);
+    }
+    // Warm the plain engines in the background; the first recording otherwise
+    // pays the model load (~1-10s) on top of its own decode time.
+    fetch('/api/warm', { method: 'POST', headers: { 'x-engines': state.engines.join(',') } }).catch(() => {});
+  } catch (e) { $('msg').textContent = '加载状态失败: ' + e.message; }
+}
+
+$('score').addEventListener('input', e => { $('scoreVal').textContent = e.target.value; });
+
+$('pick').addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', async e => {
+  const f = e.target.files && e.target.files[0];
+  if (f) { e.target.value = ''; await submit(await f.arrayBuffer(), f.type || 'audio/wav'); }
+});
+
+$('rec').addEventListener('click', async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  $('msg').textContent = '';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+      : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    chunks = [];
+    recorder.ondataavailable = ev => { if (ev.data.size) chunks.push(ev.data); };
+    recorder.onstop = async () => {
+      clearInterval(timerId); timerId = null;
+      stream.getTracks().forEach(t => t.stop());
+      $('rec').textContent = '● 开始录音';
+      $('rec').classList.remove('rec');
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      await submit(await blob.arrayBuffer(), blob.type, URL.createObjectURL(blob));
+    };
+    recorder.start(200);
+    t0 = performance.now();
+    $('rec').textContent = '■ 停止并识别';
+    $('rec').classList.add('rec');
+    timerId = setInterval(() => { $('timer').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's'; }, 100);
+  } catch (e) { $('msg').textContent = '麦克风不可用: ' + e.message; }
+});
+
+async function submit(buffer, mime, audioUrl) {
+  if (!state.engines.length) { $('msg').textContent = '至少勾选一个引擎'; return; }
+  $('msg').textContent = '';
+  $('cards').innerHTML = '<div class="card"><div class="text">识别中…</div></div>';
+  const hdrs = {
+    'content-type': mime || 'application/octet-stream',
+    'x-engines': state.engines.join(','),
+    'x-hotword-score': $('score').value,
+    'x-post-process': $('post').checked ? '1' : '0',
+  };
+  const hw = $('hotwords').value.trim();
+  if (hw) hdrs['x-hotwords'] = btoa(unescape(encodeURIComponent(hw)));
+  const t0 = performance.now();
+  let out;
+  try {
+    const r = await fetch('/api/transcribe', { method: 'POST', headers: hdrs, body: buffer });
+    out = await r.json();
+    if (!r.ok) throw new Error(out.error || ('HTTP ' + r.status));
+  } catch (e) {
+    $('msg').textContent = '识别失败: ' + e.message;
+    $('cards').innerHTML = '';
+    return;
+  }
+  render(out, Date.now() - t0);
+  addHistory(audioUrl, out, Date.now() - t0);
+}
+
+const norm = s => String(s || '').replace(/[\s，。！？、,.!?：:；;“”"'‘’（）()【】\[\]…—\-]/g, '').toLowerCase();
+
+function alignOps(a, b) {
+  // Levenshtein backtrace over characters; returns ops for a-side highlighting.
+  const A = [...a], B = [...b];
+  const dp = Array.from({ length: A.length + 1 }, (_, i) => [i, ...Array(B.length).fill(0)]);
+  for (let j = 1; j <= B.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= A.length; i++) for (let j = 1; j <= B.length; j++)
+    dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (A[i - 1] === B[j - 1] ? 0 : 1));
+  const ops = []; let i = A.length, j = B.length;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && A[i - 1] === B[j - 1] && dp[i][j] === dp[i - 1][j - 1]) { ops.push({ t: '=', a: A[i - 1] }); i--; j--; }
+    else if (i > 0 && dp[i][j] === dp[i - 1][j] + 1) { ops.push({ t: 'del', a: A[i - 1] }); i--; }
+    else if (j > 0 && dp[i][j] === dp[i][j - 1] + 1) { ops.push({ t: 'ins', a: '' }); j--; }
+    else { ops.push({ t: 'sub', a: A[i - 1] }); i--; j--; }
+  }
+  return { ops: ops.reverse(), dist: dp[A.length][B.length], len: A.length };
+}
+
+function highlight(a, b) {
+  const { ops } = alignOps(a, b);
+  return ops.map(o => o.t === '=' ? esc(o.a) : `<mark>${esc(o.a)}</mark>`).join('');
+}
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+function render(out, wallMs) {
+  const ref = $('reference').value.trim();
+  const nref = norm(ref);
+  const cards = $('cards');
+  cards.innerHTML = '';
+  const rows = out.results || [];
+  const scored = [];
+  for (const r of rows) {
+    const card = document.createElement('div');
+    card.className = 'card' + (r.error ? ' err' : '');
+    let html = `<h3>${esc(r.label || r.id)}`;
+    if (!r.error) {
+      html += `<span class="badge">${fmtMs(r.ms)}</span>`;
+      if (typeof r.ctx === 'number' && r.ctx > 0) html += `<span class="badge warn">热词命中 ${r.ctx}</span>`;
+      if (r.hotwordsUsed) html += `<span class="badge ok">已用热词</span>`;
+      if (r.note) html += `<span class="badge">${esc(r.note)}</span>`;
+    }
+    html += `</h3>`;
+    if (r.error) {
+      html += `<div class="text">${esc(r.error)}</div></div>`;
+      card.innerHTML = html;
+      cards.appendChild(card);
+      continue;
+    }
+    html += `<div class="text">${esc(r.text) || '<span style="color:var(--muted)">（空）</span>'}</div>`;
+    if (nref) {
+      const n = norm(r.text);
+      const { dist, len } = alignOps(nref, n);
+      const cer = len ? dist / len : 0;
+      scored.push({ label: r.label, cer, dist, len });
+      const cls = cer <= 0.1 ? 'ok' : cer <= 0.25 ? 'warn' : 'bad';
+      html += `<div class="align"><span class="badge ${cls}">CER ${(cer * 100).toFixed(1)}% · 错 ${dist}/${len} 字</span>`;
+      html += `<div>参考对齐：${highlight(nref, n)}</div></div>`;
+    }
+    card.innerHTML = html;
+    cards.appendChild(card);
+  }
+  if (scored.length) {
+    scored.sort((a, b) => a.cer - b.cer);
+    const best = scored[0];
+    $('msg').textContent = `本次最佳：${best.label}（CER ${(best.cer * 100).toFixed(1)}%） · 总耗时 ${fmtMs(out.totalMs || wallMs)} · 音频 ${out.audioSec ? out.audioSec.toFixed(2) + 's' : '?'}`;
+    $('msg').style.color = 'var(--muted)';
+  } else {
+    $('msg').textContent = `耗时 ${fmtMs(out.totalMs || wallMs)} · 音频 ${out.audioSec ? out.audioSec.toFixed(2) + 's' : '?'}`;
+    $('msg').style.color = 'var(--muted)';
+  }
+}
+
+const history = [];
+function addHistory(url, out, wallMs) {
+  if (!url) return;
+  const ref = $('reference').value.trim();
+  history.unshift({ url, out, wallMs, ref, at: new Date() });
+  history.length = Math.min(history.length, 8);
+  $('history').hidden = false;
+  const list = $('histList');
+  list.innerHTML = '';
+  history.forEach((h, i) => {
+    const d = document.createElement('details');
+    const summary = h.out.results.map(r => r.error ? `${r.id}:失败` : `${r.id}:${r.text.slice(0, 12)}`).join(' · ');
+    d.innerHTML = `<summary>${h.at.toLocaleTimeString()} · ${summary}</summary><audio controls src="${h.url}"></audio>`;
+    list.appendChild(d);
+  });
+}
+
+boot();
+</script>
+</body>
+</html>
