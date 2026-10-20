@@ -465,12 +465,16 @@
       "id": "official-account-credentials",
       "classification": "migration-required",
       "owner": "provider routing",
-      "rationale": "Official-account OAuth credentials (Codex mini-homes, Claude PKCE token files) are multicc-owned login state that must survive restarts and stay isolated from the CLIs' global logins.",
+      "rationale": "Official-account OAuth credentials (Codex mini-homes, Claude PKCE token files) and their refresh-health records (failure class, stderr excerpt, park state; no tokens) are multicc-owned login state that must survive restarts and stay isolated from the CLIs' global logins.",
       "migrationStrategy": "Move the root behind a createPaths port and copy the whole account tree forward atomically (credentials are single-writer, so a directory-level move with a rollback marker suffices).",
       "sources": [
         {
           "file": "src/official-accounts.js",
           "anchor": "const DEFAULT_ROOT = path.join(os.homedir(), '.multicc', 'official-accounts');"
+        },
+        {
+          "file": "src/claude-auth/refresh-health.js",
+          "anchor": "const dir = path.join(root, 'refresh-health');"
         }
       ]
     },

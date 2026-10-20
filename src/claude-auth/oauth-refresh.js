@@ -48,6 +48,14 @@ const DEFAULT_COOLDOWN_MS = 10 * 60 * 1000;
 // simply disagrees that it is due yet. Retry soon, but not on every check.
 const DEFAULT_DEFER_COOLDOWN_MS = 90_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+// A fixed ten-minute retry is a scheduler, not a policy: a credential that can
+// never be refreshed is knocked on forever (one account was retried every
+// twelve minutes for thirteen days). Failures therefore back off exponentially
+// to this ceiling...
+const DEFAULT_MAX_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+// ...and a run of failures — or a single explicit server-side rejection —
+// stops the ladder entirely until the credential itself changes.
+const DEFAULT_PARK_AFTER_FAILURES = 6;
 
 // Narrow on purpose. This decides whether an API error is worth spawning a CLI
 // for, so it matches the router's own expired-credential wording and nothing
@@ -64,6 +72,48 @@ const EXPIRED_OAUTH_PATTERN =
 // separately so callers can park the account instead of retrying it.
 const REVOKED_OAUTH_PATTERN =
   /oauth token revoked|token (?:has been |was )?revoked|credentials? (?:have been |were )?revoked/i;
+
+// What the CLI said when a rung failed. Exit codes alone cannot tell a dead
+// account from a dead network, and the difference decides whether retrying is
+// useful at all: a rejected token never becomes valid again by waiting.
+const REJECTED_FAILURE_PATTERN =
+  /invalid_grant|access_denied|unsupported_country|not allowed|revoked|forbidden|unauthorized|authentication_error|\b401\b/i;
+const NETWORK_FAILURE_PATTERN =
+  /ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|network|fetch failed|\bTLS\b|proxy/i;
+
+// stderr can carry a URL with a token in it; nothing here needs the value, and
+// the health file is meant to be safe to read aloud when diagnosing.
+function redactCliOutput(text, limit = 400) {
+  const raw = String(text || '');
+  const cleaned = raw
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_.-]{16,}|[A-Za-z0-9_-]{40,}={0,2})/g, '[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > limit ? `${cleaned.slice(0, limit)}…` : cleaned;
+}
+
+// A fingerprint that changes when the credential is replaced — a fresh login
+// writes a newer expiry, which is exactly the event that makes a parked
+// account worth trying again. It deliberately does not hash the token itself:
+// refresh-health.js stores this value on disk.
+function credentialFingerprint(credentials) {
+  if (!credentials || !credentials.ok) return null;
+  return `${credentials.expiresAt}|${credentials.refreshExpiresAt || ''}|${credentials.hasRefreshToken ? 1 : 0}`;
+}
+
+function classifyFailure(steps) {
+  // Only rungs that actually failed say anything about the credential. A
+  // successful-but-declined `auth status` prints its normal state JSON, which
+  // must not be mined for words like "401".
+  const text = (Array.isArray(steps) ? steps : [])
+    .filter(step => step && (step.timedOut || step.code === undefined || step.code !== 0))
+    .map(step => `${step.stderr || ''} ${step.stdout || ''}`)
+    .join(' ');
+  if (!text.trim()) return 'unknown';
+  if (REJECTED_FAILURE_PATTERN.test(text)) return 'rejected';
+  if (NETWORK_FAILURE_PATTERN.test(text)) return 'network';
+  return 'unknown';
+}
 
 function looksLikeExpiredOAuth(message) {
   return EXPIRED_OAUTH_PATTERN.test(String(message || ''));
@@ -144,6 +194,15 @@ function createClaudeOAuthRefresher(options = {}) {
   const isEnabled = typeof options.isEnabled === 'function'
     ? options.isEnabled
     : (() => process.env.CLAUDE_OAUTH_AUTO_REFRESH !== '0');
+  // Optional durable health (claude-auth/refresh-health.js). Without it the
+  // behaviour degrades to the old in-memory one — including forgetting a park
+  // on restart — which is why every production wiring passes it.
+  const health = options.health && typeof options.health.read === 'function' ? options.health : null;
+  const healthKey = options.healthKey || null;
+  const maxCooldownMs = Number(options.maxCooldownMs) > 0
+    ? Number(options.maxCooldownMs) : DEFAULT_MAX_COOLDOWN_MS;
+  const parkAfterFailures = Number(options.parkAfterFailures) > 0
+    ? Number(options.parkAfterFailures) : DEFAULT_PARK_AFTER_FAILURES;
 
   const state = {
     inFlight: null,
@@ -153,7 +212,63 @@ function createClaudeOAuthRefresher(options = {}) {
     retryAfter: 0,
     consecutiveFailures: 0,
     refreshCount: 0,
+    failureClass: null,
+    lastFailure: null,
+    // parked = no ladder until the credential changes. Resuming is a fact
+    // about the credential (a new login wrote a new expiry), not a timer.
+    parked: null,
   };
+
+  // Restore what the previous process learned. A restart used to reset every
+  // counter, which is how a permanently dead account kept being retried: the
+  // evidence of its death died with the process.
+  if (health && healthKey) {
+    const persisted = health.read(healthKey);
+    if (persisted && typeof persisted === 'object') {
+      state.consecutiveFailures = Number(persisted.consecutiveFailures) || 0;
+      state.lastSuccessAt = Number(persisted.lastSuccessAt) || null;
+      state.refreshCount = Number(persisted.refreshCount) || 0;
+      state.failureClass = persisted.failureClass || null;
+      state.lastFailure = persisted.lastFailure || null;
+      if (persisted.parked && typeof persisted.parked === 'object') {
+        state.parked = {
+          at: Number(persisted.parked.at) || null,
+          reason: persisted.parked.reason || 'persisted',
+          failureClass: persisted.parked.failureClass || state.failureClass,
+          consecutiveFailures: Number(persisted.parked.consecutiveFailures) || state.consecutiveFailures,
+          credentialFingerprint: persisted.parked.credentialFingerprint || null,
+          credentialExpiresAt: Number(persisted.parked.credentialExpiresAt) || null,
+        };
+      }
+    }
+  }
+
+  function persist(fields) {
+    if (!health || !healthKey) return;
+    health.write(healthKey, {
+      consecutiveFailures: state.consecutiveFailures,
+      refreshCount: state.refreshCount,
+      failureClass: state.failureClass,
+      lastFailure: state.lastFailure,
+      lastSuccessAt: state.lastSuccessAt,
+      parked: state.parked,
+      ...fields,
+    });
+  }
+
+  function unpark(credentials, why) {
+    if (!state.parked) return false;
+    const before = state.parked;
+    state.parked = null;
+    state.retryAfter = 0;
+    logger.info('claude_oauth_refresh_unparked', {
+      reason: why,
+      failureClass: before.failureClass,
+      credentialFingerprint: credentialFingerprint(credentials),
+    });
+    persist({ unparkedAt: new Date(now()).toISOString() });
+    return true;
+  }
 
   // The child must reach the official endpoint with the user's login: any
   // inherited ANTHROPIC_* routing (a per-session provider, a cc-switch leftover)
@@ -240,10 +355,28 @@ function createClaudeOAuthRefresher(options = {}) {
     },
   ];
 
-  async function attempt(reason) {
+  async function attempt(reason, { force = false } = {}) {
     const startedAt = now();
     state.lastAttemptAt = startedAt;
     const before = await readCredentials();
+    // A park is released by a new credential, not by time passing. Reading it
+    // is cheap and already happens on every tick, so a re-login is noticed
+    // within one check while a dead account spawns nothing at all.
+    if (state.parked) {
+      const fingerprint = credentialFingerprint(before);
+      if (before.ok && fingerprint && fingerprint !== state.parked.credentialFingerprint) {
+        unpark(before, 'credential_replaced');
+      } else if (!force) {
+        state.lastOutcome = {
+          outcome: 'parked',
+          detail: state.parked.failureClass,
+          parkedAt: state.parked.at,
+          reason,
+          at: startedAt,
+        };
+        return state.lastOutcome;
+      }
+    }
     const decision = assess(before, startedAt);
     // The credential decides whether a CLI runs — nothing else does, not even a
     // forced call. A fresh token needs no refresh, and a dead refresh token
@@ -270,11 +403,22 @@ function createClaudeOAuthRefresher(options = {}) {
       const result = await run(claudeBin, rung.args(), { timeoutMs: commandTimeoutMs, cwd, env });
       const after = await readCredentials();
       const ok = refreshed(before, after, now());
-      steps.push({ step: rung.step, code: result.code, timedOut: !!result.timedOut, refreshed: ok });
+      // The exit code alone was the whole record of a failure; it cannot tell a
+      // revoked login from a broken network, which is the first question asked
+      // after the fact. Capture the CLI's own words, redacted and truncated.
+      const step = { step: rung.step, code: result.code, timedOut: !!result.timedOut, refreshed: ok };
+      if (!ok && (result.stderr || result.stdout)) {
+        step.stderr = redactCliOutput(result.stderr);
+        if (!step.stderr && result.stdout) step.stdout = redactCliOutput(result.stdout);
+      }
+      steps.push(step);
       if (ok) {
         state.lastSuccessAt = now();
         state.consecutiveFailures = 0;
         state.retryAfter = 0;
+        state.failureClass = null;
+        state.lastFailure = null;
+        state.parked = null;
         state.refreshCount += 1;
         state.lastOutcome = {
           outcome: 'refreshed',
@@ -290,6 +434,7 @@ function createClaudeOAuthRefresher(options = {}) {
           validForMs: after.expiresAt - state.lastSuccessAt,
           elapsedMs: state.lastOutcome.elapsedMs,
         });
+        persist({ credentialFingerprint: credentialFingerprint(after) });
         return state.lastOutcome;
       }
     }
@@ -300,19 +445,85 @@ function createClaudeOAuthRefresher(options = {}) {
     // token that is already dead and stayed dead is a real failure.
     const ts = now();
     const declined = before.expiresAt > ts;
-    state.lastOutcome = declined
-      ? { outcome: 'deferred', reason, at: ts, steps, expiresInMs: before.expiresAt - ts }
-      : { outcome: 'failed', reason, at: ts, steps, consecutiveFailures: state.consecutiveFailures + 1 };
     if (declined) {
       state.retryAfter = ts + deferCooldownMs;
+      state.lastOutcome = { outcome: 'deferred', reason, at: ts, steps, expiresInMs: before.expiresAt - ts };
       logger.info('claude_oauth_refresh_deferred', { reason, expiresInMs: before.expiresAt - ts });
+      return state.lastOutcome;
+    }
+
+    // A real failure. What happens next is decided by *why* it failed: an
+    // explicit rejection cannot be fixed by running the CLI again, and a
+    // repeating generic failure stops being worth a spawn after a few tries.
+    state.consecutiveFailures += 1;
+    const failureClass = classifyFailure(steps);
+    state.failureClass = failureClass;
+    state.lastFailure = {
+      at: new Date(ts).toISOString(),
+      failureClass,
+      reason,
+      expiresInMs: before.expiresAt - ts,
+      steps: steps.filter(step => step.stderr || step.stdout || step.timedOut),
+    };
+    const shouldPark = failureClass === 'rejected' || state.consecutiveFailures >= parkAfterFailures;
+    if (shouldPark) {
+      state.parked = {
+        at: ts,
+        reason,
+        failureClass,
+        consecutiveFailures: state.consecutiveFailures,
+        credentialFingerprint: credentialFingerprint(before),
+        // The per-account supervisor cannot read the CLI's scratch slot while
+        // parked (it is only seeded inside the ladder), so it compares the
+        // account file's expiry against this instead: a re-login always lands
+        // a later expiry, and an untouched credential never does.
+        credentialExpiresAt: before.expiresAt,
+      };
+      // Not a backoff: the periodic tick still reads the credential (so a
+      // re-login releases the park) but spawns nothing.
+      state.retryAfter = 0;
+      state.lastOutcome = {
+        outcome: 'parked',
+        reason,
+        at: ts,
+        detail: failureClass,
+        steps,
+        consecutiveFailures: state.consecutiveFailures,
+      };
+      logger.error('claude_oauth_refresh_parked', {
+        reason,
+        failureClass,
+        consecutiveFailures: state.consecutiveFailures,
+        steps,
+        // The operator-facing line: say what a human has to do, not how the
+        // ladder failed.
+        action: failureClass === 'rejected'
+          ? 'credential rejected by the server — log in again; retries are suspended until the credential changes'
+          : 'repeated refresh failures — retries are parked until the credential changes; run `claude` or log in again',
+      });
     } else {
-      state.consecutiveFailures += 1;
-      state.retryAfter = ts + cooldownMs;
+      // Exponential: 10m, 20m, 40m … capped. A dead network gets a few
+      // chances; a dead credential spends a handful of spawns, not thousands.
+      const backoffMs = Math.min(cooldownMs * 2 ** (state.consecutiveFailures - 1), maxCooldownMs);
+      state.retryAfter = ts + backoffMs;
+      state.lastOutcome = {
+        outcome: 'failed',
+        reason,
+        at: ts,
+        detail: failureClass,
+        steps,
+        consecutiveFailures: state.consecutiveFailures,
+        retryInMs: backoffMs,
+      };
       logger.error('claude_oauth_refresh_failed', {
-        reason, steps, consecutiveFailures: state.consecutiveFailures,
+        reason,
+        failureClass,
+        consecutiveFailures: state.consecutiveFailures,
+        retryInMs: backoffMs,
+        steps,
       });
     }
+    persist({ credentialFingerprint: credentialFingerprint(before) });
     return state.lastOutcome;
   }
 
@@ -328,11 +539,14 @@ function createClaudeOAuthRefresher(options = {}) {
     if (!force && state.retryAfter && ts < state.retryAfter) {
       return Promise.resolve({ outcome: 'cooldown', reason, retryInMs: state.retryAfter - ts });
     }
-    const running = attempt(reason)
+    const running = attempt(reason, { force })
       .catch(error => {
         state.consecutiveFailures += 1;
-        state.retryAfter = now() + cooldownMs;
+        state.retryAfter = now() + Math.min(cooldownMs * 2 ** (state.consecutiveFailures - 1), maxCooldownMs);
+        state.failureClass = 'harness_error';
+        state.lastFailure = { at: new Date(now()).toISOString(), failureClass: 'harness_error', reason, error: error.message };
         logger.error('claude_oauth_refresh_error', { reason, error: error.message });
+        persist();
         return { outcome: 'failed', reason, error: error.message };
       })
       .finally(() => { state.inFlight = null; });
@@ -346,6 +560,31 @@ function createClaudeOAuthRefresher(options = {}) {
     return refresh({ reason });
   }
 
+  async function parkFromApiError(detail) {
+    let credentials = { ok: false };
+    try { credentials = await readCredentials(); } catch (_) { /* diagnosis, not a precondition */ }
+    state.failureClass = 'rejected';
+    state.parked = {
+      at: now(),
+      reason: 'api-error',
+      failureClass: 'rejected',
+      consecutiveFailures: state.consecutiveFailures,
+      credentialFingerprint: credentialFingerprint(credentials),
+      credentialExpiresAt: credentials.ok ? credentials.expiresAt : null,
+    };
+    // Release still works: the tick reads the credential and unparks when a
+    // new login changes its fingerprint.
+    state.retryAfter = 0;
+    logger.error('claude_oauth_refresh_parked', {
+      reason: 'api-error',
+      failureClass: 'rejected',
+      detail,
+      action: 'credential rejected by the server — log in again; refreshes are suspended until the credential changes',
+    });
+    persist({ credentialFingerprint: credentialFingerprint(credentials) });
+    return { outcome: 'needs-login', detail, reason: 'api-error' };
+  }
+
   // Reactive entry point: a turn already failed on an expired credential, so
   // the buffer is moot — but the message must actually be about that credential.
   function onApiError(decision) {
@@ -356,7 +595,10 @@ function createClaudeOAuthRefresher(options = {}) {
     // refreshed — running the CLI here would spend a rotation on a credential
     // the server has already rejected.
     if (looksLikeRevokedOAuth(error.sanitizedMessage)) {
-      return Promise.resolve({ outcome: 'needs-login', detail: 'token_revoked', reason: 'api-error' });
+      // A live turn just learned the credential is server-side dead. Until
+      // now that fact only stopped the provider from being re-selected; the
+      // periodic ladder kept knocking on the same dead door. Park it here too.
+      return parkFromApiError('token_revoked');
     }
     if (!looksLikeExpiredOAuth(error.sanitizedMessage)) return null;
     return refresh({ reason: 'api-error' });
@@ -371,6 +613,9 @@ function createClaudeOAuthRefresher(options = {}) {
       retryAfter: state.retryAfter || null,
       consecutiveFailures: state.consecutiveFailures,
       refreshCount: state.refreshCount,
+      failureClass: state.failureClass,
+      lastFailure: state.lastFailure,
+      parked: state.parked || null,
       inFlight: !!state.inFlight,
     };
   }
@@ -383,6 +628,11 @@ module.exports = {
   looksLikeExpiredOAuth,
   looksLikeRevokedOAuth,
   parseCredentials,
+  classifyFailure,
+  credentialFingerprint,
+  redactCliOutput,
   KEYCHAIN_SERVICE,
   DEFAULT_CHECK_INTERVAL_MS,
+  DEFAULT_MAX_COOLDOWN_MS,
+  DEFAULT_PARK_AFTER_FAILURES,
 };

@@ -11,6 +11,11 @@ const { refreshTokens, fetchProfile, ClaudeOAuthError, REFRESH_MIN_BACKOFF_MS } 
 const { isCliCopy } = require('../official-accounts');
 
 const EXPIRY_MARGIN_MS = 5 * 60 * 1000; // 与官方 CLI 一样，提前五分钟检查续期
+// A rejected refresh (invalid_grant / 401) is not retried on the next turn: the
+// old refresh token is dead and only a new login can help. Six hours is a
+// ceiling on noise, not a lock — a fresh login never reaches refresh(), because
+// readAccountToken serves a locally fresh token first.
+const REJECTED_REFRESH_BACKOFF_MS = 6 * 60 * 60 * 1000;
 
 function createClaudeAccountCredentialService(options = {}) {
   const accounts = options.accounts;
@@ -69,11 +74,23 @@ function createClaudeAccountCredentialService(options = {}) {
       note(id, { refreshCount: (prev ? prev.refreshCount : 0) + 1, lastError: null, lastRefreshAt: now() });
       return { ok: true, accessToken: tokenData.access_token, expiresAt: Date.parse(tokenData.expired) };
     } catch (error) {
-      if (error instanceof ClaudeOAuthError && error.status === 429) {
+      const status = error instanceof ClaudeOAuthError ? error.status : null;
+      if (status === 429) {
         blockedUntil.set(id, now() + (error.retryAfterMs || REFRESH_MIN_BACKOFF_MS));
+      } else if (status === 400 || status === 401 || status === 403) {
+        // The token endpoint refused the grant itself. Re-running this on the
+        // next turn asks the same dead question again; wait for a new login.
+        blockedUntil.set(id, now() + REJECTED_REFRESH_BACKOFF_MS);
       }
       note(id, { lastError: error.message });
-      logger.warn('claude_account_refresh_failed', { accountId: id, error: error.message, status: error.status || null });
+      logger.warn('claude_account_refresh_failed', {
+        accountId: id,
+        error: error.message,
+        status: status || null,
+        // Same fact the CLI refresher records, in the same vocabulary.
+        failureClass: status === 400 || status === 401 || status === 403 ? 'rejected' : null,
+        blockedForMs: (blockedUntil.get(id) || 0) > now() ? blockedUntil.get(id) - now() : null,
+      });
       return { ok: false, reason: `refresh_failed: ${error.message}` };
     }
   }
