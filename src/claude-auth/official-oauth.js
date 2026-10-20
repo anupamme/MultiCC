@@ -6,8 +6,8 @@
 // so no uTLS is needed; the axios-shaped headers mirror the native client.
 //
 //   authorize:  https://claude.ai/oauth/authorize  (browser)
-//   exchange:   POST https://platform.claude.com/v1/oauth/token
-//   refresh:    POST https://platform.claude.com/v1/oauth/token
+//   exchange:   POST https://platform.claude.com/v1/oauth/token  (authorization_code
+//               grant only — token rotation is the claude CLI's, never ours)
 //   profile:    GET  https://api.anthropic.com/api/oauth/profile
 //   usage:      GET  https://api.anthropic.com/api/oauth/usage
 //   callback:   http://localhost:54545/callback?code=...&state=...
@@ -173,16 +173,12 @@ async function exchangeCode(fetchImpl, { code, state, codeVerifier, now }) {
   return normalizeTokenResponse(json, { now });
 }
 
-async function refreshTokens(fetchImpl, { refreshToken, now }) {
-  const json = await postToken(fetchImpl, {
-    client_id: CLIENT_ID,
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    scope: SCOPE,
-  });
-  // A refresh response may omit refresh_token — the old one stays valid (CPA).
-  return normalizeTokenResponse(json, { refreshTokenFallback: refreshToken, now });
-}
+// There is deliberately no refreshTokens() here any more. Rotation is the
+// claude CLI's job (see claude-auth/accounts-refresh.js): a refresh token is
+// single-use, and a second holder renewing in parallel is what produced a
+// stream of `invalid_grant` against a healthy account. What stays in this file
+// is the part the CLI cannot do for us — the PKCE login that creates an
+// account, and the read-only usage/profile calls.
 
 async function fetchProfile(fetchImpl, accessToken) {
   const res = await timedFetch(fetchImpl, PROFILE_URL, {
@@ -316,7 +312,6 @@ module.exports = {
   parseRetryAfterMs,
   parseCodeAndState,
   exchangeCode,
-  refreshTokens,
   fetchProfile,
   fetchUsage,
   waitForCallback,

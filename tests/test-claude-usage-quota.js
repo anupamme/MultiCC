@@ -278,12 +278,17 @@ function fakeUsageFetch(responder) {
 const okJson = (body) => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body) });
 const errResp = (status, text = 'nope') => ({ ok: false, status, headers: { get: () => null }, text: async () => text });
 
-// A minimal source: N accounts, and readAccountToken handing back each token by
-// account id (or null to model an unreadable/dead credential).
+// A minimal source: N accounts, and peekAccountToken handing back each token by
+// account id (or null to model an unreadable/dead credential). The route must
+// ask for a peek — a refresh-on-read here is what turned a usage poll into a
+// stream of invalid_grant attempts.
 function fakeSource({ accounts = [], tokens = {}, fetch }) {
   return {
     accounts: { listClaudeAccounts: () => accounts },
-    credentials: { readAccountToken: async (id) => ({ token: tokens[id] || null }) },
+    credentials: {
+      peekAccountToken: async (id) => ({ token: tokens[id] || null }),
+      readAccountToken: async () => { throw new Error('a usage read must not delegate a rotation'); },
+    },
     fetch,
   };
 }

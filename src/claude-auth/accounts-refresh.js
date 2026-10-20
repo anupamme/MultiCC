@@ -24,9 +24,9 @@
 //
 // A rotation is the one step that cannot be repeated (the old refresh token is
 // spent), so: one rotation per account at a time (exclusive(), shared with the
-// inline refresh in account-credentials.js), and a slot that still holds a
-// newer token than the account — a run that rotated but never got read back —
-// is adopted on the next check instead of being overwritten.
+// read path in account-credentials.js), and a slot that still holds a newer
+// token than the account — a run that rotated but never got read back — is
+// adopted on the next check instead of being overwritten.
 
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
@@ -43,8 +43,9 @@ const { isCliCopy } = require('../official-accounts');
 // credential slot, and the CLI declines anything outside its own ~5 min window.
 const DEFAULT_BUFFER_MS = 6 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 2 * 60 * 1000;
-// Probe while the inline refresh (1 min before expiry) is still a few minutes
-// away, so the CLI normally wins and the inline path stays a fallback.
+// Probe this long before expiry so a rotation lands with room to spare. The
+// read path (account-credentials.js) delegates here when a request finds the
+// token lapsed, so its wait is bounded by this window, not by the deadline.
 const DEFAULT_PROBE_THRESHOLD_MS = 5 * 60 * 1000;
 // The triggers do not know about each other: the boot check, the periodic tick
 // and any manual call can all decide the same account is due seconds apart. The
@@ -73,7 +74,11 @@ const DEFAULT_MIN_CHECK_GAP_MS = 90 * 1000;
 const DEFAULT_JITTER_RATIO = 0.15;
 // Autonomous checks are the periodic tick and the boot check. A manual call is
 // an operator asking a direct question, so it is never staggered away.
-const AUTONOMOUS_REASONS = Object.freeze(['periodic', 'boot']);
+// `read-miss` is a caller noticing a lapsed token mid-request (see
+// account-credentials.js), not an operator asking by hand — so it is gated like
+// the timer, and a chatty client cannot turn reads into CLI processes. Only an
+// explicit manual call bypasses the spacing.
+const AUTONOMOUS_REASONS = Object.freeze(['periodic', 'boot', 'read-miss']);
 const SECURITY_TIMEOUT_MS = 10_000;
 // `security -i` reads one command line; the CLI falls back to argv beyond this.
 const SECURITY_STDIN_LIMIT = 4000;

@@ -91,35 +91,28 @@ test('exchangeCode splits code#state and posts the native field order', async ()
   assert.ok(Date.parse(data.expired) > Date.now());
 });
 
-test('refreshTokens keeps the old refresh_token when the response omits it', async () => {
-  const { fetch, calls } = mockFetch({
-    'platform.claude.com': { status: 200, body: { access_token: 'oat-2', expires_in: 600 } },
-  });
-  const data = await oauth.refreshTokens(fetch, { refreshToken: 'ort-old' });
-  assert.deepEqual(JSON.parse(calls[0].init.body), {
-    client_id: oauth.CLIENT_ID,
-    grant_type: 'refresh_token',
-    refresh_token: 'ort-old',
-    scope: oauth.SCOPE,
-  });
-  assert.equal(data.access_token, 'oat-2');
-  assert.equal(data.refresh_token, 'ort-old', 'fallback retains the old refresh token');
+test('the module no longer speaks the refresh grant — rotation belongs to the CLI', () => {
+  assert.equal(oauth.refreshTokens, undefined,
+    'a second holder of the single-use refresh token is what caused the invalid_grant storm');
+  assert.equal(typeof oauth.exchangeCode, 'function', 'creating an account still works');
+  assert.equal(typeof oauth.fetchUsage, 'function', 'reading usage still works');
 });
 
 test('429 surfaces Retry-After (seconds / http-date / retry-after-ms), clamped', async () => {
   const retry = (headers) => mockFetch({ 'platform.claude.com': { status: 429, headers, body: 'slow down' } });
-  let err = await oauth.refreshTokens(retry({ 'Retry-After': '30' }).fetch, { refreshToken: 'r' }).catch(e => e);
+  const login = (headers) => oauth.exchangeCode(retry(headers).fetch, { code: 'c', state: 's', codeVerifier: 'v' }).catch(e => e);
+  let err = await login({ 'Retry-After': '30' });
   assert.equal(err.status, 429);
   assert.equal(err.retryAfterMs, 30000);
   assert.equal(err.retryable, false, '429 is not retryable immediately');
 
-  err = await oauth.refreshTokens(retry({ 'Retry-After': '1' }).fetch, { refreshToken: 'r' }).catch(e => e);
+  err = await login({ 'Retry-After': '1' });
   assert.equal(err.retryAfterMs, 5000, 'clamped to the 5s floor');
 
-  err = await oauth.refreshTokens(retry({ 'Retry-After-Ms': '120000' }).fetch, { refreshToken: 'r' }).catch(e => e);
+  err = await login({ 'Retry-After-Ms': '120000' });
   assert.equal(err.retryAfterMs, 120000);
 
-  err = await oauth.refreshTokens(retry({}).fetch, { refreshToken: 'r' }).catch(e => e);
+  err = await login({});
   assert.equal(err.retryAfterMs, 5000, 'missing header → floor');
 });
 
@@ -163,64 +156,113 @@ test('credential service returns a live stored token without any network', async
   assert.equal(calls.length, 0);
 });
 
-test('到期前三分钟即续期，并发读取只发一次 POST', async () => {
+test('a lapsed token is delegated to the CLI owner, and the reader sends no request of its own', async () => {
   const { store, account } = storeWithClaudeAccount({
     access_token: 'oat-dead',
     refresh_token: 'ort-live',
     expired: new Date(Date.now() + 3 * 60_000).toISOString(),
   });
-  const { fetch, calls } = mockFetch({
-    '/v1/oauth/token': { status: 200, body: { access_token: 'oat-fresh', expires_in: 3600 } },
-    '/api/oauth/profile': { status: 200, body: { account: { uuid: 'u', email: 'w@example.com' }, organization: { uuid: 'o', name: 'Org' } } },
+  const { fetch, calls } = mockFetch({});
+  const asked = [];
+  const svc = createClaudeAccountCredentialService({
+    accounts: store,
+    fetch,
+    onNeedsRefresh: async (id) => {
+      asked.push(id);
+      store.writeClaudeCredential(id, {
+        access_token: 'oat-fresh',
+        refresh_token: 'ort-new',
+        expired: new Date(Date.now() + 8 * 3600e3).toISOString(),
+      });
+      return { outcome: 'refreshed' };
+    },
   });
-  const svc = createClaudeAccountCredentialService({ accounts: store, fetch });
   const [r1, r2] = await Promise.all([svc.readAccountToken(account.id), svc.readAccountToken(account.id)]);
   assert.equal(r1.token, 'oat-fresh');
   assert.equal(r2.token, 'oat-fresh');
-  assert.equal(calls.filter(c => c.url.includes('/v1/oauth/token')).length, 1, 'singleflight: exactly one refresh POST');
-  // persisted back to the account file, label preserved
-  const stored = store.readClaudeCredential(account.id);
-  assert.equal(stored.access_token, 'oat-fresh');
-  assert.equal(stored.refresh_token, 'ort-live', 'refresh_token fallback persisted');
-  assert.equal(stored.email, 'w@example.com', 'profile filled identity');
-  assert.equal(stored.label, '工作号');
-  assert.equal(svc.status(account.id).refreshCount, 1);
+  assert.equal(calls.length, 0, 'the reader never POSTs the token endpoint');
+  assert.deepEqual(asked, [account.id], 'concurrent reads share one delegation');
+  assert.equal(store.readClaudeCredential(account.id).label, '工作号', 'the account record survives');
 });
 
-test('refresh 429 blocks further attempts until Retry-After elapses', async () => {
-  let clock = 1_000_000;
+test('a delegation that fails says why, and is never retried behind the caller\'s back', async () => {
   const { store, account } = storeWithClaudeAccount({
     access_token: 'oat-dead', refresh_token: 'ort',
-    expired: new Date(clock - 1000).toISOString(), // expired relative to the fake clock
+    expired: new Date(Date.now() - 1000).toISOString(),
   });
-  const { fetch, calls } = mockFetch({ '/v1/oauth/token': { status: 429, headers: { 'Retry-After': '60' }, body: 'slow' } });
-  const svc = createClaudeAccountCredentialService({ accounts: store, fetch, now: () => clock });
+  const { fetch, calls } = mockFetch({});
+  let asked = 0;
+  const svc = createClaudeAccountCredentialService({
+    accounts: store,
+    fetch,
+    onNeedsRefresh: async () => { asked += 1; return { outcome: 'parked', detail: 'rejected' }; },
+  });
   const r1 = await svc.readAccountToken(account.id);
   assert.equal(r1.token, null);
-  assert.match(r1.reason, /refresh_failed/);
-  assert.equal(calls.length, 1);
-
-  const r2 = await svc.readAccountToken(account.id);
-  assert.match(r2.reason, /temporarily blocked/);
-  assert.equal(calls.length, 1, 'blocked — no second POST');
-
-  clock += 61_000; // past the block
-  const r3 = await svc.readAccountToken(account.id);
-  assert.equal(calls.length, 2, 'block elapsed → refresh retried');
-  assert.equal(r3.token, null);
+  assert.equal(r1.reason, 'cli_refresh_parked', 'the failure class reaches the 502 text');
+  assert.equal(asked, 1);
+  assert.equal(calls.length, 0);
 });
 
-test('missing refresh token / unreadable file fail closed', async () => {
+test('a declined rotation still serves a token that has not actually expired', async () => {
+  // Inside the 5 minute safety margin, so the read asks; the CLI declines
+  // (token not yet in its window) — the remaining minutes are still usable and
+  // failing the turn with a live credential in hand would be the worse answer.
+  const { store, account } = storeWithClaudeAccount({
+    access_token: 'oat-still-live', refresh_token: 'ort',
+    expired: new Date(Date.now() + 3 * 60_000).toISOString(),
+  });
+  const svc = createClaudeAccountCredentialService({
+    accounts: store,
+    onNeedsRefresh: async () => ({ outcome: 'deferred' }),
+  });
+  const r = await svc.readAccountToken(account.id);
+  assert.equal(r.token, 'oat-still-live');
+});
+
+test('a delegation that never answers fails the read instead of hanging the turn', async () => {
+  const { store, account } = storeWithClaudeAccount({
+    access_token: 'oat-dead', refresh_token: 'ort',
+    expired: new Date(Date.now() - 1000).toISOString(),
+  });
+  const svc = createClaudeAccountCredentialService({
+    accounts: store,
+    refreshWaitMs: 20,
+    onNeedsRefresh: () => new Promise(() => {}),
+  });
+  const r = await svc.readAccountToken(account.id);
+  assert.equal(r.token, null);
+  assert.equal(r.reason, 'cli_refresh_unavailable');
+});
+
+test('peekAccountToken reports an expired credential and asks no one', () => {
+  const { store, account } = storeWithClaudeAccount({
+    access_token: 'oat-dead', refresh_token: 'ort',
+    expired: new Date(Date.now() - 1000).toISOString(),
+  });
+  let asked = 0;
+  const svc = createClaudeAccountCredentialService({
+    accounts: store,
+    fetch: mockFetch({}).fetch,
+    onNeedsRefresh: async () => { asked += 1; return { outcome: 'refreshed' }; },
+  });
+  const read = svc.peekAccountToken(account.id);
+  assert.equal(read.token, null);
+  assert.equal(read.reason, 'access_token_expired');
+  assert.equal(asked, 0, 'showing a usage number must not spend the refresh token');
+});
+
+test('missing credential / unreadable file fail closed', async () => {
   const { store, account } = storeWithClaudeAccount({
     access_token: 'oat-dead', expired: new Date(Date.now() - 1000).toISOString(),
   });
   const svc = createClaudeAccountCredentialService({ accounts: store, fetch: mockFetch({}).fetch });
-  assert.match((await svc.readAccountToken(account.id)).reason, /refresh_token_missing/);
+  assert.equal((await svc.readAccountToken(account.id)).reason, 'access_token_expired');
 
   assert.equal((await svc.readAccountToken('f'.repeat(16))).reason, 'credential_unreadable');
 });
 
-test('readOfficialCredential: account context → refresh-on-read, string → shared Keychain reader', async () => {
+test('readOfficialCredential: account context → delegating read, string → shared Keychain reader', async () => {
   const { store, account } = storeWithClaudeAccount({
     access_token: 'oat-live',
     expired: new Date(Date.now() + 3600e3).toISOString(),
