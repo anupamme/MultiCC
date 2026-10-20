@@ -56,6 +56,15 @@ const DEFAULT_MAX_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 // ...and a run of failures — or a single explicit server-side rejection —
 // stops the ladder entirely until the credential itself changes.
 const DEFAULT_PARK_AFTER_FAILURES = 6;
+// Both rungs of the ladder cost a process; the second costs an actual API turn.
+// One expired token is one event, so it gets one small, fixed budget: a couple
+// of "is it due yet" questions, and at most two real turns. Without a budget
+// the ladder re-asked every cooldown with the same answer and, over three days,
+// issued 413 identical `claude -p ok` turns — the pattern a human would never
+// produce, and the reason this module must never be allowed to behave like a
+// poller.
+const DEFAULT_MAX_DECLINES_PER_WINDOW = 2;
+const DEFAULT_MAX_PROBES_PER_WINDOW = 2;
 
 // Narrow on purpose. This decides whether an API error is worth spawning a CLI
 // for, so it matches the router's own expired-credential wording and nothing
@@ -144,6 +153,29 @@ function parseCredentials(text) {
   };
 }
 
+// `claude auth status --json` is the CLI's own verdict on whether it holds a
+// login at all. The ladder used to look only at the exit code and at whether
+// the credential changed, which cannot tell a healthy token that is not due yet
+// from a CLI with no login whatsoever — both are "exit 0, nothing changed". The
+// difference decides everything: one means wait, the other means a human has to
+// log in and no amount of probing will help. When the field is absent (older
+// CLIs print prose), the caller falls back to its previous judgement.
+function parseAuthStatus(result) {
+  const text = String((result && result.stdout) || '').trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (typeof parsed.loggedIn !== 'boolean') return null;
+    return {
+      loggedIn: parsed.loggedIn,
+      authMethod: String(parsed.authMethod || '') || null,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function defaultRun(file, args, { timeoutMs, cwd, env } = {}) {
   return new Promise(resolve => {
     execFile(file, args, {
@@ -203,6 +235,10 @@ function createClaudeOAuthRefresher(options = {}) {
     ? Number(options.maxCooldownMs) : DEFAULT_MAX_COOLDOWN_MS;
   const parkAfterFailures = Number(options.parkAfterFailures) > 0
     ? Number(options.parkAfterFailures) : DEFAULT_PARK_AFTER_FAILURES;
+  const maxDeclinesPerWindow = Number(options.maxDeclinesPerWindow) > 0
+    ? Number(options.maxDeclinesPerWindow) : DEFAULT_MAX_DECLINES_PER_WINDOW;
+  const maxProbesPerWindow = Number(options.maxProbesPerWindow) > 0
+    ? Number(options.maxProbesPerWindow) : DEFAULT_MAX_PROBES_PER_WINDOW;
 
   const state = {
     inFlight: null,
@@ -217,7 +253,19 @@ function createClaudeOAuthRefresher(options = {}) {
     // parked = no ladder until the credential changes. Resuming is a fact
     // about the credential (a new login wrote a new expiry), not a timer.
     parked: null,
+    // Spend ledger for the token currently on disk. Keyed by its expiry, so a
+    // refresh (which moves the expiry) opens a fresh budget while retrying the
+    // same dead token cannot. Deliberately in-memory: a restart grants at most
+    // one more pair, and a restart is a human action.
+    window: null,
   };
+
+  function windowFor(expiresAt) {
+    if (!state.window || state.window.expiresAt !== expiresAt) {
+      state.window = { expiresAt, declines: 0, probes: 0 };
+    }
+    return state.window;
+  }
 
   // Restore what the previous process learned. A restart used to reset every
   // counter, which is how a permanently dead account kept being retried: the
@@ -368,7 +416,10 @@ function createClaudeOAuthRefresher(options = {}) {
         unpark(before, 'credential_replaced');
       } else if (!force) {
         state.lastOutcome = {
-          outcome: 'parked',
+          // A park caused by a missing login keeps reporting needs-login: the
+          // banner is the whole point, and it must not disappear on the next
+          // tick just because the ladder is suppressed.
+          outcome: state.parked.failureClass === 'needs-login' ? 'needs-login' : 'parked',
           detail: state.parked.failureClass,
           parkedAt: state.parked.at,
           reason,
@@ -395,11 +446,22 @@ function createClaudeOAuthRefresher(options = {}) {
 
     const env = childEnv();
     const steps = [];
+    const spend = windowFor(before.expiresAt);
+    let notLoggedIn = null;
     for (const rung of LADDER) {
       if (!rung.ready(before, now())) {
         steps.push({ step: rung.step, skipped: 'not_due_yet' });
         continue;
       }
+      // A probe is a real API turn on the user's account. Two per token is
+      // already more than the situation warrants; past that the answer cannot
+      // change, and repeating the identical request is what makes this look
+      // like a bot.
+      if (rung.step === 'authenticated-probe' && !force && spend.probes >= maxProbesPerWindow) {
+        steps.push({ step: rung.step, skipped: 'budget_spent' });
+        continue;
+      }
+      if (rung.step === 'authenticated-probe') spend.probes += 1;
       const result = await run(claudeBin, rung.args(), { timeoutMs: commandTimeoutMs, cwd, env });
       const after = await readCredentials();
       const ok = refreshed(before, after, now());
@@ -437,6 +499,53 @@ function createClaudeOAuthRefresher(options = {}) {
         persist({ credentialFingerprint: credentialFingerprint(after) });
         return state.lastOutcome;
       }
+      // The CLI's own answer outranks the exit code. "Not logged in" is
+      // terminal: escalating to a turn cannot authenticate either, and asking
+      // again on the next tick is exactly the behaviour this module must not
+      // have. Stop the ladder here and park on it.
+      if (rung.step === 'auth-status') {
+        const verdict = parseAuthStatus(result);
+        if (verdict && !verdict.loggedIn) { notLoggedIn = verdict; break; }
+      }
+    }
+
+    if (notLoggedIn) {
+      const ts = now();
+      state.parked = {
+        at: ts,
+        reason,
+        failureClass: 'needs-login',
+        consecutiveFailures: state.consecutiveFailures,
+        credentialFingerprint: credentialFingerprint(before),
+        credentialExpiresAt: before.ok ? before.expiresAt : null,
+      };
+      state.retryAfter = 0;
+      state.failureClass = 'needs-login';
+      state.lastFailure = {
+        at: new Date(ts).toISOString(),
+        failureClass: 'needs-login',
+        reason,
+        detail: 'cli_reports_not_logged_in',
+        authMethod: notLoggedIn.authMethod,
+        steps,
+      };
+      state.lastOutcome = {
+        outcome: 'needs-login',
+        reason,
+        at: ts,
+        detail: 'cli_reports_not_logged_in',
+        authMethod: notLoggedIn.authMethod,
+        steps,
+      };
+      logger.error('claude_oauth_refresh_parked', {
+        reason,
+        failureClass: 'needs-login',
+        authMethod: notLoggedIn.authMethod,
+        steps,
+        action: 'the CLI reports no login — log in again; retries are suspended until the credential changes',
+      });
+      persist({ credentialFingerprint: credentialFingerprint(before) });
+      return state.lastOutcome;
     }
     // Nothing refreshed. Whether that is a problem depends entirely on whether
     // the credential still works: a valid token means the CLI merely disagrees
@@ -446,6 +555,27 @@ function createClaudeOAuthRefresher(options = {}) {
     const ts = now();
     const declined = before.expiresAt > ts;
     if (declined) {
+      spend.declines += 1;
+      // Two questions per token is the whole budget. The third answer is the
+      // first answer — the credential has not moved — so wait for the moment
+      // the CLI must act (its own probe threshold) instead of asking again on
+      // a timer.
+      const probeAt = before.expiresAt - probeThresholdMs;
+      if (!force && spend.declines >= maxDeclinesPerWindow && probeAt > ts) {
+        state.retryAfter = probeAt;
+        state.lastOutcome = {
+          outcome: 'deferred', reason, at: ts, steps,
+          expiresInMs: before.expiresAt - ts,
+          nextAttemptInMs: probeAt - ts,
+          declines: spend.declines,
+        };
+        logger.info('claude_oauth_refresh_deferred', {
+          reason, expiresInMs: before.expiresAt - ts,
+          nextAttemptInMs: probeAt - ts, declines: spend.declines,
+          waitingForExpiry: true,
+        });
+        return state.lastOutcome;
+      }
       state.retryAfter = ts + deferCooldownMs;
       state.lastOutcome = { outcome: 'deferred', reason, at: ts, steps, expiresInMs: before.expiresAt - ts };
       logger.info('claude_oauth_refresh_deferred', { reason, expiresInMs: before.expiresAt - ts });
@@ -465,7 +595,14 @@ function createClaudeOAuthRefresher(options = {}) {
       expiresInMs: before.expiresAt - ts,
       steps: steps.filter(step => step.stderr || step.stdout || step.timedOut),
     };
-    const shouldPark = failureClass === 'rejected' || state.consecutiveFailures >= parkAfterFailures;
+    // Budget spent while the token stayed dead: nothing left in the ladder can
+    // produce a different answer, so the remaining retries would be the exact
+    // requests that already failed. A network fault is the one exception — it
+    // says nothing about the credential — so it keeps its own backoff instead.
+    const budgetSpent = spend.probes >= maxProbesPerWindow;
+    const shouldPark = failureClass === 'rejected'
+      || state.consecutiveFailures >= parkAfterFailures
+      || (budgetSpent && failureClass !== 'network');
     if (shouldPark) {
       state.parked = {
         at: ts,
@@ -616,6 +753,9 @@ function createClaudeOAuthRefresher(options = {}) {
       failureClass: state.failureClass,
       lastFailure: state.lastFailure,
       parked: state.parked || null,
+      // How much of this token's budget is already spent — the number that
+      // explains why a check spawned nothing.
+      window: state.window ? { ...state.window } : null,
       inFlight: !!state.inFlight,
     };
   }
@@ -628,6 +768,7 @@ module.exports = {
   looksLikeExpiredOAuth,
   looksLikeRevokedOAuth,
   parseCredentials,
+  parseAuthStatus,
   classifyFailure,
   credentialFingerprint,
   redactCliOutput,
