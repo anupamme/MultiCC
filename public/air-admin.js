@@ -79,6 +79,13 @@
   // 底部「更多」也不该每次快照刷新都自己合上。
   let consoleHomeQuery = '';
   let consoleMoreOpen = false;
+  // 输入法组合期（拼音还没选词）里整页重建，等于把搜索框从文档里摘走：浏览器会就此
+  // 结束这次组合，一个字也提交不了 —— 中文打不出来，英文却没事（英文的每个字符本来
+  // 就已经落在 value 里）。所以组合期间不重建，只记一笔「欠一次」，
+  // compositionend 之后再补上。事件挂在两个宿主上，它们本身不会被替换。
+  let consoleComposing = false;
+  let consoleRenderPending = false;
+  let compositionGuardBound = false;
   // 「最近使用」一段的条数上限：目录首页读的是「现在该看什么」，不是一份完整清单。
   const HOME_RECENT_LIMIT = 8;
   const TASK_PAGE_SIZE = 20;
@@ -1568,8 +1575,36 @@
     el('admin-content').replaceChildren(panel);
   }
 
+  // 宿主节点（#console-content / #admin-content）自己不参与重建，所以事件挂一次就够。
+  function bindCompositionGuard() {
+    if (compositionGuardBound) return;
+    const hosts = ['console-content', 'admin-content'].map(el).filter(Boolean);
+    if (!hosts.length) return;
+    compositionGuardBound = true;
+    for (const host of hosts) {
+      host.addEventListener('compositionstart', () => { consoleComposing = true; }, true);
+      host.addEventListener('compositionend', () => {
+        consoleComposing = false;
+        if (!consoleRenderPending) return;
+        consoleRenderPending = false;
+        // 这次组合的 input 已经落地（取值、本地过滤都在 oninput 里做完），这里补的
+        // 只是被推迟的那次整页重建 —— 放到下一个任务，免得卡在组合收尾里。
+        root.setTimeout(() => {
+          if (!consoleComposing && currentContext) render(activeMode || 'overview', currentContext, true);
+        }, 0);
+      }, true);
+    }
+  }
+
   function render(mode, context, force = false) {
+    bindCompositionGuard();
     currentContext = context;
+    // 控制台那两页的正文就是搜索框所在的地方：组合期重建会把输入法打断，先欠着。
+    if (consoleComposing && (mode === 'overview' || mode === 'recent')) {
+      consoleRenderPending = true;
+      activeMode = mode;
+      return;
+    }
     if (mode === 'recent') { root.MultiCCAirMore?.park(); activeMode = mode; setActions(); return root.MultiCCAirMobile?.renderRecent(context); }
     if (mode === 'overview') {
       root.MultiCCAirMore?.park();
