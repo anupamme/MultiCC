@@ -313,16 +313,22 @@ function createCodexModelsRuntime(options = {}) {
     }
     if (inFlight) return inFlight;
     // Stale-while-revalidate: this process has verified a catalog before (so a
-    // login change would surface through the background refresh), the last
-    // discovery did not fail on auth, and Codex itself refreshed its disk
-    // catalog recently — hand the disk copy back immediately and let the CLI
-    // discovery run in the background, so a picker open never waits on a spawn.
+    // login change would surface through the background refresh) and the last
+    // discovery did not fail on auth — never make a picker open wait on a CLI
+    // spawn. Prefer Codex's own disk copy while it is fresh; once it has aged
+    // past that window (nothing spawned Codex to rewrite models_cache.json),
+    // fall back to the last verified in-memory catalog instead of blocking:
+    // the account catalog changes at most a few times a day, so serving the
+    // previous list while a background discovery re-verifies is strictly
+    // better than a 1-2s frozen dropdown.
     if (!forceRefresh && cache && lastFailCode !== 'login_required'
-        && !(cache.result.source === 'cli' && cache.result.models.length === 0)) {
+        && !(cache.result.source === 'cli' && cache.result.models.length === 0)
+        && cache.result.models.length) {
       const disk = readDisk();
-      if (disk.models.length && disk.fetchedAt
-          && now() - disk.fetchedAt >= 0 && now() - disk.fetchedAt < diskFreshMs) {
-        inFlight = refresh().finally(() => { inFlight = null; });
+      const diskFresh = disk.models.length && disk.fetchedAt
+        && now() - disk.fetchedAt >= 0 && now() - disk.fetchedAt < diskFreshMs;
+      inFlight = refresh().finally(() => { inFlight = null; });
+      if (diskFresh) {
         const age = now() - disk.fetchedAt;
         return response({
           models: disk.models, source: 'disk_cache', fetchedAt: disk.fetchedAt,
@@ -332,6 +338,12 @@ function createCodexModelsRuntime(options = {}) {
           catalogFetchedAt: disk.fetchedAt,
         });
       }
+      return response({
+        models: cache.result.models, source: 'memory_cache', fetchedAt: cache.at,
+        cliVersion: cache.result.cliVersion,
+        code: 'stale_cache', stale: true,
+        catalogFetchedAt: cache.result.catalogFetchedAt,
+      });
     }
     inFlight = refresh().finally(() => { inFlight = null; });
     return inFlight;

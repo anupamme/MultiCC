@@ -114,10 +114,11 @@ async function capture(out, region = null) {
 
 const inflight = new Map();
 let lastFrame = null;
-// 帧缓存窗口按主流轮询节奏（500ms 一帧）取 450ms：单个 2fps 观看端隔帧命中，
-// 两个端同时看（web + App）几乎全程共享同一帧，子进程风暴（每帧 snap+3×sips）
-// 直接砍半以上。输入事件会清缓存，点完仍立刻拿到新帧，不影响交互回显。
-const FRAME_CACHE_MS = 450;
+// 帧缓存窗口要盖过两个真实客户端的轮询间隔（web 600ms / App 700ms）才能命中：
+// 450ms 时两者每轮都 miss，等于没缓存（日志实测每帧仍 >300ms）。取 650ms：单端
+// 隔帧共享（采集频率砍半），web+App 同看时几乎全程共享同一帧。新帧最多迟约 1.2s
+// 可见；输入事件会清缓存，点完仍立刻拿到新帧，不影响交互回显。
+const FRAME_CACHE_MS = 650;
 function frame(region = null) {
   const key = JSON.stringify(region);
   if (lastFrame?.key === key && Date.now() - lastFrame.at < FRAME_CACHE_MS) return Promise.resolve(lastFrame);
