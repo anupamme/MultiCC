@@ -9,9 +9,23 @@ function terms(value) {
   }
   return [...new Set(result)].slice(0, 256);
 }
+// ASCII terms must match a whole word: as a bare substring "ok" hits every
+// "token" and "hook", which made nearly every memory chunk look relevant.
+function termHit(haystack, term) {
+  if (!/^[a-z0-9_./-]+$/.test(term)) return haystack.includes(term);
+  for (let at = haystack.indexOf(term); at >= 0; at = haystack.indexOf(term, at + 1)) {
+    if (!/[a-z0-9_]/.test(haystack[at - 1] || '') && !/[a-z0-9_]/.test(haystack[at + term.length] || '')) return true;
+  }
+  return false;
+}
 function relevance(query, text) {
   const tokens = terms(query), haystack = String(text || '').toLowerCase();
-  return tokens.reduce((n, term) => n + (haystack.includes(term) ? 1 : 0), 0);
+  return tokens.reduce((n, term) => n + (termHit(haystack, term) ? 1 : 0), 0);
+}
+// One shared bigram (会话, 输出 …) is not evidence that a fact is about the
+// query. Longer queries must overlap proportionally before a memory is pulled in.
+function minRelevance(query) {
+  return Math.max(1, Math.ceil(terms(query).length * 0.15));
 }
 function clipTokens(text, budget) {
   if (estimateTokens(text) <= budget) return text;
@@ -48,4 +62,4 @@ function selectContext(candidates, { budget = 8000, header = '', footer = '' } =
   const text = body ? header + body + footer : '';
   return { text, sources, omitted, budget: { limit: budget, used: estimateTokens(text), managedOnly: true } };
 }
-module.exports = { terms, relevance, clipTokens, selectContext };
+module.exports = { terms, relevance, minRelevance, clipTokens, selectContext };

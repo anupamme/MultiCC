@@ -2,10 +2,15 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { hash } = require('../task-shell/context');
-const { relevance } = require('../context/selection');
+const { relevance, minRelevance } = require('../context/selection');
 const { scanMemoryContent } = require('../memory-store');
 const { BUILTIN_RULES, DOCS_REGISTRY_RULE, DOCS_REGISTRY_RULE_MARKER, SECRET_VAULT_RULE, SECRET_VAULT_RULE_MARKER } = require('./builtin-rules');
 const BUILTIN_MARKERS = BUILTIN_RULES.map(({ marker }) => marker);
+// These CLIs receive the host system prompt (src/chat/host-prompts.js), which
+// already carries the fuller [Secrets safety rules]; injecting the vault rule
+// again would bill the same instructions twice on every call. Other lanes have
+// no host system prompt, so the managed context remains their only copy.
+const SYSTEM_PROMPT_SECRET_RULE_CLIS = new Set(['claude', 'claude-exp', 'codex', 'codex-exp', 'codebuddy', 'qoder', 'pi']);
 
 // Read only the caller's scopes. Never follow symlinks into another scope.
 function safeFiles(root, folder, diagnostics) {
@@ -54,13 +59,14 @@ function retrieveMemory(root, folders, persisted, query) {
       if (dir.isDirectory() && folders.safeSegment(dir.name)) scopes.push(['skill', folders.skillDir(persisted.dirId, dir.name), dir.name]);
     }
   } catch (error) { if (error.code !== 'ENOENT') diagnostics.push({ path: skillsRoot, reason: error.message }); }
+  const threshold = minRelevance(query);
   for (const [scope, folder, skill] of scopes) {
     for (const { file, name, text } of safeFiles(root, folder, diagnostics)) {
       chunks(text).forEach((excerpt, index) => {
         if (BUILTIN_MARKERS.some(marker => excerpt.includes(marker))) return; // Dedicated immutable built-ins below.
         if (scanMemoryContent(excerpt)) { diagnostics.push({ path: file, reason: 'unsafe_content' }); return; }
         const relative = path.relative(root, file), id = `memory:${relative}#${index}`;
-        const match = relevance(query, `${skill || ''} ${name} ${excerpt}`);
+        const score = relevance(query, `${skill || ''} ${name} ${excerpt}`), match = score >= threshold ? score : 0;
         const pinned = scope !== 'skill' && /\[(?:规则|rule|preference|feedback)\]|【.*(?:强制|必须).*】/i.test(excerpt);
         inventory.push({ id, version: hash(excerpt), mode: `memory:${scope}`, kind: 'memory', scope, skill,
           path: relative, taskId: scope === 'task' ? taskId : null, taskName: `${scope} · ${relative}`,
@@ -83,9 +89,9 @@ function retrieveMemory(root, folders, persisted, query) {
   inventory.unshift({ id: 'builtin:docs-registry', version: hash(DOCS_REGISTRY_RULE), mode: 'memory:builtin',
     kind: 'memory', scope: 'builtin', taskName: 'MultiCC · 文档与服务登记', excerpt: DOCS_REGISTRY_RULE,
     priority: 1000, selected: true, reason: 'builtin', atomic: true });
-  inventory.unshift({ id: 'builtin:secret-vault', version: hash(SECRET_VAULT_RULE), mode: 'memory:builtin',
+  if (!SYSTEM_PROMPT_SECRET_RULE_CLIS.has(persisted.cli)) inventory.unshift({ id: 'builtin:secret-vault', version: hash(SECRET_VAULT_RULE), mode: 'memory:builtin',
     kind: 'memory', scope: 'builtin', taskName: 'MultiCC · 敏感信息保险箱', excerpt: SECRET_VAULT_RULE,
     priority: 1000, selected: true, reason: 'builtin', atomic: true });
   return { inventory, candidates: inventory.filter(s => s.selected), diagnostics };
 }
-module.exports = { retrieveMemory, chunks, safeFiles };
+module.exports = { retrieveMemory, chunks, safeFiles, SYSTEM_PROMPT_SECRET_RULE_CLIS };

@@ -50,7 +50,13 @@ function createContextPlanner({ store, getRecord, getHistory, getTask, graphCont
     if (fallback) inventory.push({ id: `handoff:${hash(fallback)}`, mode: 'context:handoff', taskName: '角色切换检查点',
       excerpt: fallback, priority: 960, atomic: true, reason: 'handoff' });
     const byId = new Map(inventory.map(s => [s.id, { ...s, version: s.version || hash(s.excerpt) }]));
-    const requested = new Set([...memories.candidates.map(s => s.id), ...inventory.filter(s => !s.id.startsWith('memory:')).map(s => s.id)]);
+    // Whole MEMORY.md indexes are a cold-start orientation, not per-turn news.
+    // On a continuation only facts this turn's text points at (or rules, the
+    // current task, link neighbours) are new; otherwise a large shared index is
+    // drained a full budget at a time across the following turns. Already-sent
+    // entries still flow below as updates or withdrawals through the ledger.
+    const wanted = reset ? memories.candidates : memories.candidates.filter(s => s.reason !== 'scope_default');
+    const requested = new Set([...wanted.map(s => s.id), ...inventory.filter(s => !s.id.startsWith('memory:')).map(s => s.id)]);
     const candidates = [], retained = [], removed = [], duplicates = [];
     const knownVersions = new Set(Object.entries(ledger).filter(([id, old]) => !old.truncated && byId.get(id)?.version === old.version).map(([, old]) => old.version));
     for (const source of byId.values()) {
