@@ -54,6 +54,13 @@
   .align div { margin-top: 4px; }
   .status { font-size: 12px; color: var(--muted); }
   .status b { color: var(--ink); font-weight: 600; }
+  .cloud { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fbfcfe; }
+  .cloud summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .cloud summary b { color: var(--ink); }
+  .cloud .grid3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .cloud label { display: block; font-size: 12px; color: var(--muted); }
+  .cloud input { width: 100%; margin-top: 4px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
+  @media (max-width: 720px) { .cloud .grid3 { grid-template-columns: 1fr; } }
   .hist { margin-top: 8px; }
   .hist details { border-top: 1px solid var(--line); padding: 8px 0; }
   .hist summary { cursor: pointer; font-size: 13px; color: var(--muted); }
@@ -89,6 +96,16 @@
 
     <label class="f" style="margin-top:14px">参与对比的引擎</label>
     <div class="engines" id="engines"></div>
+
+    <details class="cloud" id="cloudBox">
+      <summary>在线 ASR 接口（OpenAI 兼容 <code>/audio/transcriptions</code>）· <b id="cloudState">读取中…</b></summary>
+      <div class="grid3">
+        <label>Base URL<input id="cloud-url" placeholder="https://api.groq.com/openai/v1"></label>
+        <label>Model<input id="cloud-model" placeholder="whisper-large-v3-turbo"></label>
+        <label>API Key<input id="cloud-key" type="password" placeholder="留空沿用应用配置"></label>
+      </div>
+      <div class="hint">默认沿用应用 .env 里的 Whisper 配置，也可以在这里临时指向任何兼容接口。Key 只在本机内存里用于这一次请求，不落盘、不回显。热词框的内容会作为 Whisper 的 prompt 提示（不是解码期偏置）。</div>
+    </details>
 
     <div class="controls">
       <button id="rec" class="primary">● 开始录音</button>
@@ -128,6 +145,14 @@ async function boot() {
       $('msg').style.color = 'var(--bad)';
     }
     if (st.hotwords && !$('hotwords').value) $('hotwords').value = st.hotwords;
+    // 在线口子：默认沿用应用配置；有 key 就默认勾上，没 key 也不禁用（页面上可临时填）。
+    const cloud = st.cloud || {};
+    $('cloud-url').value = cloud.baseUrl || '';
+    $('cloud-model').value = cloud.model || '';
+    $('cloud-key').placeholder = cloud.hasKey ? '已配置（留空沿用）' : '未配置：在这里填一个';
+    $('cloudState').textContent = cloud.hasKey ? '已配置' : '未配置';
+    $('cloudState').style.color = cloud.hasKey ? 'var(--ok)' : 'var(--warn)';
+    if (cloud.hasKey && !state.engines.includes('cloud')) state.engines = ['cloud', ...state.engines];
     for (const [id, spec] of Object.entries(st.engines)) {
       const ok = st.models[spec.base || id];
       const el = document.createElement('label');
@@ -193,6 +218,13 @@ async function submit(buffer, mime, audioUrl) {
   };
   const hw = $('hotwords').value.trim();
   if (hw) hdrs['x-hotwords'] = btoa(unescape(encodeURIComponent(hw)));
+  if (state.engines.includes('cloud')) {
+    const cfg = {};
+    const url = $('cloud-url').value.trim(); if (url) cfg.baseUrl = url;
+    const model = $('cloud-model').value.trim(); if (model) cfg.model = model;
+    const key = $('cloud-key').value.trim(); if (key) cfg.key = key;
+    if (Object.keys(cfg).length) hdrs['x-cloud-config'] = btoa(unescape(encodeURIComponent(JSON.stringify(cfg))));
+  }
   const t0 = performance.now();
   let out;
   try {

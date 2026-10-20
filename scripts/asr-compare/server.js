@@ -25,6 +25,36 @@ const PORT = Number(process.env.PORT || process.env.ASR_COMPARE_PORT || 8899);
 const HOST = process.env.ASR_COMPARE_HOST || '127.0.0.1';
 const MODEL_ROOT = process.env.ASR_LOCAL_MODEL_DIR || path.join(os.homedir(), '.multicc', 'asr-models');
 
+// ── 在线 ASR 的口子 ──
+// Any OpenAI-compatible POST /audio/transcriptions endpoint can be plugged in:
+// by default the bench reuses whatever the app already has in .env, and the
+// page can override base URL / model / key per recording. ASR_COMPARE_ENV points
+// the bench at a different .env when it runs outside a full checkout.
+const ENV_FILE = process.env.ASR_COMPARE_ENV || path.join(__dirname, '..', '..', '.env');
+function loadEnvFile(file) {
+  const out = {};
+  try {
+    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (!m) continue;
+      let v = m[2].trim();
+      if (/^(['"]).*\1$/.test(v)) v = v.slice(1, -1);
+      out[m[1]] = v;
+    }
+  } catch (_) {}
+  return out;
+}
+const ENV_VARS = loadEnvFile(ENV_FILE);
+const CFG = key => process.env[key] !== undefined && process.env[key] !== ''
+  ? process.env[key] : (ENV_VARS[key] || '');
+const CLOUD = {
+  baseUrl: CFG('WHISPER_BASE_URL') || 'https://api.openai.com/v1',
+  // The app falls back to the OpenRouter key for Whisper; mirror that.
+  key: CFG('WHISPER_API_KEY') || CFG('OPENROUTER_API_KEY'),
+  model: CFG('WHISPER_MODEL') || 'whisper-1',
+  language: CFG('WHISPER_LANGUAGE') || 'zh',
+};
+
 const DIRS = {
   sense: 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17',
   bi: 'sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20',
@@ -54,6 +84,7 @@ function loadSherpa() {
   throw new Error(`sherpa-onnx-node 不可用: ${sherpaError}`);
 }
 function hasModel(k) {
+  if (k === 'cloud') return true;   // no weights; readiness is the key
   const d = dirOf(k);
   try {
     if (k === 'sense') return fs.existsSync(path.join(d, 'model.int8.onnx')) && fs.existsSync(path.join(d, 'tokens.txt'));
@@ -274,6 +305,7 @@ function versionAtLeast(v, major, minor, patch) {
 const transducerOk = () => versionAtLeast(sherpaVersion, 1, 13, 8);
 
 const ENGINES = {
+  cloud: { label: '在线 Whisper（OpenAI 兼容接口）', kind: 'cloud', hotwords: true },
   sense: { label: 'SenseVoiceSmall（当前默认）', kind: 'offline', hotwords: false },
   bi: { label: 'Zipformer 双语 2023（greedy，无热词）', kind: 'online', hotwords: false },
   'bi-hw': { label: 'Zipformer 双语 + 解码期热词', kind: 'online', hotwords: true, base: 'bi' },
@@ -292,7 +324,62 @@ function applySensePost(text) {
   return sensePost ? sensePost(text) : text;
 }
 
-async function runEngines(buf, { engines, hotwords, score, postProcess }) {
+// ── 在线 ASR（OpenAI 兼容 /audio/transcriptions）──
+function encodeWav(samples, sampleRate) {
+  const n = samples.length;
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write('RIFF', 0, 'ascii');
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write('WAVE', 8, 'ascii');
+  buf.write('fmt ', 12, 'ascii');
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24);
+  buf.writeUInt32LE(sampleRate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36, 'ascii');
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    buf.writeInt16LE(Math.round(s * 32767), 44 + i * 2);
+  }
+  return buf;
+}
+
+// Whisper has no decode-time biasing: the hotword list can only ride along as
+// the `prompt`, which is a soft hint the model may ignore. Say so in the UI.
+async function transcribeCloud(samples, { prompt, baseUrl, model, key, language }) {
+  const url = String(baseUrl || CLOUD.baseUrl).replace(/\/+$/, '') + '/audio/transcriptions';
+  const token = key || CLOUD.key;
+  if (!token) throw new Error('未配置在线 key（页面里填一个，或在 .env 里设 WHISPER_API_KEY）');
+  const form = new FormData();
+  form.append('file', new Blob([encodeWav(samples, 16000)], { type: 'audio/wav' }), 'audio.wav');
+  form.append('model', model || CLOUD.model);
+  if (language) form.append('language', language);
+  if (prompt) form.append('prompt', String(prompt).slice(0, 800));
+  const t0 = Date.now();
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+    signal: AbortSignal.timeout(45000),
+  });
+  const body = await resp.text();
+  if (!resp.ok) throw new Error(`在线 ASR ${resp.status}: ${body.slice(0, 180)}`);
+  let text = '';
+  try { text = String(JSON.parse(body).text || '').trim(); }
+  catch (_) { throw new Error(`在线 ASR 返回非 JSON: ${body.slice(0, 120)}`); }
+  return { text, ms: Date.now() - t0 };
+}
+
+function hotwordPrompt(text) {
+  const words = String(text || '').split(/\r?\n/).map(w => w.trim()).filter(Boolean);
+  return words.length ? words.join(', ') : '';
+}
+
+async function runEngines(buf, { engines, hotwords, score, postProcess, cloud }) {
   const samples = await decodeAudio(buf);
   const audioSec = samples.length / 16000;
   const jobs = engines.map(async id => {
@@ -301,6 +388,21 @@ async function runEngines(buf, { engines, hotwords, score, postProcess }) {
     const base = spec.base || id;
     if (!hasModel(base)) return { id, label: spec.label, error: '模型未下载' };
     try {
+      if (spec.kind === 'cloud') {
+        const prompt = hotwordPrompt(hotwords);
+        const r = await transcribeCloud(samples, {
+          prompt,
+          baseUrl: cloud && cloud.baseUrl,
+          model: cloud && cloud.model,
+          key: cloud && cloud.key,
+          language: (cloud && cloud.language) || CLOUD.language,
+        });
+        return {
+          id, label: spec.label, text: r.text, ms: r.ms,
+          hotwordsUsed: !!prompt,
+          note: prompt ? '热词只作为 Whisper prompt 提示，不是解码期偏置' : undefined,
+        };
+      }
       const hw = spec.hotwords ? hotwordFileFor(base, hotwords, score) : null;
       const rec = getRecognizer(base, hw ? { hotwordsFile: hw.file, hotwordSig: `${hw.sig}|${score}`, hotwordsScore: score, maxActivePaths: 4 } : {});
       const r = spec.kind === 'offline' ? transcribeOffline(rec, samples) : transcribeOnline(rec, samples);
@@ -354,6 +456,14 @@ const server = http.createServer(async (req, res) => {
         models: Object.fromEntries(Object.keys(DIRS).map(k => [k, hasModel(k)])),
         engines: ENGINES,
         hotwords: appHotwords(),
+        // Never send the key to the page — only whether one exists.
+        cloud: {
+          baseUrl: CLOUD.baseUrl,
+          model: CLOUD.model,
+          language: CLOUD.language,
+          hasKey: !!CLOUD.key,
+          envFile: ENV_FILE,
+        },
       });
     }
     // Preload the models the page has checked, so the first recording is not a
@@ -366,7 +476,7 @@ const server = http.createServer(async (req, res) => {
         if (!spec) continue;
         // A hotword recognizer is built for one specific hotword signature, so
         // preloading the plain variant would only waste ~500MB.
-        if (spec.hotwords) continue;
+        if (spec.hotwords || spec.kind === 'cloud') continue;
         const base = spec.base || id;
         if (!hasModel(base)) continue;
         try {
@@ -386,8 +496,21 @@ const server = http.createServer(async (req, res) => {
       if (req.headers['x-hotwords']) {
         try { hotwords = Buffer.from(String(req.headers['x-hotwords']), 'base64').toString('utf8'); } catch (_) {}
       }
+      // Per-recording online ASR override: {baseUrl, model, key, language}.
+      let cloud = null;
+      if (req.headers['x-cloud-config']) {
+        try {
+          const cfg = JSON.parse(Buffer.from(String(req.headers['x-cloud-config']), 'base64').toString('utf8'));
+          if (cfg && typeof cfg === 'object') cloud = {
+            baseUrl: typeof cfg.baseUrl === 'string' ? cfg.baseUrl : undefined,
+            model: typeof cfg.model === 'string' ? cfg.model : undefined,
+            key: typeof cfg.key === 'string' && cfg.key && !cfg.key.includes('****') ? cfg.key : undefined,
+            language: typeof cfg.language === 'string' ? cfg.language : undefined,
+          };
+        } catch (_) {}
+      }
       const t0 = Date.now();
-      const out = await runEngines(buf, { engines, hotwords, score, postProcess });
+      const out = await runEngines(buf, { engines, hotwords, score, postProcess, cloud });
       return send(res, 200, { ...out, totalMs: Date.now() - t0 });
     }
     send(res, 404, { error: 'not found' });
@@ -399,4 +522,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`[asr-compare] http://${HOST}:${PORT}  (models: ${MODEL_ROOT})`);
   for (const k of Object.keys(DIRS)) console.log(`  ${hasModel(k) ? '✓' : '✗'} ${k}  ${dirOf(k)}`);
+  console.log(`  ${CLOUD.key ? '✓' : '✗'} cloud  ${CLOUD.baseUrl} (${CLOUD.model})  env=${ENV_FILE}`);
 });
