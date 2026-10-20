@@ -15,7 +15,11 @@ function createTaskShellStore(file) {
     const version = db.pragma('user_version', { simple: true });
     if (version > 1) throw new Error('unsupported task-shell schema');
     db.pragma('journal_mode = WAL');
-    db.pragma('synchronous = FULL');
+    // WAL 配套 synchronous=NORMAL：提交不再逐条 fsync（只在 checkpoint 落盘）。
+    // FULL 是 SQLite 文档里 WAL 的非推荐档，每条收据/投递写都同步刷盘，
+    // 流式轮次一密集就把事件循环卡出几百毫秒。NORMAL 下掉电最多丢最后几笔
+    // 路由记录（重投/确认幂等），不会损坏库 —— search/index-store 同款配置。
+    db.pragma('synchronous = NORMAL');
     db.exec('CREATE TABLE IF NOT EXISTS shell_records (kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind, id)); PRAGMA user_version = 1;');
     if (file !== ':memory:') for (const suffix of ['', '-wal', '-shm']) {
       try { fs.chmodSync(file + suffix, 0o600); } catch (e) { if (e.code !== 'ENOENT') throw e; }
