@@ -69,7 +69,9 @@ function startTokenServer() {
       events,
       rotations: family => events.filter(e => e.family === family && e.ok).length,
       rejections: () => events.filter(e => !e.ok).length,
-      // In-process fetch for multicc's own (inline) refresh path.
+      // Stands in for a fetch that multicc's reader no longer owns: the token
+      // endpoint is reached only by the fake CLI, and the rotation counts above
+      // are what prove the reader never spent a token itself.
       fetch: (target, init) => (String(target) === TOKEN_URL
         ? globalThis.fetch(url, init)
         : Promise.resolve(new Response('{}', { status: 503 }))),
@@ -192,7 +194,7 @@ function makeCliCopy(t, family = 'cli', expiresInMs = 3 * MIN) {
   return { id, cliRefreshToken: tok.refresh_token };
 }
 
-test('a copy of the CLI login is never rotated: not by the CLI run, not inline — it waits for its own login', async () => {
+test('a copy of the CLI login is never rotated: not by the CLI run, not by a read — it waits for its own login', async () => {
   const t = await setup();
   try {
     const copy = makeCliCopy(t, 'cli', 30 * 1000);
@@ -262,7 +264,7 @@ test('a slot left holding a newer token (rotated, never read back) is adopted, n
   } finally { await t.done(); }
 });
 
-test('when the CLI cannot refresh, the slot is cleared and the inline refresh still rescues the request', async () => {
+test('when the CLI cannot refresh, the slot is cleared and the read reports it without spending anything', async () => {
   const t = await setup({ env: { FAKE_CLAUDE_MODE: 'fail' } });
   try {
     const id = t.addAccount('erin', 30 * 1000);
@@ -271,10 +273,16 @@ test('when the CLI cannot refresh, the slot is cleared and the inline refresh st
     assert.equal(t.accounts.readClaudeCredential(id).access_token, 'at-erin-0', 'account untouched');
     assert.equal(fs.existsSync(path.join(t.accounts.claudeHomeDir(id), '.credentials.json')), false);
 
-    const credentials = createClaudeAccountCredentialService({ accounts: t.accounts, fetch: t.server.fetch, exclusive: t.supervisor.exclusive });
+    const credentials = createClaudeAccountCredentialService({
+      accounts: t.accounts,
+      exclusive: t.supervisor.exclusive,
+      onNeedsRefresh: accountId => t.supervisor.checkAccount(accountId, 'read-miss'),
+    });
     const got = await credentials.readAccountToken(id);
-    assert.equal(got.token, 'at-erin-1');
-    assert.equal(t.server.rotations('erin'), 1);
+    assert.equal(got.token, null, 'no second holder may rotate this credential');
+    assert.match(got.reason, /^cli_refresh_/);
+    assert.equal(t.server.rotations('erin'), 0, 'the read did not spend the refresh token');
+    assert.equal(t.server.rejections(), 0, 'and sent no dead grant to the endpoint');
   } finally { await t.done(); }
 });
 
@@ -294,16 +302,19 @@ test('a request arriving mid CLI refresh waits for it instead of spending the sa
   } finally { await t.done(); }
 });
 
-test('control: without the shared lock the same race double-spends (the simulation can see it)', async () => {
+test('control: a read cannot double-spend, because it has no rotation path at all', async () => {
   const t = await setup({ env: { FAKE_CLAUDE_DELAY_MS: '400' } });
   try {
     const id = t.addAccount('gina', 30 * 1000);
-    const credentials = createClaudeAccountCredentialService({ accounts: t.accounts, fetch: t.server.fetch });
-    const sweep = t.supervisor.checkAll('test');
-    await new Promise(r => setTimeout(r, 100));
-    await credentials.readAccountToken(id);
-    await sweep;
-    assert.equal(t.server.rejections(), 1, 'one of the two holders hit invalid_grant');
+    // No supervisor, no onNeedsRefresh, no shared lock — the worst case. The
+    // read still returns the lapsed token as lapsed instead of renewing it,
+    // which is what makes an invalid_grant storm structurally impossible.
+    const credentials = createClaudeAccountCredentialService({ accounts: t.accounts });
+    const read = await credentials.readAccountToken(id);
+    assert.equal(read.token, null);
+    assert.equal(read.reason, 'access_token_expired');
+    assert.equal(t.server.rotations('gina'), 0);
+    assert.equal(t.server.rejections(), 0, 'nothing was sent to the token endpoint');
   } finally { await t.done(); }
 });
 

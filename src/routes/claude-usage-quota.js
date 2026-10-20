@@ -14,9 +14,10 @@
 // Two sources, tried in order:
 //
 //   1. OAuth control plane — if a multicc official Claude account exists, its
-//      refresh-on-read token queries https://api.anthropic.com/api/oauth/usage
+//      current access token queries https://api.anthropic.com/api/oauth/usage
 //      directly (the same endpoint the CLI's /usage reads): one HTTPS GET,
-//      ~200ms, no browser. This is the preferred path.
+//      ~200ms, no browser. This is the preferred path. The token is peeked,
+//      never renewed: reading a number must not spend a single-use refresh token.
 //   2. CDP scrape of claude.ai/settings/usage — the fallback for the shared
 //      browser login when no official account is usable. Claude's plan limits
 //      are NOT exposed through any REST API a cookie-only request could query,
@@ -342,8 +343,9 @@ function summarizeOAuthUsage(usage) {
 
 // Account/credential access is resolved lazily and is replaceable (tests). The
 // store is a stateless reader over ~/.multicc/official-accounts, so this module
-// can own its instance; the credential service gives the bar the same
-// refresh-on-read + singleflight + Retry-After policy as the cpr proxy.
+// can own its instance. Only the peek read is used here: a usage number on
+// screen must never spend an account's single-use refresh token — that is what
+// turned a read-only poll into 49 invalid_grant attempts.
 let oauthSource = null;
 
 function configureClaudeOAuthSource(source) {
@@ -396,7 +398,7 @@ async function fetchClaudeUsageViaOAuth(preferAccountId = '') {
   for (const account of accounts) {
     let cred;
     try {
-      cred = await source.credentials.readAccountToken(account.id);
+      cred = await source.credentials.peekAccountToken(account.id);
     } catch (_) {
       continue;
     }

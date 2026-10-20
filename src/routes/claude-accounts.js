@@ -8,8 +8,8 @@
 // in a browser, Anthropic redirects to the loopback listener on :54545, and the
 // server exchanges the code and writes the account credential file. The cpr
 // proxy never sees the login — it only reads the resulting credential through
-// the injected readOfficialCredential (refresh-on-read, see
-// claude-account-credentials.js).
+// the injected readOfficialCredential (see claude-account-credentials.js: a
+// lapsed token is delegated to the CLI, never renewed here).
 //
 //   GET    /api/claude/accounts                    list accounts (+ providerId)
 //   POST   /api/claude/accounts                    {label} → account + {oauthUrl}
@@ -200,7 +200,8 @@ function mountClaudeAccountRoutes(app, deps) {
     if (!accounts.listClaudeAccounts().some(a => a.id === accountId)) {
       return res.status(404).json({ status: 'no_auth', error: '账号不存在' });
     }
-    const cred = await credentials.readAccountToken(accountId);
+    // Peek only: asking for a number must not rotate the account's credential.
+    const cred = await credentials.peekAccountToken(accountId);
     if (!cred.token) {
       const status = cred.reason === 'credential_unreadable' || cred.reason === 'access_token_missing' ? 401 : 503;
       return res.status(status).json({ status: 'no_auth', error: `账号凭证不可用：${cred.reason}` });

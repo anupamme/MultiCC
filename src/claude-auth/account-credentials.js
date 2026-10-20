@@ -1,40 +1,55 @@
 'use strict';
 
-// Per-account Claude credential reader with refresh-on-read — the cpr claude
-// proxy's injected readOfficialCredential and the per-account quota route both
-// go through here. Both inline refresh and the background CLI supervisor own
-// these files, so EVERY read joins their account lock, including locally fresh
-// tokens. A CLI rotation can revoke the old access token before its probe ends
-// and the supervisor adopts the new credential.
+// Per-account Claude credential reader — the cpr claude proxy's injected
+// readOfficialCredential and the per-account quota routes both go through here.
+// It reads, and it asks. It never renews.
+//
+// Renewal has exactly one writer: the claude CLI, driven by accounts-refresh.js
+// under the account's own CLAUDE_CONFIG_DIR. A refresh token is single-use, so a
+// second holder renewing in parallel spends it twice and the loser is told
+// `invalid_grant` — a healthy account reported dead. Two consequences shape
+// this module:
+//
+//   - Every read still joins the account's lock, even for a locally fresh
+//     token: a CLI rotation can revoke the old access token before its probe
+//     has finished and the supervisor has adopted the new credential.
+//   - A lapsed token is delegated, not refreshed. The read asks the supervisor
+//     to rotate (onNeedsRefresh) and re-reads once; whether a CLI actually runs
+//     is the supervisor's decision, already bounded by its park, cooldown and
+//     spacing gates, so a burst of reads cannot become a burst of processes.
+//
+// Display-only callers use peekAccountToken: it reports an expired token
+// instead of triggering a rotation, because showing a usage number must not
+// spend the account's one single-use credential.
 
-const { refreshTokens, fetchProfile, ClaudeOAuthError, REFRESH_MIN_BACKOFF_MS } = require('./official-oauth');
 const { isCliCopy } = require('../official-accounts');
 
 const EXPIRY_MARGIN_MS = 5 * 60 * 1000; // 与官方 CLI 一样，提前五分钟检查续期
-// A rejected refresh (invalid_grant / 401) is not retried on the next turn: the
-// old refresh token is dead and only a new login can help. Six hours is a
-// ceiling on noise, not a lock — a fresh login never reaches refresh(), because
-// readAccountToken serves a locally fresh token first.
-const REJECTED_REFRESH_BACKOFF_MS = 6 * 60 * 60 * 1000;
+// A peek may hand out a token this close to expiry: it is about to be used for
+// one control-plane GET, and refusing it would blank the number needlessly.
+const PEEK_MARGIN_MS = 60 * 1000;
+// A delegation is on the request path, so it is capped: past this the caller is
+// better served by a clear failure than by a turn that hangs on a CLI probe.
+const DEFAULT_REFRESH_WAIT_MS = 8 * 1000;
 
 function createClaudeAccountCredentialService(options = {}) {
   const accounts = options.accounts;
   if (!accounts) throw new TypeError('[claude-account-credentials] accounts store is required');
-  const fetchImpl = options.fetch || globalThis.fetch;
   const logger = options.logger || { info() {}, warn() {}, error() {} };
   const now = options.now || (() => Date.now());
   // Shared with the per-account CLI refresher (accounts-refresh.js): one
-  // rotation per account at a time, or two holders spend one single-use token.
+  // rotation per account at a time, and a read waits for the rotation in flight
+  // rather than serving the token it is about to replace.
   const exclusive = typeof options.exclusive === 'function' ? options.exclusive : async (id, fn) => fn();
+  // Injected by server.js: (accountId) -> supervisor.checkAccount(id, 'read-miss').
+  // Absent when this service is built standalone (the quota route's fallback
+  // source, tests): a lapsed token is then reported, never renewed.
+  const onNeedsRefresh = typeof options.onNeedsRefresh === 'function' ? options.onNeedsRefresh : null;
+  const refreshWaitMs = Number(options.refreshWaitMs) > 0
+    ? Number(options.refreshWaitMs) : DEFAULT_REFRESH_WAIT_MS;
   const fresh = (expiresAt, margin = EXPIRY_MARGIN_MS) => expiresAt == null || expiresAt > now() + margin;
 
-  const inflight = new Map();     // accountId -> Promise (singleflight)
-  const blockedUntil = new Map(); // accountId -> epoch ms (Retry-After backoff)
-  const stats = new Map();        // accountId -> {refreshCount, lastError, lastRefreshAt}
-
-  function note(id, patch) {
-    stats.set(id, { refreshCount: 0, lastError: null, lastRefreshAt: null, ...(stats.get(id) || {}), ...patch });
-  }
+  const inflight = new Map(); // accountId -> Promise (singleflight)
 
   function readStored(id) {
     const data = accounts.readClaudeCredential(id);
@@ -51,83 +66,77 @@ function createClaudeAccountCredentialService(options = {}) {
     };
   }
 
-  async function refresh(id, refreshToken) {
-    const blocked = blockedUntil.get(id) || 0;
-    if (blocked > now()) {
-      return { ok: false, reason: `refresh temporarily blocked until ${new Date(blocked).toISOString()}` };
-    }
-    if (!refreshToken) return { ok: false, reason: 'refresh_token_missing' };
-    try {
-      const tokenData = await refreshTokens(fetchImpl, { refreshToken, now });
-      // Advisory, matching CPA: profile fills identity the token response omitted.
-      try {
-        const profile = await fetchProfile(fetchImpl, tokenData.access_token);
-        for (const key of ['email', 'account_uuid', 'organization_uuid', 'organization_name']) {
-          if (profile[key]) tokenData[key] = profile[key];
-        }
-      } catch (error) {
-        logger.warn('claude_account_profile_fetch_failed', { accountId: id, error: error.message });
-      }
-      accounts.writeClaudeCredential(id, tokenData);
-      blockedUntil.delete(id);
-      const prev = stats.get(id);
-      note(id, { refreshCount: (prev ? prev.refreshCount : 0) + 1, lastError: null, lastRefreshAt: now() });
-      return { ok: true, accessToken: tokenData.access_token, expiresAt: Date.parse(tokenData.expired) };
-    } catch (error) {
-      const status = error instanceof ClaudeOAuthError ? error.status : null;
-      if (status === 429) {
-        blockedUntil.set(id, now() + (error.retryAfterMs || REFRESH_MIN_BACKOFF_MS));
-      } else if (status === 400 || status === 401 || status === 403) {
-        // The token endpoint refused the grant itself. Re-running this on the
-        // next turn asks the same dead question again; wait for a new login.
-        blockedUntil.set(id, now() + REJECTED_REFRESH_BACKOFF_MS);
-      }
-      note(id, { lastError: error.message });
-      logger.warn('claude_account_refresh_failed', {
-        accountId: id,
-        error: error.message,
-        status: status || null,
-        // Same fact the CLI refresher records, in the same vocabulary.
-        failureClass: status === 400 || status === 401 || status === 403 ? 'rejected' : null,
-        blockedForMs: (blockedUntil.get(id) || 0) > now() ? blockedUntil.get(id) - now() : null,
-      });
-      return { ok: false, reason: `refresh_failed: ${error.message}` };
-    }
+  // The one place "can this be handed out" is answered.
+  function usable(stored, margin) {
+    if (!stored.ok) return { token: null, reason: stored.reason };
+    if (fresh(stored.expiresAt, margin)) return { token: stored.accessToken };
+    return { token: null, reason: stored.cliCopy ? 'cli_copy_needs_login' : 'access_token_expired' };
   }
 
-  // A copy of the CLI's login shares the CLI's single-use refresh token:
-  // rotating it would log the CLI out (or fail, the CLI having rotated first).
-  // It is served until it lapses, then the account needs its own login.
-  function refreshOwn(id, stored) {
-    if (stored.cliCopy) return { ok: false, reason: 'cli_copy_needs_login' };
-    return refresh(id, stored.refreshToken);
+  function withTimeout(promise, ms) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`delegated refresh timed out after ${ms}ms`)), ms);
+      if (timer.unref) timer.unref();
+      Promise.resolve(promise).then(
+        value => { clearTimeout(timer); resolve(value); },
+        error => { clearTimeout(timer); reject(error); },
+      );
+    });
+  }
+
+  async function load(id) {
+    const before = await exclusive(id, () => readStored(id));
+    // A copy of the CLI's login shares the CLI's single-use refresh token, so it
+    // is served until it lapses and then needs its own login — never delegated.
+    const direct = usable(before, before.ok && before.cliCopy ? 60_000 : EXPIRY_MARGIN_MS);
+    if (direct.token) return direct;
+    if (!before.ok || before.cliCopy || !onNeedsRefresh) return direct;
+
+    let outcome = null;
+    try { outcome = await withTimeout(onNeedsRefresh(id), refreshWaitMs); }
+    catch (error) {
+      logger.warn('claude_account_refresh_delegation_failed', { accountId: id, error: error.message });
+    }
+    const after = await exclusive(id, () => readStored(id));
+    // The supervisor adopts the rotated credential into the account file as part
+    // of its run, so a different access token here means the rotation landed.
+    if (after.ok && after.accessToken !== before.accessToken) return { token: after.accessToken };
+    // No rotation came back — the CLI may have declined (its own window opens
+    // later) or the supervisor may be inside its spacing gate. Failing the turn
+    // outright would be worse than using what is left: the margin that led here
+    // is a safety margin, not the expiry. The fallback is the peek margin, so a
+    // token with seconds left is still reported as lapsed rather than handed to
+    // a request that cannot finish with it.
+    if (fresh(before.expiresAt, PEEK_MARGIN_MS)) return { token: before.accessToken };
+    return {
+      token: null,
+      // Why the turn is about to fail, in one word a log reader can act on:
+      // parked / needs-login / cooldown / staggered / failed — or unavailable
+      // when the delegation itself timed out.
+      reason: `cli_refresh_${(outcome && outcome.outcome) || 'unavailable'}`,
+    };
   }
 
   // The cpr-facing read: {token} on success, {token:null, reason} otherwise.
-  // Sync-shape contract (cpr awaits the result, so async is fine).
-  async function readAccountToken(id) {
+  function readAccountToken(id) {
     let pending = inflight.get(id);
     if (!pending) {
-      pending = exclusive(id, () => {
-        // 即使本地尚未过期，也必须等后台轮换结束后再读。
-        const current = readStored(id);
-        if (!current.ok) return { ok: false, reason: current.reason };
-        if (fresh(current.expiresAt, current.cliCopy ? 60_000 : EXPIRY_MARGIN_MS)) {
-          return { ok: true, accessToken: current.accessToken, expiresAt: current.expiresAt };
-        }
-        return refreshOwn(id, current);
-      }).finally(() => inflight.delete(id));
+      pending = load(id).finally(() => inflight.delete(id));
       inflight.set(id, pending);
     }
-    const refreshed = await pending;
-    if (!refreshed.ok) return { token: null, reason: refreshed.reason };
-    return { token: refreshed.accessToken };
+    return pending;
+  }
+
+  // Read-only: never asks for a rotation, never takes the account lock. For a
+  // caller that wants a number on screen, not a turn on the wire.
+  function peekAccountToken(id) {
+    return usable(readStored(id), PEEK_MARGIN_MS);
   }
 
   async function recoverAccountToken(id, failedToken) {
     if (!failedToken) return { token: null, reason: 'failed_token_missing' };
     // 现有账号锁就是续期进行中标记：排在它后面，等保存完成后重读。
-    // 异常恢复不再发起续期；没有新令牌就保留原错误，避免重复续期。
+    // 异常恢复不发起续期；没有新令牌就保留原错误，避免重复续期。
     return exclusive(id, () => {
       const current = readStored(id);
       if (!current.ok) return { token: null, reason: current.reason };
@@ -139,18 +148,24 @@ function createClaudeAccountCredentialService(options = {}) {
   }
 
   function status(id) {
-    const blocked = blockedUntil.get(id) || 0;
+    const data = accounts.readClaudeCredential(id) || {};
+    const at = data.last_refresh ? Date.parse(data.last_refresh) : NaN;
     return {
-      ...(stats.get(id) || { refreshCount: 0, lastError: null, lastRefreshAt: null }),
-      blockedUntil: blocked > now() ? blocked : null,
+      // The reader performs no rotations any more; the CLI's own record in the
+      // account file is the honest "when did this credential last move".
+      refreshCount: 0,
+      lastError: null,
+      lastRefreshAt: Number.isFinite(at) ? at : null,
+      blockedUntil: null,
+      renewedBy: 'cli',
     };
   }
 
   // The cpr claude-proxy entry point (createHandler options.readOfficialCredential):
-  // an account context object resolves via refresh-on-read; anything else (the
-  // canonical claude-official provider's legacy string arg) defers to the shared
-  // Keychain reader. The default is required lazily so this module stays loadable
-  // in tests without the router package.
+  // an account context object resolves through the delegating read; anything else
+  // (the canonical claude-official provider's legacy string arg) defers to the
+  // shared Keychain reader. The default is required lazily so this module stays
+  // loadable in tests without the router package.
   const sharedLoginReader = typeof options.sharedLoginReader === 'function'
     ? options.sharedLoginReader
     : (arg) => require('cli-provider-router').readOfficialOAuthToken(arg);
@@ -166,7 +181,14 @@ function createClaudeAccountCredentialService(options = {}) {
     return recoverAccountToken(arg.accountId, failedToken);
   }
 
-  return Object.freeze({ readAccountToken, readOfficialCredential, recoverAccountToken, recoverOfficialCredential, status });
+  return Object.freeze({
+    readAccountToken,
+    peekAccountToken,
+    readOfficialCredential,
+    recoverAccountToken,
+    recoverOfficialCredential,
+    status,
+  });
 }
 
 module.exports = { createClaudeAccountCredentialService, EXPIRY_MARGIN_MS };
