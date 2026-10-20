@@ -257,10 +257,41 @@ test('vault rule is injected only for lanes without the host system prompt', asy
   const record = { ...f.records.get(d.sessionId), taskBoundTaskId: d.taskId };
   const ids = cli => memory.retrieve({ ...record, cli }, 'x').candidates.map(s => s.id);
   assert.ok(!ids('claude').includes('builtin:secret-vault'));
+  assert.ok(!ids('claude').includes('builtin:shared-files'));
   assert.ok(ids('opencode').includes('builtin:secret-vault'));
+  assert.ok(ids('opencode').includes('builtin:shared-files'));
   assert.ok(ids('claude').includes('builtin:docs-registry'));
   for (const cli of SYSTEM_PROMPT_SECRET_RULE_CLIS) {
     const source = fs.readFileSync(path.join(__dirname, '../src/cli-adapters', `${cli}.js`), 'utf8');
     assert.match(source, /systemPrompt|multiccImgHint/, `${cli} must actually carry the host system prompt`);
   }
+});
+
+test('seeded rule paragraphs (current and legacy wording) never resurface as ordinary memory', async t => {
+  const { SECRET_VAULT_RULE, SHARED_FILES_RULE } = require('../src/memory/builtin-rules');
+  const f = fixture(t), memory = memoryFor(f), d = await delivery(f, 'rules');
+  const record = { ...f.records.get(d.sessionId), cli: 'claude', taskBoundTaskId: d.taskId };
+  const file = path.join(memory.sharedDir('d1'), 'MEMORY.md');
+  fs.appendFileSync(file, '\n§\n[规则][敏感信息保险箱·强制]\n\n旧版续段：先调用 list_secrets 检查。\n§\n普通事实：发布前跑 smoke。\n');
+  memory.retrieve(record, 'x');
+  const excerpts = memory.retrieve(record, 'list_secrets smoke').candidates
+    .filter(s => s.scope !== 'builtin').map(s => s.excerpt).join('\n');
+  for (const rule of [SECRET_VAULT_RULE, SHARED_FILES_RULE]) {
+    for (const paragraph of rule.split(/\n\s*\n/).slice(1)) assert.ok(!excerpts.includes(paragraph.trim()), paragraph.slice(0, 40));
+  }
+  assert.doesNotMatch(excerpts, /旧版续段/);
+  assert.match(excerpts, /普通事实/);
+});
+
+test('machine facts join only on a match and vague query hits are capped', async t => {
+  const f = fixture(t), memory = memoryFor(f), d = await delivery(f, 'machine');
+  const record = { ...f.records.get(d.sessionId), cli: 'claude', taskBoundTaskId: d.taskId };
+  fs.mkdirSync(memory.machineDir(), { recursive: true });
+  fs.writeFileSync(path.join(memory.machineDir(), 'MEMORY.md'), '本机 codex 平台包缺失');
+  assert.ok(!memory.retrieve(record, '部署').candidates.some(s => s.scope === 'machine'));
+  assert.ok(memory.retrieve(record, 'codex 平台包').candidates.some(s => s.scope === 'machine'));
+  const shared = memory.sharedDir('d1');
+  for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(shared, `note${i}.md`), `继续 第 ${i} 条笔记`);
+  const hits = memory.retrieve(record, '继续').candidates.filter(s => s.reason === 'query');
+  assert.equal(hits.length, 8);
 });
