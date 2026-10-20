@@ -344,7 +344,7 @@ function createChatTurnEngine(deps) {
   const recordDeliveryProbe = deliveryProbeRegistry.record;
   const runnerDeliveryHandoff = deliveryProbeRegistry.lookup;
   const autoProviderRuntime = deps.autoProviderRuntime || createAutoProviderRuntime({
-    providers, providerLimitCache, logger, isCliAvailable: deps.isCliAvailable, emit: createAutoRouteNotes({ broadcast: chatBroadcast,
+    providers, providerLimitCache, quotaGuard: deps.quotaGuard, logger, isCliAvailable: deps.isCliAvailable, emit: createAutoRouteNotes({ broadcast: chatBroadcast,
       append: appendChatMessage, records: persistedSessions, save: savePersistedSessionsBestEffort }),
     hasLiveBackgroundTasks: sessionId => {
       try { return getBackgroundTaskRuntime()?.hasProcessBackgroundTasks?.(sessionId) === true; }

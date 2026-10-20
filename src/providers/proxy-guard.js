@@ -52,8 +52,21 @@ function classifyProviderProxyRoute(protocol, segments = []) {
 // budget on a route that cannot answer. `x-should-retry: false` is what the
 // Anthropic SDK honours; every other 409 (including its body and headers) stays
 // exactly as it was.
+//
+// `quota_guard:` rejections are a different kind of host decision — the account
+// is being protected from its own last percent of quota — so they carry a body
+// that says so. The generic "attempt is no longer active" would read as a stale
+// route and send whoever looks at it chasing the wrong problem.
+const QUOTA_GUARD_PREFIX = 'quota_guard:';
+
 function reject(res, code = '') {
-  const body = JSON.stringify({ error: 'provider route attempt is no longer active' });
+  const guarded = clean(code).startsWith(QUOTA_GUARD_PREFIX);
+  const body = JSON.stringify({
+    error: guarded
+      ? `quota guard: ${clean(code).slice(QUOTA_GUARD_PREFIX.length)} of the subscription window used; requests are held until it resets`
+      : 'provider route attempt is no longer active',
+    ...(guarded ? { code } : {}),
+  });
   const stalled = clean(code) === 'attempt_stalled';
   if (res && typeof res.status === 'function' && typeof res.json === 'function') {
     if (stalled && typeof res.setHeader === 'function') res.setHeader('x-should-retry', 'false');

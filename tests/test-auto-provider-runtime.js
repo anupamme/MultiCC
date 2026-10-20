@@ -1211,32 +1211,37 @@ test('chooseCandidate steers between official accounts by headroom without bounc
   assert.equal(chooseCandidate({ candidates: [line('relay-a', 70, 0, { trustDomain: 'relay' }), line('relay-b', 5, 1, { trustDomain: 'relay' })] }).candidate.providerId, 'relay-a');
 });
 
-test('official account usage sweeper records every signed-in account under its own provider id', async () => {
+test('official account usage sweeper records every signed-in codex account under its own provider id', async () => {
   const { createOfficialAccountUsageSweeper, claudeUsageWindows } = require('../src/quota/official-account-usage');
   assert.deepEqual(claudeUsageWindows({ five_hour: { utilization: 42, resets_at: null }, seven_day: { utilization: null } }),
     [{ window: '5h', label: 'Current session', usedPercent: 42, resetMs: null }]);
   const recorded = [];
+  const polls = [];
   const A = 'aaaaaaaaaaaaaaaa', B = 'bbbbbbbbbbbbbbbb', C = 'cccccccccccccccc';
   const sweeper = createOfficialAccountUsageSweeper({
     accounts: {
-      listClaudeAccounts: () => [{ id: A, loggedIn: true }, { id: B, loggedIn: true }, { id: C, loggedIn: false }],
-      listCodexAccounts: () => [{ id: A, loggedIn: true }],
+      // Signed in and deliberately ignored: Claude is manual-only now (the
+      // sweeper has no Claude fetcher at all — that is the point of this test).
+      listClaudeAccounts: () => [{ id: A, loggedIn: true }, { id: B, loggedIn: true }],
+      listCodexAccounts: () => [{ id: C, loggedIn: true }, { id: B, loggedIn: true }, { id: A, loggedIn: false }],
+      codexDir: id => `/tmp/codex/${id}`,
     },
-    credentials: { readAccountToken: async id => ({ token: `tok-${id}` }) },
     recorder: { recordOfficialWindows: (appType, providerId, data) => recorded.push([appType, providerId, data.windows[0].usedPercent]) },
-    readClaudeUsage: async (_fetch, token) => {
-      if (token === `tok-${B}`) throw Object.assign(new Error('rate limited'), { status: 429, retryAfterMs: 60_000 });
-      return { five_hour: { utilization: 12 } };
+    pollCodex: async ({ authFile }) => {
+      polls.push(authFile);
+      if (authFile.endsWith(`/${B}/auth.json`)) throw Object.assign(new Error('rate limited'), { status: 429, retryAfterMs: 60_000 });
+      return { utilization: 0.12 }; // codex reports a fraction, windows carry percent
     },
-    pollCodex: async () => { throw new Error('single codex account must not be polled'); },
     logger: { warn() {} },
     now: () => 1_000_000,
   });
   assert.equal(await sweeper.sweepOnce(), 1);
-  assert.deepEqual(recorded, [['claude', `claude-official-${A}`, 12]]);
+  assert.deepEqual(recorded, [['codex', `codex-official-${C}`, 12]]);
   recorded.length = 0;
+  polls.length = 0;
   await sweeper.sweepOnce();
-  assert.deepEqual(recorded, [['claude', `claude-official-${A}`, 12]], 'a throttled account is backed off, not hammered');
+  assert.deepEqual(recorded, [['codex', `codex-official-${C}`, 12]]);
+  assert.deepEqual(polls, [`/tmp/codex/${C}/auth.json`], 'a throttled account is backed off, not hammered');
 });
 
 // ── pool memory: a fresh session starts on the line the pool last finished on ──

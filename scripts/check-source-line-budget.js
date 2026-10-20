@@ -404,10 +404,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     //   区块与手动忽略开关，实测 9332/591747。
     // +1 双语键（aiConfigDefaultFollowPi）：Pi 原生模型默认配置文案。
     // +2 双语键（docsCollapseAll/docsExpandAll）：服务与文档的分组头可收起/展开 + 全部收起/展开。
-    //   重新生成时一并吸收了源 json 已领先生成物的那批键（taskDirectoryHint*、airStream* 等，
-    //   此前只在 app/assets/i18n 里），生成物实测 9386 / 595190，按真实高水位抬一格。
-    maxLines: 9386,
-    maxBytes: 595190,
+    // +17 双语键（airQuotaGuard*）：Provider 页的「官方账号额度保护」卡片。
+    //   两条改动合并后重跑生成器，实测 9420/597286，按真实高水位抬一格。
+    maxLines: 9420,
+    maxBytes: 597286,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

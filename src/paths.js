@@ -137,6 +137,9 @@ function createPaths({ dataDir } = {}) {
     // src/quota/provider-limit-cache.js.
     providerLimitDbFile: path.join(root, 'provider-limit-cache.db'),
     providerLimitCacheFile: path.join(root, 'provider-limit-cache.json'),
+    // Account-protection threshold for subscription windows (see
+    // src/quota/quota-guard.js). Optional: absent means "defaults + env".
+    quotaGuardFile: path.join(root, 'quota-guard.json'),
     quotaBarCacheFile: path.join(root, 'quota-bar-cache.json'),
     scheduledTasksFile: path.join(root, 'scheduled_tasks.json'),
     // Applied-marker for the one-time cron fan-out cleanup that archives the

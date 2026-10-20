@@ -417,6 +417,12 @@ function createProviderAttemptRuntime(options = {}) {
   // 按「查不到 attempt」拒绝。
   const resolveTerminalRoute = typeof options.resolveTerminalRoute === 'function'
     ? options.resolveTerminalRoute : null;
+  // Account protection, injected by the host (src/quota/quota-guard): holds a
+  // provider whose subscription window is at the configured ceiling. Optional —
+  // absent means the gate does not exist, which is what every test runtime and
+  // every non-official install gets.
+  const quotaGuard = options.quotaGuard && typeof options.quotaGuard.check === 'function'
+    ? options.quotaGuard : null;
   // A proxied request whose downstream CLI consumer died mid-stream never
   // emits the proxy 'end' that drains its producer. After this grace the
   // entry is provably orphaned (the attempt gate below already guarantees no
@@ -873,6 +879,22 @@ function createProviderAttemptRuntime(options = {}) {
       return Object.freeze({ ok: false, code, sessionId: sessionId || null });
     };
     const role = clean(input.role || input.roleKind || 'main').toLowerCase();
+    // Account protection comes before route bookkeeping: the question is not
+    // "does this caller own the route" but "may this account be spent any
+    // further". Connectivity probes (HEAD /api/hello) and plain reads are not
+    // inference and must still answer, or a guarded account would look offline.
+    const method = clean(input.method).toUpperCase();
+    if (quotaGuard && (!method || method === 'POST')) {
+      let verdict = null;
+      try {
+        verdict = quotaGuard.check({ providerId: clean(input.providerId) });
+      } catch (_) {
+        verdict = null;
+      }
+      if (verdict && verdict.blocked) {
+        return reject(`quota_guard:${verdict.window}:${Math.round(verdict.usedPercent)}pct`);
+      }
+    }
     // 终端会话没有回合：它在 currentBySession 里本来就没有记录，能力在会话记录上。
     // 判定必须发生在 attempt 那套判断之前 —— 那些判断问的正是「有没有一条在跑的
     // 回合」，对长活终端永远是否。放行的条件与常驻车道同一口径（主线路必须就是这条

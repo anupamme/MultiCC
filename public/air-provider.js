@@ -625,6 +625,117 @@
     finally { control.disabled = data?.ccSwitchStatus?.available === false; }
   }
 
+  // ── 官方账号额度保护 ────────────────────────────────────────────────────────
+  //
+  // 阈值落在数据根目录的 quota-guard.json（服务端闸门约 5 秒热读取），所以这里
+  // 只负责读写一份设置，不参与拦截本身。放在线路卡下面而不是设置中心：它守的
+  // 就是上面这些官方线路，摆在同一页才好对上号。
+
+  function quotaGuardField(id, labelKey) {
+    const label = make('label');
+    label.append(make('span', t(labelKey)));
+    const input = make('input');
+    input.type = 'number'; input.min = '1'; input.max = '100'; input.step = '1'; input.id = id;
+    label.append(input);
+    return label;
+  }
+
+  function quotaGuardCard() {
+    const panel = make('section', null, 'admin-panel');
+    panel.id = 'air-quota-guard-card';
+    const head = make('div', null, 'admin-panel-head');
+    const title = make('div');
+    title.append(make('span', t('airQuotaGuardEyebrow'), 'eyebrow'), make('h3', t('airQuotaGuardTitle')));
+    head.append(title, make('span', t('airQuotaGuardDesc'), 'admin-panel-note'));
+    const body = make('div', null, 'air-quota-guard-body');
+    const enabledRow = make('label', null, 'air-quota-guard-toggle');
+    const enabled = make('input');
+    enabled.type = 'checkbox'; enabled.id = 'air-quota-guard-enabled';
+    enabledRow.append(enabled, make('span', t('airQuotaGuardEnabled')));
+    const fields = make('div', null, 'form-row');
+    fields.append(
+      quotaGuardField('air-quota-guard-five-hour', 'airQuotaGuardFiveHour'),
+      quotaGuardField('air-quota-guard-weekly', 'airQuotaGuardWeekly'),
+      quotaGuardField('air-quota-guard-monthly', 'airQuotaGuardMonthly'),
+    );
+    const scopeRow = make('div', null, 'form-row');
+    const scopeLabel = make('label');
+    scopeLabel.append(make('span', t('airQuotaGuardScope')));
+    const scope = make('select'); scope.id = 'air-quota-guard-scope';
+    for (const [value, key] of [['official', 'airQuotaGuardScopeOfficial'], ['all', 'airQuotaGuardScopeAll']]) {
+      const option = make('option', t(key)); option.value = value; scope.append(option);
+    }
+    scopeLabel.append(scope);
+    scopeRow.append(scopeLabel);
+    const note = make('p', '', 'admin-panel-note'); note.id = 'air-quota-guard-note'; note.hidden = true;
+    const foot = make('div', null, 'form-row');
+    const save = button(t('airQuotaGuardSave'), () => { void saveQuotaGuard(); }, 'btn btn-green');
+    save.id = 'air-quota-guard-save';
+    const status = make('span', '', 'status-text'); status.id = 'air-quota-guard-status';
+    foot.append(save, status);
+    body.append(enabledRow, fields, scopeRow, note, foot);
+    panel.append(head, body);
+    return panel;
+  }
+
+  function paintQuotaGuard(data) {
+    const config = (data && data.config) || {};
+    const enabled = el('air-quota-guard-enabled');
+    if (enabled) enabled.checked = config.enabled !== false;
+    const put = (id, value) => { const node = el(id); if (node) node.value = String(value == null ? '' : value); };
+    put('air-quota-guard-five-hour', config.fiveHourPercent);
+    put('air-quota-guard-weekly', config.weeklyPercent);
+    put('air-quota-guard-monthly', config.monthlyPercent);
+    const scope = el('air-quota-guard-scope');
+    if (scope) scope.value = config.scope === 'all' ? 'all' : 'official';
+    const note = el('air-quota-guard-note');
+    if (note) {
+      const overrides = data && Array.isArray(data.envOverrides) ? data.envOverrides : [];
+      note.textContent = overrides.length ? t('airQuotaGuardEnvNote', { keys: overrides.join(', ') }) : '';
+      note.hidden = !overrides.length;
+    }
+  }
+
+  async function loadQuotaGuard() {
+    const status = el('air-quota-guard-status');
+    if (status) { status.textContent = t('airQuotaGuardLoading'); status.className = 'status-text'; }
+    try {
+      paintQuotaGuard(await context.api('/api/settings/quota-guard'));
+      if (status) status.textContent = '';
+    } catch (error) {
+      if (status) {
+        status.textContent = t('airQuotaGuardLoadFailed', { message: error.message });
+        status.className = 'status-text err';
+      }
+    }
+  }
+
+  async function saveQuotaGuard() {
+    const save = el('air-quota-guard-save');
+    const status = el('air-quota-guard-status');
+    const read = (id) => { const node = el(id); return node ? node.value : ''; };
+    if (save) save.disabled = true;
+    if (status) { status.textContent = t('airQuotaGuardSaving'); status.className = 'status-text'; }
+    try {
+      const result = await context.api('/api/settings/quota-guard', {
+        enabled: !!el('air-quota-guard-enabled')?.checked,
+        fiveHourPercent: read('air-quota-guard-five-hour'),
+        weeklyPercent: read('air-quota-guard-weekly'),
+        monthlyPercent: read('air-quota-guard-monthly'),
+        scope: read('air-quota-guard-scope') || 'official',
+      }, 'PUT');
+      paintQuotaGuard(result);
+      if (status) { status.textContent = t('airQuotaGuardSaved'); status.className = 'status-text ok'; }
+    } catch (error) {
+      if (status) {
+        status.textContent = t('airQuotaGuardSaveFailed', { message: error.message });
+        status.className = 'status-text err';
+      }
+    } finally {
+      if (save) save.disabled = false;
+    }
+  }
+
   function renderShell() {
     const page = make('div', null, 'air-provider-page');
     const intro = make('section', null, 'admin-panel air-provider-intro');
@@ -646,8 +757,9 @@
     // 而且要等真正展开才画：它开四个接口，默认折叠的那一格不该替用户付这笔。
     const advancedBody = make('div'); advancedBody.id = 'air-provider-advanced-body';
     advanced.append(note, advancedBody);
-    page.append(intro, defaults, toolbar, cards, advanced);
+    page.append(intro, defaults, toolbar, cards, quotaGuardCard(), advanced);
     el('admin-content').replaceChildren(page);
+    void loadQuotaGuard();
     setProtocol(activeProtocol);
     if (advancedOpen) {
       root.MultiCCAirProviderAdvanced?.render(advancedBody, context);

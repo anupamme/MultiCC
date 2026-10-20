@@ -102,49 +102,38 @@ test('wiring installs a claude key resolver that resolves a session to its accou
   }
 });
 
-// A task boundary is the only AUTOMATIC moment a Claude reading is taken (the
-// other is the user's own ⟳), and a turn ending is the hook every session passes
-// through — so the wiring warms the account's cache there and then hands the call
-// on to the poller untouched.
-test('a turn ending warms this session account, and the poller still runs', async () => {
+// A turn ending is NOT a reason to read a Claude account any more. The scrape
+// costs an upstream call (or a 30-40s browser drive) and is taken only when the
+// user asks for it — the bar's ⟳ / tap sends `force=1`. So the wiring hands
+// onTurnComplete straight to the poller and never enqueues a Claude reading.
+test('a turn ending does not scrape Claude, and the poller still runs', async () => {
   const Queue = require('../src/quota/claude-usage-queue');
-  const sessions = new Map([
-    ['acct-s', { provider: 'p-official', cli: 'claude' }],
-    ['relay-s', { provider: 'zhipu', cli: 'claude' }],
-  ]);
+  const sessions = new Map([['acct-s', { provider: 'p-official', cli: 'claude' }]]);
   Queue.resetClaudeUsageQueue();
   const scrapes = [];
   Queue.configureClaudeUsageQueue({
     fetchUsage: async ({ accountId } = {}) => { scrapes.push(accountId || ''); return { status: 'ok' }; },
   });
   const completed = [];
+  const poller = {
+    onTurnComplete: (s) => { completed.push(s); return Promise.resolve('poller-result'); },
+    _refresh: 'refresh', _cache: 'cache',
+  };
   try {
     const wiring = createUsageLimitWiring({
       persistedSessions: sessions,
-      providers: fakeProviders(null, {
-        'p-official': { officialAccountId: 'aaa', baseUrl: '' },
-        zhipu: { baseUrl: 'https://open.bigmodel.cn/api/anthropic' },
-      }),
+      providers: fakeProviders(null, { 'p-official': { officialAccountId: 'aaa', baseUrl: '' } }),
       chatBroadcast: () => {},
-      createPoller: () => ({
-        onTurnComplete: (s) => { completed.push(s); return Promise.resolve('poller-result'); },
-        _refresh: 'refresh', _cache: 'cache',
-      }),
+      createPoller: () => poller,
     });
-    assert.strictEqual(wiring._refresh, 'refresh', 'the rest of the poller survives the wrapper');
-    assert.strictEqual(wiring._cache, 'cache');
-
+    assert.strictEqual(wiring, poller, 'no wrapper sits between the caller and the poller');
     assert.strictEqual(await wiring.onTurnComplete('acct-s'), 'poller-result');
     assert.deepStrictEqual(completed, ['acct-s'], 'the poller still gets its turn-complete');
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepStrictEqual(scrapes, ['aaa'], 'and the turn warmed that account’s reading');
-
-    // A session routed elsewhere has no subscription reading to warm — warming
-    // the default key here would scrape the CLI login for a session that never
-    // touches it.
-    await wiring.onTurnComplete('relay-s');
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepStrictEqual(scrapes, ['aaa']);
+    assert.deepStrictEqual(scrapes, [], 'nothing is scraped on the user’s behalf');
+    // The account still resolves, so an explicit refresh knows whose numbers to
+    // read — losing the resolver would quietly serve one shared reading instead.
+    assert.strictEqual(Queue.claudeProviderKey('acct-s'), 'claude:aaa');
   } finally {
     Queue.resetClaudeUsageQueue();
   }

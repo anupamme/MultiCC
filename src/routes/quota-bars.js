@@ -122,8 +122,9 @@ function createQuotaBarRuntime(options = {}) {
       bar = renderQuotaBar('kimi', result);
     } else if (kind === 'claude') {
       // The scrape is cached and rate-limited per account, and only this
-      // request's `force` (the user's ⟳) or a task boundary starts one — a read
-      // never drives a browser. See ../quota/claude-usage-queue.js.
+      // request's `force` (the user's ⟳) starts one — a read never drives a
+      // browser, and nothing refreshes the cache in the background. See
+      // ../quota/claude-usage-queue.js.
       const key = claudeUsageKey(selector.session);
       const entry = force ? await enqueueClaudeUsage(key) : readClaudeUsage(key);
       missing = !entry;

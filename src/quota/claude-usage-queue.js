@@ -16,9 +16,10 @@
 //
 // So the cache is keyed (see claudeUsageKey below), every session of one account
 // reads the same entry, and a plain read NEVER fetches: looking at a bar is not
-// a reason to drive a browser. Exactly two things enqueue a scrape — an explicit
-// user refresh (the clients' ⟳ / tap sends `force=1`) and a task boundary (a
-// turn ending; see ../chat/usage-limit-wiring.js).
+// a reason to drive a browser. Exactly ONE thing enqueues a scrape — an explicit
+// user refresh (the clients' ⟳ / tap sends `force=1`). Nothing refreshes this
+// cache on the user's behalf: the former turn-boundary warm-up was removed on
+// request, so a reading is only as fresh as the last time someone asked for it.
 //
 // The queue itself is the answer to "one session already pulled it, so the other
 // must not": a scrape is rate-limited to one per key per minute, and a scrape
