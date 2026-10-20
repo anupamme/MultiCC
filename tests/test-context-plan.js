@@ -295,3 +295,16 @@ test('machine facts join only on a match and vague query hits are capped', async
   const hits = memory.retrieve(record, '继续').candidates.filter(s => s.reason === 'query');
   assert.equal(hits.length, 8);
 });
+
+test('task title steers only the cold start, not every continuation', async t => {
+  const f = fixture(t), memory = memoryFor(f), first = await delivery(f, 'title');
+  f.records.get(first.sessionId).cli = 'codex';
+  const queries = [];
+  const spy = { ...memory, retrieve: (record, query) => { queries.push(query); return memory.retrieve(record, query); } };
+  prepare(f, first, spy, { isFirstTurn: true }); commit(f, first);
+  const next = await delivery(f, 'next');
+  prepare(f, next, spy);
+  const title = f.store.get('task', first.taskId)?.title || '';
+  assert.ok(queries[0].endsWith('\n' + title), 'cold start includes the title');
+  assert.equal(queries[1], '数据库性能 cache', 'continuation queries only the turn text');
+});
