@@ -108,7 +108,7 @@ test('stdio MCP advertises scoped tools and bridges calls with the capability', 
   const listed = await plain.call('tools/list');
   assert.deepEqual(listed.result.tools.map(tool => tool.name), [
     'get_task_context',
-    'wait_for_user_answer', 'request_user_input', 'request_secret_input', 'list_secrets',
+    'wait_for_user_answer', 'request_secret_input', 'list_secrets',
     'run_with_secrets', 'http_request_with_secret',
     'wait_for_external_result', 'get_external_wait', 'cancel_external_wait',
     'route_task', 'dispatch_cancel', 'dispatch_status', 'dispatch_master',
@@ -206,12 +206,16 @@ test('stdio MCP advertises scoped tools and bridges calls with the capability', 
     params: { progressToken: 'progress-1', progress: 2, message: 'worker delta' },
   });
 
+  const legacy = await plain.call('tools/call', { name: 'request_user_input', arguments: { question: 'legacy' } });
+  assert.equal(legacy.result.isError, false, 'unlisted legacy alias stays callable');
+  assert.equal(requests.at(-1).url, '/api/internal/router-tools/request_user_input');
+
   const dispatched = clientFor(port, 'op-origin');
   t.after(() => dispatched.stop());
   const dispatchedList = await dispatched.call('tools/list');
   assert.deepEqual(dispatchedList.result.tools.map(tool => tool.name), [
     'get_task_context',
-    'wait_for_user_answer', 'request_user_input', 'request_secret_input', 'list_secrets',
+    'wait_for_user_answer', 'request_secret_input', 'list_secrets',
     'run_with_secrets', 'http_request_with_secret',
     'wait_for_external_result', 'get_external_wait', 'cancel_external_wait',
     'route_task', 'dispatch_cancel', 'dispatch_status', 'dispatch_master',

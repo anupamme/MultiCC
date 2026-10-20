@@ -230,3 +230,37 @@ test('duplicate facts in two memory scopes are not reintroduced on a later turn'
   assert.doesNotMatch(plan.text, /相同事实/);
   assert.ok(plan.omitted.some(s => s.reason === 'duplicate_in_native'));
 });
+
+test('ascii terms match whole words and long queries need proportional overlap', () => {
+  const { relevance, minRelevance } = require('../src/context/selection');
+  assert.equal(relevance('ok', 'token hook'), 0);
+  assert.equal(relevance('ok', 'it is ok now'), 1);
+  assert.equal(relevance('db-tune', 'run db-tune.'), 1);
+  assert.equal(minRelevance('ok'), 1);
+  assert.ok(minRelevance('另外我每次会话不是会经常自动裁剪上下文吗这个难道没有正向作用吗') >= 4);
+});
+
+test('continuations send only facts the turn points at, not the rest of a MEMORY.md index', async t => {
+  const f = fixture(t), memory = memoryFor(f), first = await delivery(f, 'index');
+  f.records.get(first.sessionId).cli = 'codex';
+  prepare(f, first, memory, { isFirstTurn: true }); commit(f, first);
+  fs.appendFileSync(path.join(memory.sharedDir('d1'), 'MEMORY.md'), '\n§\n园艺经验：番茄要搭架。\n§\n数据库性能 cache 命中率目标 95%。\n');
+  const next = await delivery(f, 'next');
+  const plan = prepare(f, next, memory);
+  assert.match(plan.text, /命中率目标/);
+  assert.doesNotMatch(plan.text, /番茄/);
+});
+
+test('vault rule is injected only for lanes without the host system prompt', async t => {
+  const { SYSTEM_PROMPT_SECRET_RULE_CLIS } = require('../src/memory/retrieval');
+  const f = fixture(t), memory = memoryFor(f), d = await delivery(f, 'vault');
+  const record = { ...f.records.get(d.sessionId), taskBoundTaskId: d.taskId };
+  const ids = cli => memory.retrieve({ ...record, cli }, 'x').candidates.map(s => s.id);
+  assert.ok(!ids('claude').includes('builtin:secret-vault'));
+  assert.ok(ids('opencode').includes('builtin:secret-vault'));
+  assert.ok(ids('claude').includes('builtin:docs-registry'));
+  for (const cli of SYSTEM_PROMPT_SECRET_RULE_CLIS) {
+    const source = fs.readFileSync(path.join(__dirname, '../src/cli-adapters', `${cli}.js`), 'utf8');
+    assert.match(source, /systemPrompt|multiccImgHint/, `${cli} must actually carry the host system prompt`);
+  }
+});
