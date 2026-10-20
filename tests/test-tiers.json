@@ -2073,6 +2073,16 @@
       ]
     },
     {
+      "path": "tests/test-chat-stream-resume-startup-death.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:cli-switch",
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-chat-stream-resume.js",
       "tier": "core",
       "lane": "deterministic",
