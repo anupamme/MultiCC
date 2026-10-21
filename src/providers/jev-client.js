@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // ── Jev（TypeSafe 决策模型）· 评估接口 ───────────────────────────────────────
 //
 // Jev is not a chat model: it accepts one `state` and a set of typed `questions`
@@ -360,7 +362,7 @@ function escalationWith(base, override) {
 }
 
 function createJevClient(options = {}) {
-  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  const fetchImpl = options.fetchImpl || outboundFetch;
   if (typeof fetchImpl !== 'function') throw new TypeError('[jev] fetch is required');
   const resolveApiKey = typeof options.resolveApiKey === 'function' ? options.resolveApiKey : null;
   const endpoint = String(options.endpoint || DEFAULT_ENDPOINT);

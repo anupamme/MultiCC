@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
+const { getChildProxyEnv, outboundFetch } = require('../network/outbound');
 const { spawn } = require('child_process');
 const {
   GLOBAL_VOICE_GATEWAY_ID,
@@ -87,7 +88,8 @@ function createQwenAudioSupervisor({
   acpAgentPath,
   frontendPromptDir = path.join(__dirname, 'frontend-prompt'),
   spawnImpl = spawn,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = outboundFetch,
+  childProxyEnv = getChildProxyEnv,
   now = () => Date.now(),
   log = console,
   healthIntervalMs = HEALTH_INTERVAL_MS,
@@ -305,12 +307,12 @@ function createQwenAudioSupervisor({
     if (typeof state.healthTimer.unref === 'function') state.healthTimer.unref();
   }
 
-  function childEnvironment(runtime, directory, directoryId, port, config) {
+  function childEnvironment(runtime, directory, directoryId, port, config, sourceEnv) {
     const isGlobal = directoryId === GLOBAL_KEY;
     const configDirectory = path.join(runtime.fleetConfigRoot, fleetRuntimeKey(directoryId));
     const env = {
-      HOME: process.env.HOME || '',
-      PATH: `${path.dirname(runtime.nodePath)}${path.delimiter}${process.env.PATH || ''}`,
+      HOME: sourceEnv.HOME || '',
+      PATH: `${path.dirname(runtime.nodePath)}${path.delimiter}${sourceEnv.PATH || ''}`,
       HOST: '127.0.0.1',
       PORT: String(port),
       NODE_ENV: 'production',
@@ -337,9 +339,10 @@ function createQwenAudioSupervisor({
     if (config.baseUrl) env.QWEN_AUDIO_REALTIME_BASE_URL = config.baseUrl;
     for (const name of [
       'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'HTTPS_PROXY', 'HTTP_PROXY',
-      'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
+      'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy', 'ALL_PROXY', 'all_proxy',
+      'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
     ]) {
-      if (process.env[name]) env[name] = process.env[name];
+      if (sourceEnv[name]) env[name] = sourceEnv[name];
     }
     return env;
   }
@@ -416,15 +419,17 @@ function createQwenAudioSupervisor({
       ensurePrivateDir(validated.runtime.fleetConfigRoot);
       const configDirectory = path.join(validated.runtime.fleetConfigRoot, fleetRuntimeKey(directoryId));
       ensurePrivateDir(configDirectory);
-      const env = childEnvironment(
-        validated.runtime,
-        validated.directory,
-        directoryId,
-        port,
-        validated.config,
-      );
       let child;
       try {
+        const sourceEnv = await childProxyEnv(process.env);
+        const env = childEnvironment(
+          validated.runtime,
+          validated.directory,
+          directoryId,
+          port,
+          validated.config,
+          sourceEnv,
+        );
         child = spawnImpl(validated.runtime.nodePath, [validated.runtime.serverEntry], {
           cwd: path.join(validated.runtime.packageRoot, 'server'),
           env,

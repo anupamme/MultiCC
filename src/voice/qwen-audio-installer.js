@@ -1,5 +1,6 @@
 'use strict';
 
+const { getChildProxyEnv, outboundFetch } = require('../network/outbound');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -85,7 +86,7 @@ function commandPromise(command, args, options = {}) {
 }
 
 async function downloadFile(url, target, {
-  fetchImpl = globalThis.fetch,
+  fetchImpl = outboundFetch,
   maxBytes = 160 * 1024 * 1024,
   timeoutMs = 180000,
 } = {}) {
@@ -185,13 +186,13 @@ function executable(file) {
   }
 }
 
-function safeChildEnv(nodeBin, cacheDir) {
+function safeChildEnv(nodeBin, cacheDir, sourceEnv = process.env) {
   const env = {
     // Keep user-level npm credentials and registry overrides out of the
     // installer. The official registry plus pinned integrity is the only
     // package source admitted into this managed runtime.
     HOME: cacheDir,
-    PATH: `${path.dirname(nodeBin)}${path.delimiter}${process.env.PATH || ''}`,
+    PATH: `${path.dirname(nodeBin)}${path.delimiter}${sourceEnv.PATH || ''}`,
     NODE_ENV: 'production',
     npm_config_cache: cacheDir,
     npm_config_registry: 'https://registry.npmjs.org/',
@@ -201,9 +202,10 @@ function safeChildEnv(nodeBin, cacheDir) {
   };
   for (const name of [
     'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'HTTPS_PROXY', 'HTTP_PROXY',
-    'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
+    'NO_PROXY', 'https_proxy', 'http_proxy', 'no_proxy', 'ALL_PROXY', 'all_proxy',
+    'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
   ]) {
-    if (process.env[name]) env[name] = process.env[name];
+    if (sourceEnv[name]) env[name] = sourceEnv[name];
   }
   return env;
 }
@@ -212,8 +214,9 @@ function createQwenAudioInstaller({
   runtimeRoot,
   platform = process.platform,
   arch = process.arch,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = outboundFetch,
   run = commandPromise,
+  childProxyEnv = getChildProxyEnv,
   now = () => new Date().toISOString(),
   log = console,
 } = {}) {
@@ -406,6 +409,7 @@ function createQwenAudioInstaller({
         throw error;
       }
 
+      const proxyEnv = await childProxyEnv(process.env);
       updateProgress('installing_package', `${QWEN_AUDIO_PACKAGE}@${QWEN_AUDIO_PACKAGE_VERSION}`);
       const appDir = path.join(stage, 'app');
       ensurePrivateDir(appDir);
@@ -423,7 +427,7 @@ function createQwenAudioInstaller({
           `${QWEN_AUDIO_PACKAGE}@${QWEN_AUDIO_PACKAGE_VERSION}`,
         ], {
           cwd: appDir,
-          env: safeChildEnv(nodePath, cacheDir),
+          env: safeChildEnv(nodePath, cacheDir, proxyEnv),
           timeout: 420000,
         });
       } catch (cause) {
@@ -447,7 +451,7 @@ function createQwenAudioInstaller({
       try {
         await run(nodePath, [qwenBin, '--help'], {
           cwd: appDir,
-          env: safeChildEnv(nodePath, cacheDir),
+          env: safeChildEnv(nodePath, cacheDir, proxyEnv),
           timeout: 30000,
         });
       } catch (cause) {

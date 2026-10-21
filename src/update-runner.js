@@ -1,5 +1,7 @@
 'use strict';
 
+const { getChildProxyEnv } = require('./network/outbound');
+
 // ── Run the updater from the web UI ──
 // A git checkout runs `./multicc update`; a standalone package runs install.sh
 // against its own install directory (see the "Standalone package" section
@@ -421,7 +423,7 @@ function readUpdateStatus(options = {}) {
   };
 }
 
-function startDetachedUpdate(options = {}) {
+async function startDetachedUpdate(options = {}) {
   const {
     spawn,
     rootDir,
@@ -450,6 +452,7 @@ function startDetachedUpdate(options = {}) {
     preflightUpdate({ rootDir, fsImpl, pathImpl });
     command = buildUpdateShellCommand({ rootDir, force });
   }
+  const childEnv = await (options.getChildProxyEnv || getChildProxyEnv)(env);
   const child = spawn('/bin/sh', ['-c', command], {
     cwd: standalone ? standalone.bundleRoot : rootDir,
     // Detached is load-bearing, not hygiene: the update stops and restarts the
@@ -457,7 +460,7 @@ function startDetachedUpdate(options = {}) {
     // would have the update kill itself halfway through.
     detached: true,
     stdio: 'ignore',
-    env,
+    env: childEnv,
   });
   if (!child || typeof child.once !== 'function' || typeof child.unref !== 'function') {
     throw new TypeError('update runner received an invalid child process');

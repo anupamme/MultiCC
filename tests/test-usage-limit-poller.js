@@ -1,18 +1,23 @@
 'use strict';
 
+// Stub the shared outbound transport: no test can accidentally use live credentials.
+let testFetch = async () => { throw new Error('unexpected outbound request'); };
+require('node:test').mock.method(require('../src/network/outbound'), 'outboundFetch',
+  (...args) => testFetch(...args));
+
 const assert = require('assert');
 const { test } = require('node:test');
 const poller = require('../src/usage-limit-poller');
 
-// Swap global fetch with a scripted stub for the duration of one call.
+// Swap the outbound transport with a scripted stub for the duration of one call.
 async function withFetch(handler, fn) {
-  const orig = global.fetch;
+  const orig = testFetch;
   const calls = [];
-  global.fetch = async (url, opts) => {
+  testFetch = async (url, opts) => {
     calls.push({ url, opts });
     return handler(url, opts, calls.length);
   };
-  try { return await fn(calls); } finally { global.fetch = orig; }
+  try { return await fn(calls); } finally { testFetch = orig; }
 }
 
 function okJson(obj) {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('./network/outbound');
+
 // Notices the login the CLI itself holds (Keychain "Claude Code-credentials",
 // ~/.codex/auth.json) so the accounts panel can say "your CLI is signed in as X
 // — sign in here too". It never copies that login into the account store: a
@@ -51,7 +53,7 @@ function readCodexCliLogin(file) {
 
 function createCliLoginDetector({
   accounts,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = outboundFetch,
   readClaudeCli = () => require('./quota/claude-cli-oauth').readCliCredentials(),
   fetchProfile = require('./claude-auth/official-oauth').fetchProfile,
   codexAuthFile = defaultCodexAuthFile(),

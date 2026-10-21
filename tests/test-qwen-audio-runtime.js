@@ -197,6 +197,7 @@ test('supervisor starts one isolated Fleet process and injects only the voice cr
   let spawnSpec;
   const child = new FakeChild();
   const supervisor = createQwenAudioSupervisor({
+    childProxyEnv: async env => ({ ...env, https_proxy: 'http://proxy.test:8080', no_proxy: 'localhost,127.0.0.1' }),
     records: gatewayRecords(),
     directories: new Map([['dir-1', { id: 'dir-1', path: '/tmp/fleet-one' }]]),
     installer,
@@ -229,6 +230,8 @@ test('supervisor starts one isolated Fleet process and injects only the voice cr
   assert.deepEqual(spawnSpec.args, [runtime.serverEntry]);
   assert.equal(spawnSpec.options.env.QWEN_AUDIO_REALTIME_API_KEY, 'dashscope-secret');
   assert.equal(spawnSpec.options.env.AGENT_PROTOCOL, 'acp');
+  assert.equal(spawnSpec.options.env.https_proxy, 'http://proxy.test:8080');
+  assert.equal(spawnSpec.options.env.no_proxy, 'localhost,127.0.0.1');
   assert.equal(spawnSpec.options.env.ACP_COMMAND, runtime.nodePath);
   assert.deepEqual(JSON.parse(spawnSpec.options.env.ACP_ARGS), [
     '/opt/multicc/multicc-acp-agent.mjs', '--directory-id', 'dir-1',
@@ -247,6 +250,7 @@ test('supervisor starts one isolated Fleet process and injects only the voice cr
 test('supervisor fails closed before spawn when the DashScope key is missing', async () => {
   let spawned = false;
   const supervisor = createQwenAudioSupervisor({
+    childProxyEnv: async env => ({ ...env, https_proxy: 'http://proxy.test:8080', no_proxy: 'localhost,127.0.0.1' }),
     records: gatewayRecords(),
     directories: new Map([['dir-1', { id: 'dir-1', path: '/tmp/fleet-one' }]]),
     installer: {
@@ -332,4 +336,11 @@ test('runtime routes expose path-free status and start one asynchronous install'
   });
   assert.equal(res.body.runtime.directoryId, 'dir-1');
   assert.equal(res.headers['Cache-Control'], 'no-store');
+});
+
+test('安装环境保留统一入口生成的大小写代理但剔除凭证', () => {
+  const source = { PATH: '/bin', https_proxy: 'http://proxy.test:8080', HTTPS_PROXY: 'http://proxy.test:8080', no_proxy: 'localhost,127.0.0.1', ALL_PROXY: 'socks5://proxy.test:1080', NPM_TOKEN: 'not-inherited' };
+  const env = safeChildEnv('/private/node/bin/node', '/private/cache', source);
+  for (const key of ['https_proxy', 'HTTPS_PROXY', 'no_proxy', 'ALL_PROXY']) assert.equal(env[key], source[key]);
+  assert.equal(env.NPM_TOKEN, undefined);
 });

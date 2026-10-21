@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // GET /api/claude/quota — the Claude subscription's usage windows
 // (5h session / weekly / monthly).
 //
@@ -359,7 +361,7 @@ function defaultOAuthSource() {
   return {
     accounts,
     credentials: createClaudeAccountCredentialService({ accounts }),
-    fetch: globalThis.fetch,
+    fetch: outboundFetch,
   };
 }
 
@@ -394,7 +396,7 @@ async function fetchClaudeUsageViaOAuth(preferAccountId = '') {
       accounts = bound.concat(accounts.filter(a => !a || a.id !== preferAccountId));
     }
   }
-  const fetchImpl = source.fetch || globalThis.fetch;
+  const fetchImpl = source.fetch || outboundFetch;
   for (const account of accounts) {
     let cred;
     try {

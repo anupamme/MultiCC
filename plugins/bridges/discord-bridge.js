@@ -12,7 +12,8 @@
 const express = require('express');
 const path = require('path');
 const os = require('os');
-const WebSocket = require('ws');
+const { outboundFetch } = require('../../src/network/outbound');
+const { buildDiscordStrategy } = require('../../src/network/sdk-bridges');
 const { bridgeConfigFile, bridgeHistoryFile, saveBridgeConfig } = require('./secure-config');
 const {
   createEchoStore, createLogStore, createGatewayLifecycle, createChatWsClient, chunkOutbound,
@@ -145,6 +146,8 @@ async function startBridge() {
   const D = loadDiscord();
   const { Client, GatewayIntentBits } = D;
   const client = new Client({
+    rest: { makeRequest: outboundFetch },
+    ws: { buildStrategy: buildDiscordStrategy },
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,

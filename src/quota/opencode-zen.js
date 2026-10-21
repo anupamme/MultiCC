@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // OpenCode Zen/Go subscription usage, read straight from the vendor API.
 //
 // The Go plan is the only official OpenCode subscription whose remaining quota
@@ -242,7 +244,7 @@ function normalizeUsage(payload, nowMs) {
  */
 async function fetchZenGoUsage(options = {}) {
   const nowMs = finite(options.now) !== null ? Number(options.now) : Date.now();
-  const fetchImpl = options.fetch || globalThis.fetch;
+  const fetchImpl = options.fetch || outboundFetch;
   const credentials = Array.isArray(options.credentials)
     ? options.credentials
     : discoverZenCredentials(options);

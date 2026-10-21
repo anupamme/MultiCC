@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // Claude official-account management routes (multi-account OAuth).
 //
 // Unlike codex (whose CLI performs the login), Claude accounts log in through
@@ -43,7 +45,7 @@ function mountClaudeAccountRoutes(app, deps) {
   if (!app || typeof app.get !== 'function') throw new TypeError('[claude-accounts] Express-compatible app is required');
   assertDeps(deps);
   const { accounts, providers, credentials } = deps;
-  const fetchImpl = deps.fetch || globalThis.fetch;
+  const fetchImpl = deps.fetch || outboundFetch;
   const logger = deps.logger || { info() {}, warn() {}, error() {} };
   const listenerFactory = typeof deps.waitForCallback === 'function' ? deps.waitForCallback : waitForCallback;
 

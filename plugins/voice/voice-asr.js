@@ -20,6 +20,7 @@
 //   server → { type:'ready' | 'partial' | 'final' | 'done' | 'error', ... }
 
 const WebSocket = require('ws');
+const { outboundAgent } = require('../../src/network/outbound');
 const zlib = require('zlib');
 // In-process local ASR (SenseVoice via sherpa-onnx) — no upstream socket at all.
 const asrLocal = require('../../src/voice/asr-local');
@@ -109,6 +110,7 @@ function openaiSession(opts, cb) {
 
   const lang = opts.lang && opts.lang !== 'auto' ? opts.lang : undefined;
   const upstream = new WebSocket(c.url, {
+    agent: outboundAgent,
     headers: {
       Authorization: `Bearer ${c.apiKey}`,
       'OpenAI-Beta': 'realtime=v1',
@@ -176,7 +178,7 @@ function funasrSession(opts, cb) {
   const c = cfg.funasr;
   if (!c.url) { cb.onError('FUNASR_WS_URL 未配置'); return null; }
 
-  const upstream = new WebSocket(c.url, { rejectUnauthorized: false });
+  const upstream = new WebSocket(c.url, { agent: outboundAgent, rejectUnauthorized: false });
   let open = false;
   let finished = false;
 
@@ -261,6 +263,7 @@ function volcanoSession(opts, cb) {
   if (!c.appId || !c.accessToken) { cb.onError('火山 AppID/AccessToken 未配置'); return null; }
   const reqId = `mc_${Date.now().toString(36)}`;
   const upstream = new WebSocket(c.url, {
+    agent: outboundAgent,
     headers: {
       'X-Api-App-Key': c.appId,
       'X-Api-Access-Key': c.accessToken,

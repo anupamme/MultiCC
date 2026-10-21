@@ -98,6 +98,7 @@ function createHarness(overrides = {}) {
     handoffIdFactory: () => 'handoff_fixed',
     installSpecs: overrides.installSpecs,
     spawnProcess: overrides.spawnProcess,
+    getChildProxyEnv: overrides.getChildProxyEnv || (async env => env),
     cliCommands: overrides.cliCommands,
     // 默认桩: 不读本机真实安装布局(这台机器上的 codex 可能就是 brew 装的)。
     homebrewOwnerOf: overrides.homebrewOwnerOf || (() => null),
@@ -1516,4 +1517,39 @@ test('unpin refuses when the pin does not live in the .env file, and rejects unk
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.code, 'pin_not_in_env_file');
   assert.equal((await harness.invokeUnpin('nope')).statusCode, 400);
+});
+
+test('安装等待统一代理并将代理传给实际子进程', async () => {
+  let resolveProxy;
+  let childEnv;
+  const child = new EventEmitter();
+  child.kill = () => {};
+  const harness = createHarness({
+    availability: { codex: { available: false } },
+    getChildProxyEnv: env => new Promise(resolve => { resolveProxy = () => resolve({ ...env, https_proxy: 'http://proxy.test:8080', no_proxy: 'localhost,127.0.0.1' }); }),
+    spawnProcess: (_cmd, _args, options) => { childEnv = options.env; return child; },
+  });
+  const pending = harness.invokeInstall('codex');
+  assert.equal(childEnv, undefined);
+  assert.equal((await harness.invokeInstall('codex')).statusCode, 409);
+  resolveProxy();
+  const res = await pending;
+  assert.equal(res.statusCode, 202);
+  assert.equal(childEnv.https_proxy, 'http://proxy.test:8080');
+  assert.equal(childEnv.no_proxy, 'localhost,127.0.0.1');
+  child.emit('exit', 1);
+});
+
+test('安装代理准备失败不派生直连子进程', async () => {
+  let spawned = false;
+  const harness = createHarness({
+    availability: { codex: { available: false } },
+    getChildProxyEnv: async () => { throw new Error('proxy discovery failed'); },
+    spawnProcess: () => { spawned = true; },
+  });
+  const response = await harness.invokeInstall('codex');
+  const status = await harness.invokeStatus(response.body.jobId);
+  assert.equal(status.body.job.status, 'error');
+  assert.match(status.body.job.error, /proxy discovery failed/);
+  assert.equal(spawned, false);
 });

@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // GET /api/providers/:appType/:id/balance — query one provider's quota/balance
 // GET /api/providers/balances             — query every pollable provider at once
 //
@@ -100,7 +102,7 @@ async function pollClaudeUsage(target, nowMs, timeoutMs, deps = {}) {
     }
     token = read.accessToken;
   }
-  const usage = await (deps.fetchUsage || fetchUsage)(globalThis.fetch, token);
+  const usage = await (deps.fetchUsage || fetchUsage)(deps.fetch || outboundFetch, token);
   const { summarizeOAuthUsage } = require('./claude-usage-quota');
   const rows = summarizeOAuthUsage(usage);
   if (!rows?.length) return null;

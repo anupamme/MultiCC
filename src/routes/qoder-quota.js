@@ -24,7 +24,7 @@
 //   unavailable        — anything else
 
 const fs = require('fs');
-const https = require('https');
+const { outboundFetch } = require('../network/outbound');
 const path = require('path');
 
 const {
@@ -76,30 +76,32 @@ function cookieHeader(cookies) {
     .join('; ');
 }
 
-function httpsGetJson(url, jar) {
-  return new Promise((resolve, reject) => {
-    const req = https.request(url, {
+async function httpsGetJson(url, jar, fetchImpl = outboundFetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(url, {
       method: 'GET',
-      timeout: HTTP_TIMEOUT_MS,
+      // Preserve login redirects so the caller can report an expired session.
+      redirect: 'manual',
       headers: {
         Cookie: jar,
         Accept: 'application/json',
         'x-requested-with': 'XMLHttpRequest',
       },
-    }, (res) => {
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => {
-        let json = null;
-        try { json = JSON.parse(body); } catch (_) {}
-        resolve({ statusCode: res.statusCode, location: res.headers.location || '', json });
-      });
+      signal: controller.signal,
     });
-    req.on('timeout', () => req.destroy(new Error('qoder API timeout')));
-    req.on('error', reject);
-    req.end();
-  });
+    let json = null;
+    try { json = await res.json(); } catch (error) {
+      if (controller.signal.aborted) throw error;
+    }
+    return { statusCode: res.status, location: res.headers.get('location') || '', json };
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('qoder API timeout', { cause: error });
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function looksLikeQuota(json) {
@@ -117,11 +119,11 @@ function isUnauthenticated(response) {
   return false;
 }
 
-async function fetchWithCookies(cookies) {
+async function fetchWithCookies(cookies, fetchImpl = outboundFetch) {
   const jar = cookieHeader(cookies);
   if (!jar) return { status: 'needs_login', error: '没有 qoder.com.cn 的会话 cookie' };
 
-  const quotaRes = await httpsGetJson(QUOTA_URL, jar);
+  const quotaRes = await httpsGetJson(QUOTA_URL, jar, fetchImpl);
   if (isUnauthenticated(quotaRes)) {
     return { status: 'needs_login', error: 'qoder.com.cn 会话已失效' };
   }
@@ -131,7 +133,7 @@ async function fetchWithCookies(cookies) {
 
   let plan = null;
   try {
-    const planRes = await httpsGetJson(PLAN_URL, jar);
+    const planRes = await httpsGetJson(PLAN_URL, jar, fetchImpl);
     if (planRes.statusCode === 200 && planRes.json) plan = planRes.json;
   } catch (_) {}
 
@@ -267,6 +269,7 @@ function mountQoderQuotaRoutes(app) {
 module.exports = {
   mountQoderQuotaRoutes,
   fetchQoderUsage,
+  fetchWithCookies,
   // exposed for tests
   cookieHeader,
   looksLikeQuota,

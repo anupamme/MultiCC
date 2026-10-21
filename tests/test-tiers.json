@@ -3810,6 +3810,16 @@
       ]
     },
     {
+      "path": "tests/test-outbound-network.js",
+      "tier": "core",
+      "lane": "deterministic"
+    },
+    {
+      "path": "tests/test-outbound-websocket-wiring.js",
+      "tier": "core",
+      "lane": "deterministic"
+    },
+    {
       "path": "tests/test-outbox.js",
       "tier": "core",
       "lane": "deterministic",
@@ -4219,6 +4229,11 @@
       "entrypoints": [
         "npm:test:provider-router"
       ]
+    },
+    {
+      "path": "tests/test-quota-outbound-requests.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-qwen-audio-runtime.js",
@@ -5417,6 +5432,11 @@
       "entrypoints": [
         "npm:test:core"
       ]
+    },
+    {
+      "path": "tests/test-tts-child-proxy.js",
+      "tier": "core",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-tts-performance.js",
