@@ -864,6 +864,50 @@ test('真实 Undici 已建立连接后等待响应头，不再受连接预算限
   } finally { response.end(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 
+// HTTP/2 路径不发布 undici:client:sendHeaders（只有 H1 发布）。cli-provider-router 的
+// 上游传输固定 allowH2:true，借道走 HTTPS 隧道时会协商 h2，旧实现里连接计时器因此永远
+// 等不到结束信号，在第 30 秒把仍在进行的长流式请求当成「连接超时」掐断。
+function h2Fixture() {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const http2 = require('node:http2');
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-h2-'));
+  const key = path.join(dir, 'key.pem'), cert = path.join(dir, 'cert.pem');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
+    '-days', '1', '-subj', '/CN=localhost'], { stdio: 'ignore' });
+  const server = http2.createSecureServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) },
+    (_req, res) => { setTimeout(() => res.end('ok'), 150); });
+  return {
+    server,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+for (const [label, init] of [['POST 带请求体', { method: 'POST', body: '{"model":"x"}' }], ['无请求体的 GET', {}]]) {
+  test(`真实 Undici HTTP/2 已发出请求后等待响应头（${label}），不再受连接预算限制`, async t => {
+    try { require('node:child_process').execFileSync('openssl', ['version'], { stdio: 'ignore' }); }
+    catch (_) { return t.skip('需要 openssl 生成临时证书'); }
+    const { Agent, fetch: request } = require('undici');
+    const { server, cleanup } = h2Fixture();
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const dispatcher = new Agent({ allowH2: true, connect: { rejectUnauthorized: false } });
+    const response = fakeResponse();
+    let timeouts = 0;
+    const context = { response, attempt: { connectTimeoutMs: 40 },
+      stall: { isArmed: () => true, connectTimeout() { timeouts++; } } };
+    try {
+      const url = `https://127.0.0.1:${server.address().port}/`;
+      const result = await withModelConnectWatch(context, () => request(url, { ...init, dispatcher }));
+      assert.equal(await result.text(), 'ok');
+      // 等待超过连接预算后，计时器也不应迟到触发。
+      await new Promise(resolve => setTimeout(resolve, 120));
+      assert.equal(timeouts, 0, 'H2 请求已发出，连接预算不能再触发');
+    } finally { response.end(); void dispatcher.destroy(); server.close(); cleanup(); }
+  });
+}
+
 test('同一 CLI 内部失败重试也计数，成功后才为下一模型请求恢复预算', () => {
   const clock = virtualClock();
   const runtime = createProviderAttemptRuntime({ now: clock.now });

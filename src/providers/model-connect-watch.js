@@ -34,7 +34,13 @@ function end(request) {
 }
 
 channel('undici:request:create').subscribe(({ request }) => begin(request));
+// 请求一旦离开连接阶段就必须撤销计时器。sendHeaders 只有 HTTP/1 路径会发布；
+// cli-provider-router 的上游传输固定 allowH2:true，借道走 HTTPS 隧道时协商 h2，
+// 那条路径只会发布 bodySent（整个请求发完）与 headers（响应头到达）。漏掉它们，
+// 计时器就会在第 30 秒把仍在进行的长流式请求误判成连接超时并掐断。
 channel('undici:client:sendHeaders').subscribe(({ request }) => end(request));
+channel('undici:request:bodySent').subscribe(({ request }) => end(request));
+channel('undici:request:headers').subscribe(({ request }) => end(request));
 channel('undici:request:error').subscribe(({ request }) => end(request));
 channel('http.client.request.start').subscribe(({ request }) => {
   if (!scope.getStore()?.stall?.isArmed()) return;
