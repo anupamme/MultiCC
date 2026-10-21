@@ -140,6 +140,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/air_service_timeout_test.dart",
+      "tier": "core",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/air_session_test.dart",
       "tier": "flow",
       "lane": "flutter"
@@ -5268,6 +5273,15 @@
       "owner": "npm:test:core",
       "entrypoints": [
         "docker/task-shell/run-tests.js",
+        "npm:test:task-shells"
+      ]
+    },
+    {
+      "path": "tests/test-task-shell-purge.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
         "npm:test:task-shells"
       ]
     },
