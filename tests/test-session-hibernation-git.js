@@ -162,3 +162,70 @@ test('启动缺失任务分支后，经生产唤醒组合恢复原会话工作�
   assert.equal(chat.cwd, original.worktreePath);
   assert.equal(invalidSessions.has(id), false);
 });
+
+test('生产任务清理删除已合并分支后，重启及唤醒保留会话与历史', async t => {
+  const { gitWorktreeRemove, gitMergeBack, gitWorktreeMergeState } = require('../src/git/service');
+  const { defaultRepoActor } = require('../src/repo-actor');
+  const { createTaskLifecycleHost } = require('../src/task-board/lifecycle-host');
+  const { createSessionPersistence } = require('../src/session/persistence');
+  const { mkRuntime } = require('./helpers/task-board-runtime');
+  const dirPath = repo();
+  t.after(() => fs.rmSync(dirPath, { recursive: true, force: true }));
+  const id = 'cleanup-bound', taskId = 'tsk-cleanup';
+  const added = await gitWorktreeAdd(dirPath, id, 'main');
+  fs.writeFileSync(path.join(added.worktreePath, 'tracked.txt'), 'delivered\n');
+  const history = [{ id: 'message-original', role: 'user', content: '保留历史' }];
+  const record = { id, dirId: 'dir-1', kind: 'chat', taskBoundTaskId: taskId,
+    cliSessionId: 'native-original', workspaceState: 'awake', worktreePath: added.worktreePath, branch: added.branch };
+  const records = new Map([[id, record]]);
+  const directories = new Map([['dir-1', { id: 'dir-1', path: dirPath, baseBranch: 'main' }]]);
+  let persisted;
+  const persistence = createSessionPersistence({ records, store: { save: value => { persisted = structuredClone(value); } } });
+  const invalidSessions = new Map();
+  const chatSessions = new Map([[id, { cwd: added.worktreePath }]]);
+  const runtime = createSessionHibernation({ records, directories, persistence, invalidSessions,
+    gitWorktreeAdd, gitWorktreeRemove, gitWorktreeValidate, gitWorktreeDetach, gitWorktreeMergeState,
+    defaultRepoActor, chatSessions,
+    chatStream: { status: () => ({}), closeAndWait: async () => ({ closed: true }) },
+    backgroundTaskRuntime: { hasProcessBackgroundTasks: () => false }, waitInjector: { hasWait: () => false },
+    sessionWorkHost: { isRunActive: () => false }, getWorkspaceAdmission: () => null,
+    workspaceBroadcast() {}, metrics: { inc() {} }, logger: { info() {}, warn() {} }, loadHistory: () => history });
+  let board;
+  const hooks = createTaskLifecycleHost({ records, getBoard: () => board.runtime.getBoard(),
+    getShell: () => ({ stateTarget: () => ({}) }), getState: () => ({}), getRunState: () => 'idle',
+    isSessionBusy: sid => !!defaultRepoActor.isLeased(sid), getHibernation: () => runtime });
+  board = mkRuntime({ records, directories, ...hooks, gitWorktreeAdd, gitWorktreeRemove, gitMergeBack });
+  t.after(async () => { await runtime.stop(); persistence.stop(); fs.rmSync(path.dirname(board.file), { recursive: true, force: true }); });
+  board.runtime.getBoard().tasks[taskId] = { id: taskId, dirId: 'dir-1', chatSessionId: id,
+    worktreePath: added.worktreePath, branch: added.branch };
+  let cleanup;
+  await defaultRepoActor.run(dirPath, 'publication-fixture', async () => {
+    assert.ok(defaultRepoActor.isLeased(id));
+    cleanup = require('../src/task-worktree').cleanupAfterPublication({
+      repoActor: defaultRepoActor, dirPath, taskId, cleanup: board.runtime.taskWorktree.cleanupWorktree });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(records.get(id).workspaceState, 'awake');
+    assert.equal(fs.existsSync(added.worktreePath), true);
+  }, { sessionId: id });
+  const result = await cleanup;
+  assert.equal(result.ok, true);
+  assert.equal(fs.existsSync(added.worktreePath), false);
+  assert.equal(git(dirPath, ['branch', '--list', added.branch]), '');
+  assert.equal(persisted[0].workspaceState, 'hibernated');
+  assert.equal(board.runtime.getBoard().tasks[taskId].worktreePath, null);
+  assert.equal(git(dirPath, ['show', 'main:tracked.txt']), 'delivered');
+  records.set(id, structuredClone(persisted[0]));
+  const startup = await initializeSessionWorktrees({ records, directories, invalidSessions,
+    realPathOf: value => fs.realpathSync(value), isHomeOrAbove: () => false,
+    ensureDirGitReady: async () => ({ ok: true }), addWorktree: gitWorktreeAdd,
+    tmuxHasSession: async () => false, tmuxKillSession: async () => {},
+    saveDirectories() {}, saveSessions() {}, log: { log() {} } });
+  assert.equal(startup.invalid, 0);
+  assert.equal((await runtime.ensureAwake(id)).ok, true);
+  assert.equal(records.get(id).id, id);
+  assert.equal(records.get(id).cliSessionId, 'native-original');
+  assert.equal(records.get(id).taskBoundTaskId, taskId);
+  assert.deepEqual(history, [{ id: 'message-original', role: 'user', content: '保留历史' }]);
+  assert.equal(fs.readFileSync(path.join(added.worktreePath, 'tracked.txt'), 'utf8'), 'delivered\n');
+  assert.equal((await gitWorktreeValidate(dirPath, added.worktreePath, added.branch)).ok, true);
+});

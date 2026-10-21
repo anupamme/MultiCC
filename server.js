@@ -2012,7 +2012,7 @@ function dispatchTargetBusy(sid, item = null) {
   return dispatchTargetBusyReasons(sid, item).length > 0;
 }
 const taskBoardRuntime = createTaskBoardRuntime({
-  ...require('./src/task-board/lifecycle-host').createTaskLifecycleHost({ records: persistedSessions, getBoard: () => taskBoardRuntime.getBoard(), getShell: () => taskShellHost, getHistory: id => loadChatHistory(id), getState: id => chatSessions.get(id), getRunState: id => sessionWorkHost.getRunState(id), isSessionBusy: sid => dispatchTargetBusy(sid), getHistoryService: () => chatHistoryService, destroySession: destroySessionCascade, directories, persist: () => savePersistedSessionsBestEffort('task-delete'), mutate: (source, fn) => sessionPersistence.mutate(source, fn), workspaceBroadcast, chatBroadcast }),
+  ...require('./src/task-board/lifecycle-host').createTaskLifecycleHost({ records: persistedSessions, getBoard: () => taskBoardRuntime.getBoard(), getShell: () => taskShellHost, getHistory: id => loadChatHistory(id), getState: id => chatSessions.get(id), getRunState: id => sessionWorkHost.getRunState(id), isSessionBusy: sid => dispatchTargetBusy(sid), getHistoryService: () => chatHistoryService, destroySession: destroySessionCascade, directories, persist: () => savePersistedSessionsBestEffort('task-delete'), mutate: (source, fn) => sessionPersistence.mutate(source, fn), workspaceBroadcast, chatBroadcast, getHibernation: () => sessionHibernationRuntime }),
   file: MULTICC_PATHS.taskBoardFile,
   getPinnedTaskIds: () => require('./src/workspace/pins').readStoredPinIds(MULTICC_PATHS.airPinsFile),
   listShellTasks: () => taskShellHost.listTasks(),
@@ -2552,7 +2552,7 @@ workspaceAdmission = require('./src/workspace/admission').createWorkspaceAdmissi
     // Best-effort: a running task or failed removal keeps the worktree for
     // the manual one-click action.
     if (process.env.MULTICC_TASK_WORKTREE_AUTOCLEANUP !== '0' && taskBoardRuntime?.taskWorktree?.cleanupWorktree) {
-      Promise.resolve(taskBoardRuntime.taskWorktree.cleanupWorktree(taskId))
+      require('./src/task-worktree').cleanupAfterPublication({ repoActor: defaultRepoActor, dirPath: directories.get(persistedSessions.get(sessionId)?.dirId)?.path, taskId, cleanup: taskBoardRuntime.taskWorktree.cleanupWorktree })
         .then(result => { if (result?.removed) logger.info('task_worktree_autocleanup', { taskId }); })
         .catch(error => logger.warn('task_worktree_autocleanup_failed', { taskId, code: error?.code || 'failed' }));
     }

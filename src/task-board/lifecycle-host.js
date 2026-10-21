@@ -6,7 +6,7 @@ const { taskDirId } = require('./core');
 
 function createTaskLifecycleHost({ records, getBoard, getShell, getHistory, getState,
   getRunState, isSessionBusy = () => false, getHistoryService, destroySession, directories, persist, mutate,
-  workspaceBroadcast, chatBroadcast }) {
+  workspaceBroadcast, chatBroadcast, getHibernation }) {
   function worktrees(ids) {
     return Object.values(getBoard().tasks).filter(t => ids.includes(t.id) && t.worktreePath && t.branch);
   }
@@ -148,6 +148,31 @@ function createTaskLifecycleHost({ records, getBoard, getShell, getHistory, getS
     }
     persist();
   }
+  async function withTaskWorktreeCleanup(task, remove, complete) {
+    // References and routing are not ownership: only the dedicated session
+    // whose checkout and branch both match may have its lifecycle changed.
+    const residents = [...records.values()].filter(record => record.worktreePath === task.worktreePath
+      || record.branch === task.branch);
+    const owners = residents.filter(record => record.taskBoundTaskId === task.id
+      && record.dirId === taskDirId(getBoard(), task) && !record.workspaceOwnerSessionId
+      && record.worktreePath === task.worktreePath && record.branch === task.branch
+      && record.branch === `multicc/${record.id}`);
+    if (residents.length && (owners.length !== 1 || residents.length !== 1)) {
+      return { ok: false, blocked: true, code: 'workspace_owner_mismatch' };
+    }
+    assertTaskIdle(task, [task.id]);
+    if (!owners.length) return complete(await remove({}));
+    const owner = owners[0];
+    const runtime = getHibernation?.();
+    if (!runtime?.reclaimMergedWorkspace) return { ok: false, code: 'workspace_cleanup_unavailable' };
+    const activeCheck = () => isSessionBusy(owner.id) || isOpenRunState(getRunState(owner.id));
+    // A publication callback can still be inside its own merge lease. Skip;
+    // waiting on that lease here would deadlock the operation that published it.
+    if (activeCheck() || runtime.isLocked(owner.id)) return { ok: false, blocked: true, code: 'run_active' };
+    return runtime.reclaimMergedWorkspace(owner.id, { ...task, dirId: owner.dirId },
+      () => remove({ sessionId: owner.id, activeCheck }), complete);
+  }
+
   function syncTaskTitle(task) {
     if (typeof mutate !== 'function') return;
     const updated = [];
@@ -164,7 +189,7 @@ function createTaskLifecycleHost({ records, getBoard, getShell, getHistory, getS
       chatBroadcast?.(record.id, event);
     }
   }
-  return { assertTaskIdle, prepareTaskDelete, purgeTaskData, syncTaskTitle };
+  return { assertTaskIdle, prepareTaskDelete, purgeTaskData, syncTaskTitle, withTaskWorktreeCleanup };
 }
 
 module.exports = { createTaskLifecycleHost };

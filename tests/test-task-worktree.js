@@ -206,3 +206,135 @@ test('server.js gates session worktree destruction on slot ownership (loaned tas
   const removeAt = cascade.indexOf('gitWorktreeRemove(');
   assert.ok(guardAt >= 0 && removeAt > guardAt, 'ownership guard evaluated before worktree removal');
 });
+
+const { createSessionHibernationRuntime } = require('../src/session/hibernation');
+const { createSessionPersistence } = require('../src/session/persistence');
+const { createTaskLifecycleHost } = require('../src/task-board/lifecycle-host');
+const { mkRuntime } = require('./helpers/task-board-runtime');
+
+function cleanupFixture(t, options = {}) {
+  const record = { id: 'bound', kind: 'chat', dirId: 'dir-1', taskBoundTaskId: 'tsk-1',
+    worktreePath: '/tmp/dir-1/.multicc-worktrees/bound', branch: 'multicc/bound',
+    workspaceState: 'awake', cliSessionId: 'native-original' };
+  const records = new Map([[record.id, record]]);
+  let exists = options.exists !== false, busy = false, failSession = false, failBoard = false;
+  let removes = 0, merges = 0;
+  const persistence = createSessionPersistence({ records, store: { save() {
+    if (failSession && records.get('bound').workspaceState === 'hibernated') throw new Error('disk full');
+  } } });
+  const hibernation = createSessionHibernationRuntime({ records,
+    directories: new Map([['dir-1', { id: 'dir-1', path: '/tmp/dir-1' }]]), persistence,
+    git: { inspect: async () => ({ pathExists: exists, branchExists: exists, valid: exists }),
+      detach: async () => {}, thaw: async () => { exists = true; return {}; } },
+    inspectBlockers: async () => busy ? ['workspace_lease'] : [],
+    closePersistent: options.closePersistent || (async () => {}),
+  });
+  let h;
+  const hooks = createTaskLifecycleHost({ records, getBoard: () => h.runtime.getBoard(),
+    getShell: () => ({ stateTarget: () => ({}) }), getState: () => ({}),
+    getRunState: () => 'idle', isSessionBusy: () => busy,
+    getHibernation: () => hibernation });
+  h = mkRuntime({ records, ...hooks,
+    atomicWriteJson: (file, value) => { if (failBoard) throw new Error('disk full'); fs.writeFileSync(file, JSON.stringify(value)); },
+    existsSync: () => exists,
+    gitWorktreeAdd: async () => ({}),
+    gitMergeBack: async (_dir, session, opts) => {
+      merges++; assert.equal(session.id, record.id); assert.equal(opts.activeCheck(), false);
+      return options.mergeResult || { ok: true, merged: true };
+    },
+    gitWorktreeRemove: async (_dir, _path, _branch, opts) => {
+      removes++; assert.equal(opts.sessionId, record.id); assert.equal(opts.activeCheck(), false);
+      if (options.partialRemove) exists = false;
+      if (options.removeResult) return options.removeResult;
+      exists = false; return { ok: true, removed: true };
+    },
+  });
+  h.runtime.getBoard().tasks['tsk-1'] = { id: 'tsk-1', dirId: 'dir-1', chatSessionId: record.id,
+    worktreePath: record.worktreePath, branch: record.branch };
+  t.after(async () => { await hibernation.stop(); persistence.stop(); fs.rmSync(path.dirname(h.file), { recursive: true, force: true }); });
+  return { ...h, records, hibernation, cleanup: () => h.runtime.taskWorktree.cleanupWorktree('tsk-1'),
+    setBusy: value => { busy = value; }, setFailSession: value => { failSession = value; },
+    setFailBoard: value => { failBoard = value; }, counts: () => ({ removes, merges }) };
+}
+
+test('任务清理同步会话休眠状态并保留会话身份；已消失路径同样修复', async t => {
+  for (const exists of [true, false]) {
+    const h = cleanupFixture(t, { exists });
+    assert.equal((await h.cleanup()).ok, true);
+    const record = h.records.get('bound');
+    assert.equal(record.workspaceState, 'hibernated');
+    assert.equal(record.cliSessionId, 'native-original');
+    assert.equal(record.taskBoundTaskId, 'tsk-1');
+    assert.equal(record.branch, 'multicc/bound');
+    assert.equal(h.runtime.getBoard().tasks['tsk-1'].worktreePath, null);
+    assert.deepEqual(h.counts(), { removes: exists ? 1 : 0, merges: exists ? 1 : 0 });
+    assert.equal((await h.hibernation.ensureAwake('bound')).ok, true);
+    assert.equal(record.workspaceState, 'awake');
+  }
+});
+
+test('任务清理持久化失败不清账，重试不会重复删除', async t => {
+  for (const failure of ['Session', 'Board']) {
+    const h = cleanupFixture(t);
+    h[`setFail${failure}`](true);
+    await assert.rejects(h.cleanup(), error => /PERSISTENCE_FAILED/.test(error.code));
+    assert.ok(h.runtime.getBoard().tasks['tsk-1'].worktreePath);
+    h[`setFail${failure}`](false);
+    assert.equal((await h.cleanup()).ok, true);
+    assert.equal(h.records.get('bound').workspaceState, 'hibernated');
+    assert.equal(h.runtime.getBoard().tasks['tsk-1'].worktreePath, null);
+    assert.deepEqual(h.counts(), { removes: 1, merges: 1 });
+  }
+});
+
+test('任务清理拒绝占用、错配所有者及共享工作区', async t => {
+  const h = cleanupFixture(t);
+  h.setBusy(true);
+  await assert.rejects(h.cleanup(), error => error.code === 'task_busy');
+  h.setBusy(false);
+  for (const patch of [{ taskBoundTaskId: 'another' }, { workspaceOwnerSessionId: 'other' }, { branch: 'multicc/other' }]) {
+    const original = { ...h.records.get('bound') };
+    Object.assign(h.records.get('bound'), patch);
+    assert.equal((await h.cleanup()).code, 'workspace_owner_mismatch');
+    h.records.set('bound', original);
+  }
+  assert.deepEqual(h.counts(), { removes: 0, merges: 0 });
+  assert.equal(h.records.get('bound').workspaceState, 'awake');
+});
+
+test('合并或删除失败保留任务字段并恢复会话原状态', async t => {
+  for (const options of [{ mergeResult: { ok: false } }, { removeResult: { ok: false } }]) {
+    const h = cleanupFixture(t, options);
+    assert.equal((await h.cleanup()).ok, false);
+    assert.ok(h.runtime.getBoard().tasks['tsk-1'].worktreePath);
+    assert.equal(h.records.get('bound').workspaceState, 'awake');
+  }
+});
+
+test('清理关闭常驻进程后再次检查占用，且阻止并发唤醒穿过清理锁', async t => {
+  let releaseClose;
+  const closing = new Promise(resolve => { releaseClose = resolve; });
+  const h = cleanupFixture(t, { closePersistent: () => closing });
+  const cleanup = h.cleanup();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.records.get('bound').workspaceState, 'hibernating');
+  assert.equal(h.hibernation.isLocked('bound'), true);
+  let awakened = false;
+  const wake = h.hibernation.ensureAwake('bound').then(() => { awakened = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(awakened, false);
+  h.setBusy(true); releaseClose();
+  assert.equal((await cleanup).code, 'workspace_lease');
+  await wake;
+  assert.deepEqual(h.counts(), { removes: 0, merges: 0 });
+  assert.ok(h.runtime.getBoard().tasks['tsk-1'].worktreePath);
+});
+
+
+test('删除目录后分支清理失败时保留账本并准确标记会话已休眠', async t => {
+  const h = cleanupFixture(t, { partialRemove: true, removeResult: { ok: false, reasons: ['unmerged'] } });
+  assert.equal((await h.cleanup()).ok, false);
+  assert.equal(h.records.get('bound').workspaceState, 'hibernated');
+  assert.ok(h.runtime.getBoard().tasks['tsk-1'].worktreePath);
+  assert.equal((await h.cleanup()).ok, true);
+});
