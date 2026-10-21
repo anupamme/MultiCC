@@ -9,6 +9,7 @@ All notable changes to MultiCC are documented in this file.
 - HTTP、WebSocket、额度查询及语音子进程统一使用出站代理策略，修复 HTTP/2 请求被误判为连接超时。
 - 持久化聊天错误信息，改善 CLI 切换、账号选择与额度显示。
 - 改善网页与 App 的移动导航、任务列表和批量清理；App 删除请求允许较长的服务端处理时间。
+- 事件触发器支持仅执行一次：成功完成后自动停用，编辑规则时保留已触发状态，显式重新启用后可再次执行。
 - App 版本更新为 2.36.2（构建 171）；App Store 发布安排在桌面与 OTA 验收之后。
 
 ## v2.8.2 — The v2.8.1 changes, recut with the three red CI checks fixed (2026-10-21)
