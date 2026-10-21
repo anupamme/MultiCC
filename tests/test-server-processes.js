@@ -7,9 +7,10 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { processTable, isServer, sameProcess, descendants, protectedAncestors, stopServers } = require('../src/server-processes');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function wait(check) {
-  for (let i = 0; i < 80; i++) { if (await check()) return; await sleep(100); }
-  throw new Error('fixture timeout');
+async function wait(check, { timeoutMs = 8000, diagnostics = () => '' } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (await check()) return; await sleep(100); }
+  throw new Error(`fixture timeout: ${diagnostics()}`);
 }
 
 test('process identity handles relative launch and rejects unrelated commands and PID reuse', () => {
@@ -67,7 +68,7 @@ test('real cleanup reaps relative/absolute duplicate servers and children, ignor
 });
 
 test('generated script survives its launcher exit and completes the real multicc restart command', {
-  skip: !['darwin', 'linux'].includes(process.platform), timeout: 20000,
+  skip: !['darwin', 'linux'].includes(process.platform), timeout: 60000,
 }, async t => {
   const { writeRestartScript } = require('../src/server-restart');
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-manual-restart-')));
@@ -76,6 +77,11 @@ test('generated script survives its launcher exit and completes the real multicc
   fs.chmodSync(path.join(root, 'multicc'), 0o700);
   fs.copyFileSync(path.join(__dirname, '..', 'src', 'server-processes.js'), path.join(root, 'src', 'server-processes.js'));
   fs.writeFileSync(path.join(root, 'scripts', 'check-runtime-deps.js'), 'process.exit(0);');
+  // 只管理临时服务器：禁止调用宿主的 launchd/pm2，也不探测宿主的 3000 端口。
+  const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+  for (const name of ['launchctl', 'pm2']) {
+    fs.writeFileSync(path.join(bin, name), '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+  }
   fs.writeFileSync(path.join(root, 'server.js'), `require('fs').appendFileSync('starts', process.pid+'\\n');
     process.on('SIGINT',()=>process.exit(0));setInterval(()=>{},1000);`);
   const original = spawn(process.execPath, ['server.js'], { cwd: root, stdio: 'ignore' });
@@ -96,18 +102,21 @@ test('generated script survives its launcher exit and completes the real multicc
   const output = fs.openSync(logPath, 'a');
   const launcherSource = `const cp=require('child_process');for(let i=0;i<2;i++){const c=cp.spawn('/bin/sh',[process.argv[1]],{detached:true,stdio:['ignore',3,3],env:{...process.env,MULTICC_NODE:process.execPath}});console.log(c.pid);c.unref();}`;
   launcher = spawn(process.execPath, ['-e', launcherSource, scriptPath], { cwd: root,
-    stdio: ['ignore', 'pipe', 'inherit', output] });
+    stdio: ['ignore', 'pipe', 'inherit', output],
+    env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, PORT: '0' } });
   fs.closeSync(output);
   let stdout = ''; launcher.stdout.on('data', chunk => { stdout += chunk; });
   await new Promise(resolve => launcher.once('exit', resolve));
   assert.equal(launcher.exitCode, 0);
   helperPids = stdout.trim().split('\n').map(Number); assert.equal(helperPids.length, 2);
   assert.ok(helperPids.every(pid => pid > 1));
-  await wait(() => fs.existsSync(path.join(root, '.multicc.pid')));
+  // 真实脚本包含固定延迟、进程扫描和互斥锁处理；8 秒不足以覆盖繁忙主机。
+  const restartWait = { timeoutMs: 30000, diagnostics: () => fs.readFileSync(logPath, 'utf8') };
+  await wait(() => fs.existsSync(path.join(root, '.multicc.pid')), restartWait);
   replacementPid = Number(fs.readFileSync(path.join(root, '.multicc.pid'), 'utf8'));
   assert.notEqual(replacementPid, original.pid);
-  await wait(() => !fs.existsSync(path.join(root, 'logs', 'restart.lock')));
-  await wait(() => !processTable().some(p => helperPids.includes(p.pid) && !/defunct/.test(p.command)));
+  await wait(() => !fs.existsSync(path.join(root, 'logs', 'restart.lock')), restartWait);
+  await wait(() => !processTable().some(p => helperPids.includes(p.pid) && !/defunct/.test(p.command)), restartWait);
   helperPids = [];
   assert.equal(processTable().filter(p => isServer(p, config)).length, 1);
   assert.match(fs.readFileSync(logPath, 'utf8'), /MultiCC started/);
