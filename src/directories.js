@@ -167,7 +167,10 @@ function macPermissionGuidance(targets = macPermissionTargets()) {
   lines.push(
     '打开「系统设置 → 隐私与安全性 → 完全磁盘访问权限」，点 + 后按 Cmd+Shift+G 粘贴上面的路径；'
     + '也可以在终端执行：open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"');
-  lines.push('授权后必须完全退出并重新启动 MultiCC（TCC 授权只在进程启动时生效）。'
+  lines.push('如果升级前已经授权：macOS 还会校验程序的签名身份和启动来源，路径或版本号相同不代表授权一定适用。'
+    + '若列表中的旧条目已开启却仍被拒绝，请移除对应的旧条目，再按上面的当前路径重新添加；'
+    + '终端启动、双击 App 和开机自启的授权对象可能不同。');
+  lines.push('授权后请完全退出并重新启动 MultiCC，让后台服务重新使用更新后的授权。'
     + '最省事的替代方案：把工作目录放在不受保护的位置，例如 ~/working。');
   return lines.join('\n');
 }
