@@ -134,6 +134,7 @@ const { mountKimiQuotaRoutes } = require('./src/routes/kimi-quota');
 const { mountClaudeUsageQuotaRoutes } = require('./src/routes/claude-usage-quota');
 const { mountAliyunQuotaRoutes } = require('./src/routes/aliyun-quota');
 const { mountProviderBalanceRoutes, mountProviderRelayQuotaRoutes } = require('./src/routes/provider-balance');
+const { createProviderRelayModelCatalogRuntime, mountProviderRelayModelCatalogRoutes } = require('./src/providers/relay-model-catalog');
 const { mountMemoryBrowserRoutes } = require('./src/routes/memory-browser');
 const { mountSessionMemoryRoutes } = require('./src/routes/session-memory');
 const { createAgentResourcesRoutes } = require('./src/routes/agent-resources');
@@ -395,6 +396,15 @@ const authRuntime = createAuthRuntime({ handleServiceRequest: serviceRoutes.hand
   allowLegacyTokenQuery: ALLOW_LEGACY_TOKEN_QUERY,
 });
 authRuntime.mountRoutes(app);
+// Borrowed providers keep their bootstrap model snapshot, then refresh through
+// this provider-scoped catalog surface.  Mount before protocol proxies so the
+// exact /models routes cannot be swallowed by their prefix handlers.
+const providerRelayModelCatalogRuntime = createProviderRelayModelCatalogRuntime({
+  providers,
+  codexModelsRuntime: require('./src/routes/codex-models').defaultRuntime,
+  logger,
+});
+mountProviderRelayModelCatalogRoutes(app, providerRelayModelCatalogRuntime);
 // 借道余量查询端点（出借方）：/claude-proxy/:id/remote/quota 与
 // /codex-proxy/:id/quota。鉴权复用 auth 中间件的借道凭据（mcr1.*）。
 // 必须在下方 mountProtocolProxies 之前注册——协议代理同样挂在这两个路径
@@ -2116,6 +2126,7 @@ const providerRoutes = createProviderRoutes({
   http,
   https,
   logger: console,
+  relayModelCatalogRuntime: providerRelayModelCatalogRuntime,
   providerLimitCache,
   limitRecorder,
   limitCacheStaleMs: Number(process.env.MULTICC_LIMIT_CACHE_STALE_MS) || undefined,

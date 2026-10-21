@@ -218,6 +218,7 @@ test('provider route extraction preserves the mounted surface and response DTOs'
     'POST /api/providers/:appType/:id/speedtest',
     'POST /api/providers/:appType/:id/reassign-sessions',
     'POST /api/providers/:appType/:id/relay-share',
+    'POST /api/providers/:appType/:id/relay-models/sync',
     'GET /api/provider-relay-shares',
     'DELETE /api/provider-relay-shares/:id',
     'GET /api/provider-defaults',
@@ -313,6 +314,40 @@ test('provider route extraction preserves the mounted surface and response DTOs'
   assert.deepEqual(harness.runtime.validProviderId('zcode', 'claude-one'), { ok: true, value: 'claude-one' });
   assert.deepEqual(harness.runtime.validProviderId('zcode', 'codex-one'), { ok: true, value: 'codex-one' });
   assert.deepEqual(harness.runtime.validProviderId('qoder', 'claude-one'), { ok: false });
+});
+
+test('provider catalog refreshes due relay models for Web/App and exposes a forced sync seam', async () => {
+  const calls = [];
+  const relayModelCatalogRuntime = {
+    async refreshDue(filter) {
+      calls.push({ method: 'refreshDue', filter });
+      return { checked: 1, updated: 1, failed: 0 };
+    },
+    async syncProvider(appType, id, options) {
+      calls.push({ method: 'syncProvider', appType, id, options });
+      return {
+        ok: true, changed: true, appType, providerId: id,
+        model: 'gpt-6-astra', models: ['gpt-6.1-sol', 'gpt-6-astra'],
+      };
+    },
+  };
+  const harness = createHarness({ relayModelCatalogRuntime });
+  const catalog = await invoke(harness.app, 'GET', '/api/providers', {
+    query: { appType: 'codex', cli: 'codex' },
+  });
+  assert.equal(catalog.statusCode, 200);
+  assert.deepEqual(calls[0], {
+    method: 'refreshDue', filter: { appType: 'codex', cli: 'codex' },
+  });
+
+  const synced = await invoke(harness.app, 'POST', '/api/providers/:appType/:id/relay-models/sync', {
+    params: { appType: 'codex', id: 'codex-one' },
+  });
+  assert.equal(synced.statusCode, 200);
+  assert.deepEqual(synced.body.models, ['gpt-6.1-sol', 'gpt-6-astra']);
+  assert.deepEqual(calls[1], {
+    method: 'syncProvider', appType: 'codex', id: 'codex-one', options: { force: true },
+  });
 });
 
 test('provider route public errors redact secrets and absolute paths without changing DTO fields', async () => {

@@ -187,9 +187,19 @@ function createProviderRoutes(rawDeps) {
 
     // MultiCC owns this store. CC-Switch is consulted only as a read-only
     // import source by the explicit import endpoint mounted below.
-    app.get('/api/providers', (req, res) => {
+    app.get('/api/providers', async (req, res) => {
       const appType = (req.query.appType || '').trim();
       const cli = (req.query.cli || '').trim();
+      // Model pickers on both Web and App already read this endpoint.  Make
+      // that existing read the automatic refresh trigger for imported relay
+      // catalogs; the runtime is TTL-bound/in-flight-deduped, and any remote
+      // failure keeps the durable last-known-good snapshot intact.
+      if (deps.relayModelCatalogRuntime
+          && typeof deps.relayModelCatalogRuntime.refreshDue === 'function') {
+        try {
+          await deps.relayModelCatalogRuntime.refreshDue({ appType, cli });
+        } catch (_) { /* a catalog refresh must never hide the Provider list */ }
+      }
       const ccSwitchStatus = deps.providers.getCcSwitchStatus();
       const providers = deps.providers.listProviders(
         appType === 'claude' || appType === 'codex' ? appType : undefined,
@@ -617,6 +627,22 @@ function createProviderRoutes(rawDeps) {
         }
         return res.status(400).json({ error: publicError(error, 'relay share create failed') });
       }
+    });
+
+    // Explicit refresh seam for diagnostics/administration.  Normal clients do
+    // not need to call it: GET /api/providers performs the same sync when due.
+    app.post('/api/providers/:appType/:id/relay-models/sync', async (req, res) => {
+      if (!deps.providers.getProvider(req.params.appType, req.params.id)) {
+        return res.status(404).json({ ok: false, reason: 'not_found' });
+      }
+      const runtime = deps.relayModelCatalogRuntime;
+      if (!runtime || typeof runtime.syncProvider !== 'function') {
+        return res.status(503).json({ ok: false, reason: 'relay_model_sync_unavailable' });
+      }
+      const result = await runtime.syncProvider(req.params.appType, req.params.id, { force: true });
+      if (!result.ok && result.reason === 'not_relay') return res.status(400).json(result);
+      if (!result.ok) return res.status(502).json(result);
+      return res.json(result);
     });
 
     app.get('/api/provider-relay-shares', (req, res) => {
