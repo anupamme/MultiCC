@@ -1,0 +1,39 @@
+name: Rust kernels
+on:
+  pull_request:
+    paths: ['native/**', 'src/native/**', 'src/token-global.js', 'src/task-board/**', 'src/routes/task-search.js', 'scripts/*rust*', 'tests/*rust*', 'tests/fixtures/rust-kernel-fixtures.js', '.github/workflows/rust-kernels.yml']
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: 检查 Rust 源码
+        run: |
+          cargo fmt --all --manifest-path native/Cargo.toml --check
+          cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
+      - name: 构建并强制执行原生差分测试
+        shell: bash
+        env:
+          MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
+          CARGO_TARGET_DIR: ${{ runner.temp }}/multicc-rust-target
+          MULTICC_RUST_BACKEND: rust
+          MULTICC_REQUIRE_RUST_TESTS: '1'
+        run: |
+          set -euo pipefail
+          node scripts/build-rust-kernels.js
+          export MULTICC_RUST_ADDON="$(node -p 'require("node:path").join(process.env.MULTICC_RUST_PREBUILT_DIR,`${process.platform}-${process.arch}`,"multicc_core.node")')"
+          node --test tests/test-rust-kernels.js tests/test-task-search.js tests/test-token-global.js

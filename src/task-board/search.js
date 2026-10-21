@@ -299,14 +299,14 @@ function searchTaskIndex(index, query, options = {}) {
       score: Math.round(score * 1000) / 1000,
       matchedTerms: matched,
       matchedFields: [...fields],
-      snippet: buildSnippet(doc, parsed),
     });
   }
 
   return results
     .sort((a, b) => b.score - a.score || Number(b.updatedAt) - Number(a.updatedAt)
       || String(a.taskId).localeCompare(String(b.taskId)))
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(hit => ({ ...hit, snippet: buildSnippet(index.docs.get(hit.taskId), parsed) }));
 }
 
 // Convenience for callers that hold a board but no long-lived index (REST route,

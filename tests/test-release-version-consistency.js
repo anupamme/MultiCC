@@ -293,13 +293,16 @@ test('core runner covers every selected path and expands declared variants', () 
   // v2.8.3 复核新增 7 项：错误持久化、任务清理、HTTP/WS/额度/语音代理
   // 6 项 Node 机制测试使用 stub、临时库或进程内假服务器；Air 删除超时为
   // MockClient + fakeAsync 的非 Widget 测试。均无真实凭据或外部服务依赖。
-  assert.equal(core.length, 344, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 344);
+  // Rust 接入复核：本次增加原生/Node 差分测试（临时合成文件、隔离子进程，
+  // 不访问真账号）；同时纳入主线 912d254b 已登记的 relay-model-catalog，
+  // 其请求全部使用注入的 fetch stub。344 + 2 = 346，均为 deterministic。
+  assert.equal(core.length, 346, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 346);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 291);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 293);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 27);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 26,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -309,8 +312,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 321,
-    '318 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 323,
+    '320 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

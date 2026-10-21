@@ -4472,6 +4472,12 @@
       ]
     },
     {
+      "path": "tests/test-rust-kernels.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:rust"
+    },
+    {
       "path": "tests/test-safe-markdown.js",
       "tier": "flow",
       "lane": "deterministic",

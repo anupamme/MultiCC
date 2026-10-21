@@ -41,7 +41,7 @@
     "test:deterministic": "npm run test:core && npm run test:task-board-auto && npm run test:cpu-hotpaths && npm run test:security && npm run test:state && npm run test:git && npm run test:worktree-reclamation && npm run test:bridges && npm run test:architecture && npm run test:governance && npm run test:provider-router && npm run test:desktop && npm run test:standalone",
     "test:contracts": "node --test tests/test-api-contracts.js tests/test-turn-state-rules.js tests/test-task-attribution-backtest.js tests/test-classify-api-error-state.js tests/test-aux-run-log.js tests/test-aux-run-routes.js tests/test-static-doc-page.js tests/test-newcomer-onboarding.js tests/test-quota-bar-parity.js tests/test-quota-gating-parity.js",
     "backtest:task-attribution": "node scripts/backtest-task-attribution.js",
-    "test:native": "node tests/test-sqlite-runtime-check.js && node tests/test-runtime-deps.js && node --test tests/test-sqlite-driver.js && node tests/test-release-upgrade.js && node --test tests/test-terminal-deps-install.js && node scripts/check-sqlite-runtime.js && node scripts/check-runtime-deps.js",
+    "test:native": "node tests/test-sqlite-runtime-check.js && node tests/test-runtime-deps.js && node --test tests/test-sqlite-driver.js && node tests/test-release-upgrade.js && node --test tests/test-terminal-deps-install.js && node scripts/check-sqlite-runtime.js && node scripts/check-runtime-deps.js && npm run test:rust",
     "test:integration:isolated": "node tests/test-cli-completion-isolated.js && node tests/test-zcode-session-recovery-isolated.js && npm run test:task-shells:isolated && node tests/test-commander-migration-isolated.js && node tests/test-task-bound-routing-isolated.js && npm run test:task-first:isolated && node tests/test-directory.js && node tests/test-auth-locality-isolated.js && node --test tests/test-fleet-sharing-two-ip.js tests/test-provider-sharing-two-ip.js && node tests/test-liveness-api.js && node tests/test-cli-switch-api.js && node tests/test-cli-switch-failclosed.js && node tests/test-session-bounded-api.js && node tests/test-pending-config-isolated.js && node tests/test-memory-api.js && node tests/test-wait-api-durable.js && node tests/test-durable-operations-api.js && node tests/test-dispatch-loop-isolated.js && node tests/test-dispatch-loop-isolated.js --new-task && node tests/test-session-persistence-api.js && node tests/test-session-delete-connected-api.js && node tests/test-session-bundle-api.js && node --test tests/test-memo-http-api.js && node tests/test-starting-stall-recovery-isolated.js && node tests/test-codex-rollout-guard-isolated.js && node tests/test-cron-fanout-upgrade-isolated.js",
     "test:classify-live": "node tests/test-classify-api-errors.js",
     "test:live": "node tests/test.js --live-ai",
@@ -70,7 +70,10 @@
     "command-code:build": "node scripts/build-task-shell-image.js --command-code",
     "command-code:up": "docker compose -f docker/command-code/compose.yaml up -d --wait",
     "command-code:down": "docker compose -f docker/command-code/compose.yaml down",
-    "test:network": "node --test tests/test-global-proxy.js tests/test-official-fetch.js tests/test-outbound-network.js tests/test-outbound-websocket-wiring.js tests/test-quota-outbound-requests.js tests/test-tts-child-proxy.js"
+    "test:network": "node --test tests/test-global-proxy.js tests/test-official-fetch.js tests/test-outbound-network.js tests/test-outbound-websocket-wiring.js tests/test-quota-outbound-requests.js tests/test-tts-child-proxy.js",
+    "build:rust": "node scripts/build-rust-kernels.js",
+    "test:rust": "node --test tests/test-rust-kernels.js",
+    "benchmark:rust": "node scripts/benchmark-rust-kernels.js"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

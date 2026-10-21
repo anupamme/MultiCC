@@ -155,7 +155,7 @@ function fakeRes() {
   };
 }
 
-test('the task-board search route registers GET and answers with ranked hits', () => {
+test('the task-board search route registers GET and answers with ranked hits', async () => {
   const mounted = [];
   const routes = createTaskSearchRoutes({
     getBoard: () => board([
@@ -167,7 +167,7 @@ test('the task-board search route registers GET and answers with ranked hits', (
   assert.deepEqual(mounted.map(([path]) => path), ['/api/task-board/search', '/api/search/messages']);
 
   const res = fakeRes();
-  mounted[0][1]({ query: { q: '全文检索', limit: '1' } }, res);
+  await mounted[0][1]({ query: { q: '全文检索', limit: '1' } }, res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.ok, true);
   assert.equal(res.body.query, '全文检索');
@@ -200,7 +200,7 @@ test('the search route fails closed on an empty, oversized or unavailable board'
   assert.deepEqual(missing.body, { error: 'task_board_unavailable' });
 });
 
-test('the route clamps limit and parses the csv filters it forwards', () => {
+test('the route clamps limit and parses the csv filters it forwards', async () => {
   const routes = createTaskSearchRoutes({
     getBoard: () => board([
       task('tsk-a', { title: '全文检索', dirId: 'dir-web' }),
@@ -208,15 +208,15 @@ test('the route clamps limit and parses the csv filters it forwards', () => {
     ]),
   });
   const capped = fakeRes();
-  routes.handleSearch({ query: { q: '全文检索', limit: '999' } }, capped);
+  await routes.handleSearch({ query: { q: '全文检索', limit: '999' } }, capped);
   assert.equal(capped.statusCode, 200);
   assert.equal(capped.body.count, 2, 'an oversized limit is clamped, not rejected');
 
   const byStatus = fakeRes();
-  routes.handleSearch({ query: { q: '全文检索', statuses: 'archived' } }, byStatus);
+  await routes.handleSearch({ query: { q: '全文检索', statuses: 'archived' } }, byStatus);
   assert.deepEqual(byStatus.body.results.map(hit => hit.taskId), ['tsk-b']);
   const byDir = fakeRes();
-  routes.handleSearch({ query: { q: '全文检索', dirIds: 'dir-web, dir-api' } }, byDir);
+  await routes.handleSearch({ query: { q: '全文检索', dirIds: 'dir-web, dir-api' } }, byDir);
   assert.deepEqual(byDir.body.results.map(hit => hit.taskId).sort(), ['tsk-a', 'tsk-b'],
     'a comma list with a space is still two ids');
 
