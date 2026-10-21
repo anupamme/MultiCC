@@ -56,7 +56,7 @@ test('fake Codex emits resumable native identities without a real model', t => {
   assert.equal(guard.enforce({ cli: 'codex', cliSessionId: 'lab-isolated-test' }).action, 'ok');
 });
 
-test('构建与门禁并行，发布等待全部成功，任一门禁失败独立取消本次运行', () => {
+test('构建与门禁并行，失败只阻断发布并保留构建等待诊断', () => {
   for (const [file, jobs] of [
     ['release.yml', ['android-apk']],
     ['desktop-release.yml', ['build', 'standalone']],
@@ -76,14 +76,8 @@ test('构建与门禁并行，发布等待全部成功，任一门禁失败独�
     const needs = publish.match(/^    needs: \[([^\]]+)\]/m)?.[1].split(',').map(s => s.trim());
     assert.deepEqual(needs, ['core-tests', 'clean-install', ...jobs]);
     assert.doesNotMatch(publish, /if:.*(?:always\(|failure\(|cancelled\()/, '发布不能绕过成功依赖');
-    for (const [suffix, gate] of [['core', 'core-tests'], ['install', 'clean-install']]) {
-      const cancel = blocks[`cancel-on-${suffix}-failure`];
-      assert.ok(cancel);
-      assert.ok(cancel.includes(`needs: [${gate}]`), '失败取消不等待另一项门禁完成');
-      assert.ok(cancel.includes(`always() && needs.${gate}.result != 'success'`));
-      assert.match(cancel, /actions: write/);
-      assert.match(cancel, /uses: \.\/\.github\/workflows\/cancel-release\.yml/);
-    }
+    assert.doesNotMatch(source, /cancel-on-.*failure|cancel-release\.yml|cancelWorkflowRun|gh run cancel/, '门禁失败不得自动取消构建');
+    assert.match(source, /cancel-in-progress: false/, '后续运行不得自动取消待诊断构建');
   }
   const androidWorkflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/release.yml'), 'utf8');
   assert.doesNotMatch(androidWorkflow, /npm run test:release(?:\s|$)/,
@@ -112,19 +106,4 @@ test('构建与门禁并行，发布等待全部成功，任一门禁失败独�
     'clean-install must not hide a second application regression suite');
   assert.doesNotMatch(installerGate, /await run\('npm', \['ci'/,
     'clean-install must stay a pristine installation test');
-});
-
-
-test('取消动作仅针对调用方当前工作流运行', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../.github/workflows/cancel-release.yml'), 'utf8');
-  const body = source.split('          script: |\n')[1];
-  assert.ok(body);
-  const calls = [];
-  const github = { rest: { actions: { cancelWorkflowRun: async input => { calls.push(input); } } } };
-  const context = { repo: { owner: 'fixture-owner', repo: 'fixture-repo' }, runId: 123 };
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const run = new AsyncFunction('github', 'context', body);
-  await run(github, context);
-  assert.deepEqual(calls, [{ owner: 'fixture-owner', repo: 'fixture-repo', run_id: 123 }]);
-  await assert.rejects(run({ rest: { actions: { cancelWorkflowRun: async () => { throw new Error('取消 API 不可用'); } } } }, context), /取消 API 不可用/);
 });

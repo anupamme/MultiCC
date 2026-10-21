@@ -36,20 +36,7 @@ jobs:
     permissions:
       contents: read
 
-  cancel-on-core-failure:
-    needs: [core-tests]
-    if: ${{ always() && needs.core-tests.result != 'success' }}
-    permissions:
-      actions: write
-    uses: ./.github/workflows/cancel-release.yml
-
-  cancel-on-install-failure:
-    needs: [clean-install]
-    if: ${{ always() && needs.clean-install.result != 'success' }}
-    permissions:
-      actions: write
-    uses: ./.github/workflows/cancel-release.yml
-
+  # 门禁失败只阻断发布，保留并行构建；定位后再决定是否取消。
   build:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
