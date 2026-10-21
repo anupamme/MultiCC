@@ -168,6 +168,7 @@
       + (a.global ? '' : '<button class="btn" style="padding:2px 10px;font-size:11px;color:var(--danger)" data-act="delete" data-vendor="' + vendor + '" data-id="' + a.id + '">' + esc(tr('airOfficialAcctDelete')) + '</button>')
       + '</span></div>'
       + (a.global ? '' : '<div style="font-size:12px">' + quotaHtml(vendor, a.id) + '</div>')
+      + '<div data-subscription-vendor="' + vendor + '" data-subscription-account="' + esc(a.id) + '"></div>'
       + '</div>';
   }
 
@@ -197,6 +198,13 @@
     el.innerHTML = vendorSection('codex', tr('airOfficialAcctCodexSection'), tr('airOfficialAcctCodexSectionHint'), state.codex, codexRow)
       + '<div style="border-top:1px solid var(--border);margin:10px 0"></div>'
       + vendorSection('claude', tr('airOfficialAcctClaudeSection'), tr('airOfficialAcctClaudeSectionHint'), state.claude, claudeRow);
+    el.querySelectorAll('[data-subscription-vendor]').forEach(host => {
+      const vendor = host.dataset.subscriptionVendor;
+      const accountId = host.dataset.subscriptionAccount;
+      const account = state[vendor].find(a => a.id === accountId);
+      window.MultiCCProviderSubscription?.mount(host, { vendor, accountId,
+        subscription: account?.subscription, api: path => api().json(path) });
+    });
   }
 
   async function loadOfficialAccounts() {

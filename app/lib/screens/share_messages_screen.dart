@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../services/session_service.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
+import '../widgets/external_access_hint.dart';
 
 /// 消息快照分享。镜像网页端「导出选定消息为静态分享」：拉取会话的权威历史，
 /// 让用户按下标多选消息，可选设置密码，生成一个只读分享链接 `/share/[token]`。
@@ -177,6 +178,7 @@ class _ShareMessagesScreenState extends State<ShareMessagesScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    ExternalAccessHint(settings: widget.settings),
                     TextField(
                       controller: _password,
                       style: const TextStyle(color: AppColors.text, fontSize: 14),

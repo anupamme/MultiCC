@@ -425,8 +425,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     //   新的桌面安装包。中英各 4 行 = +8 行，重跑生成器实测 9430/598640。
     // +1 双语键（airLoadMore）：控制台任务清单不再截条数，滚到底接页的「加载更多」。
     //   中英各 1 行 = +2 行，重跑生成器实测 9432/598707。
-    maxLines: 9442,
-    maxBytes: 599565,
+    // 外网访问提示与订阅日期展示：新增 18 个双语键。
+    maxLines: 9478,
+    maxBytes: 602616,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

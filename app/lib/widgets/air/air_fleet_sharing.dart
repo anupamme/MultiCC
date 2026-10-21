@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../services/air_service.dart';
 import '../../services/settings_service.dart';
 import '../../theme.dart';
+import '../external_access_hint.dart';
 
 /// 工作区分享的两个对话框 —— Web 侧是 `public/manage-fleet-sharing.js` 里那对
 /// `#fleet-share-modal` / `#fleet-import-modal`。
@@ -466,6 +467,7 @@ class _FleetShareDialogState extends State<_FleetShareDialog> {
         body: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            ExternalAccessHint(settings: widget.settings),
             _field(
               _passwordCtrl,
               '访问密码（至少 $_minPasswordLength 位）',

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { outboundFetch } = require('../network/outbound');
+const { codexAuthSubscription } = require('./subscription');
 
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
@@ -34,7 +35,7 @@ function readCodexAuth(authFile = path.join(os.homedir(), '.codex', 'auth.json')
     const auth = JSON.parse(fs.readFileSync(authFile || path.join(os.homedir(), '.codex', 'auth.json'), 'utf8'));
     const tokens = auth && auth.tokens;
     if (!tokens || !tokens.access_token) return null;
-    return { accessToken: tokens.access_token, accountId: tokens.account_id || '' };
+    return { accessToken: tokens.access_token, accountId: tokens.account_id || '', subscription: codexAuthSubscription(auth) };
   } catch (_) {
     return null;
   }

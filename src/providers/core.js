@@ -661,6 +661,7 @@ function summarize(p, opts = {}) {
     // "select to log in" and start the account login flow when it is picked.
     needsLogin: p.needsLogin === true,
     accountEmail: p.accountEmail || null,
+    subscription: p.subscription || null,
     isDefaultOfficial: p.isDefaultOfficial === true,
     quotaKind: p.quotaKind || null,
     // Advanced option: non-empty means this provider may only be used while

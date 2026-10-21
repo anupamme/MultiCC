@@ -33,6 +33,7 @@ import '../widgets/background_tasks_dock.dart';
 import '../widgets/floating_dock.dart';
 import '../widgets/chat_composer_fold.dart';
 import '../widgets/chat_handoff.dart';
+import '../widgets/external_access_hint.dart';
 import '../widgets/chat_header.dart';
 import '../widgets/chat_loading_view.dart';
 import '../widgets/chat_notice_scroller.dart';
@@ -1477,6 +1478,7 @@ Future<void> _shareFromSession(
                       fontSize: 12,
                     ),
                   ),
+                  ExternalAccessHint(settings: settings),
                   const SizedBox(height: 4),
                   Text(
                     t('shareOperateWarn'),

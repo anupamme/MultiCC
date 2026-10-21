@@ -249,6 +249,7 @@ void main() {
 
       expect(find.textContaining('剩余 6/10 次'), findsOneWidget);
 
+      await tester.ensureVisible(find.byKey(const ValueKey('fleet-share-revoke-tk1')));
       await tester.tap(find.byKey(const ValueKey('fleet-share-revoke-tk1')));
       await tester.pumpAndSettle();
       expect(find.text('撤销这个工作区分享？已发出的链接会立即失效。'), findsOneWidget);

@@ -44,6 +44,7 @@ function assertDeps(deps) {
 function mountClaudeAccountRoutes(app, deps) {
   if (!app || typeof app.get !== 'function') throw new TypeError('[claude-accounts] Express-compatible app is required');
   assertDeps(deps);
+  require('./account-subscription').mountAccountSubscriptionRoute(app, 'claude', deps);
   const { accounts, providers, credentials } = deps;
   const fetchImpl = deps.fetch || outboundFetch;
   const logger = deps.logger || { info() {}, warn() {}, error() {} };

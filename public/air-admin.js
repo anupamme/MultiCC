@@ -1226,7 +1226,9 @@
     collapseAll.setAttribute('aria-controls', 'air-doc-list');
     collapseAll.hidden = true;
     filters.append(docsScopeSwitch(), search, matches, collapseAll);
-    wrap.append(top, filters, list);
+    const networkHint = make('p', '', 'admin-panel-note');
+    root.multiccMountExternalAccessHint?.(networkHint, root.location.origin);
+    wrap.append(top, networkHint, filters, list);
     el('admin-content').replaceChildren(wrap);
     void loadDocs();
   }

@@ -240,6 +240,16 @@ class ManageService {
 
   // ── Providers (cc-switch import + multicc-owned store) ─────────────────────
 
+  Future<Map<String, dynamic>> fetchAccountSubscription(String vendor, {String? accountId}) async {
+    if (vendor != 'claude' && vendor != 'codex') throw ArgumentError.value(vendor);
+    final query = accountId == null || accountId.isEmpty ? '' : '?account=${Uri.encodeQueryComponent(accountId)}';
+    final uri = Uri.parse(_url('/api/$vendor/subscription$query'));
+    final res = await (httpClient == null ? http.get(uri, headers: _headers)
+      : httpClient!.get(uri, headers: _headers)).timeout(const Duration(seconds: 35));
+    if (res.statusCode >= 400) _throw(res);
+    return (jsonDecode(utf8.decode(res.bodyBytes)) as Map).cast<String, dynamic>();
+  }
+
   /// Returns `{available, ccSwitchAvailable, providers: [...], defaults: {...}}`.
   Future<Map<String, dynamic>> fetchProviders([String? appType]) async {
     final q = (appType == 'claude' || appType == 'codex')

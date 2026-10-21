@@ -154,7 +154,7 @@ test('renderCodexQuota never trusts a missing bar', () => {
 
 test('global account controls switch via account API and retain the singleton provider', async () => {
   let click;
-  const body = { innerHTML: '' }, status = {};
+  const body = { innerHTML: '', querySelectorAll: () => [] }, status = {};
   const calls = [];
   let active = 'global';
   const id = 'aaaaaaaaaaaaaaaa';

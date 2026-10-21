@@ -135,6 +135,7 @@ function shareRelayProvider(appType, id) {
       <label style="display:block;margin-bottom:10px"><div style="font-size:12px;color:var(--faint);margin-bottom:4px">其他设备访问本机时使用的地址</div>
         <select data-k="basesel" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;padding:8px 10px;outline:none;box-sizing:border-box"><option value="">读取可用地址…</option></select></label>
       <input data-k="basecustom" type="text" placeholder="https://…（自定义地址）" autocomplete="off" style="display:none;width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:13px;padding:8px 10px;outline:none;box-sizing:border-box;margin-bottom:10px">
+      <p data-k="network-hint" style="font-size:12px;line-height:1.6;color:var(--faint)"></p>
       <textarea data-k="code" rows="4" readonly placeholder="生成后分享码只在这里显示一次" style="width:100%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:12px;padding:8px 10px;outline:none;box-sizing:border-box;font-family:ui-monospace,monospace"></textarea>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap">
         <button class="btn" data-act="records" style="font-size:13px">共享记录</button><button class="btn" data-act="close" style="font-size:13px">关闭</button><button class="btn" data-act="copy" style="font-size:13px" disabled>复制分享码</button><button class="btn btn-green" data-act="gen" style="font-size:13px">生成分享码</button>
@@ -147,6 +148,11 @@ function shareRelayProvider(appType, id) {
   const codeEl = overlay.querySelector('[data-k="code"]');
   const st = overlay.querySelector('[data-k="status"]');
   let shareCredential = _newRelayCredential();
+  const hint = overlay.querySelector('[data-k="network-hint"]');
+  const updateHint = () => multiccMountExternalAccessHint(hint, sel.value === '__custom' ? customEl.value : sel.value);
+  updateHint();
+  const generate = overlay.querySelector('[data-act="gen"]');
+  generate.disabled = true;
 
   _relayBaseOptions().then((opts) => {
     sel.innerHTML = '';
@@ -154,8 +160,12 @@ function shareRelayProvider(appType, id) {
       const op = document.createElement('option'); op.value = o.url; op.textContent = `${o.label} · ${o.url}`; sel.appendChild(op);
     }
     const custom = document.createElement('option'); custom.value = '__custom'; custom.textContent = '自定义地址…'; sel.appendChild(custom);
+    sel.value = multiccPreferredBaseUrl(opts)?.url || '__custom';
+    sel.onchange();
+    generate.disabled = false;
   });
-  sel.onchange = () => { customEl.style.display = sel.value === '__custom' ? 'block' : 'none'; };
+  sel.onchange = () => { customEl.style.display = sel.value === '__custom' ? 'block' : 'none'; updateHint(); };
+  customEl.oninput = updateHint;
   overlay.querySelector('[data-act="records"]').onclick = () => manageRelayShares(appType, id);
   overlay.querySelector('[data-act="copy"]').onclick = async () => {
     try { await navigator.clipboard.writeText(codeEl.value); }
