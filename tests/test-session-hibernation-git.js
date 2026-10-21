@@ -11,6 +11,8 @@ const {
   gitWorktreeDetach,
   gitWorktreeValidate,
 } = require('../src/git/service');
+const { initializeSessionWorktrees } = require('../src/session/hibernation');
+const { createSessionHibernation } = require('../src/session/hibernation-composition');
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -108,4 +110,55 @@ test('path and branch validation rejects a checkout registered to another branch
   assert.equal(result.code, 'WORKTREE_BRANCH_MISMATCH');
   assert.equal(result.branchExists, true,
     'a checkout mismatch must not be misreported as an absent session branch');
+});
+
+test('启动缺失任务分支后，经生产唤醒组合恢复原会话工作区', async t => {
+  const dir = repo();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const id = 'startup-missing-bound';
+  const original = await gitWorktreeAdd(dir, id, 'main');
+  git(dir, ['worktree', 'remove', original.worktreePath]);
+  git(dir, ['branch', '-d', original.branch]);
+  const record = {
+    id, dirId: 'dir', kind: 'chat', taskBoundTaskId: 'task-original',
+    cliSessionId: 'native-original', workspaceState: 'awake',
+    worktreePath: original.worktreePath, branch: original.branch,
+  };
+  const records = new Map([[id, record]]);
+  const directories = new Map([['dir', { id: 'dir', path: dir, baseBranch: 'main' }]]);
+  const invalidSessions = new Map();
+  const chat = { cwd: original.worktreePath };
+  const result = await initializeSessionWorktrees({
+    records, directories, invalidSessions,
+    realPathOf: value => fs.realpathSync(value), isHomeOrAbove: () => false,
+    ensureDirGitReady: async () => ({ ok: true }), addWorktree: gitWorktreeAdd,
+    tmuxHasSession: async () => false, tmuxKillSession: async () => {},
+    saveDirectories: () => {}, saveSessions: () => {}, log: { log() {} },
+  });
+  assert.deepEqual(result, { built: 0, invalid: 0 });
+  assert.equal(record.workspaceState, 'hibernated');
+  assert.equal(fs.existsSync(original.worktreePath), false);
+  assert.equal(git(dir, ['branch', '--list', original.branch]), '');
+
+  const runtime = createSessionHibernation({
+    records, directories, invalidSessions,
+    persistence: { mutate: (_source, update) => update(records) },
+    gitWorktreeAdd, gitWorktreeDetach, gitWorktreeValidate,
+    chatSessions: new Map([[id, chat]]),
+    workspaceBroadcast: () => {}, metrics: { inc() {} }, logger: { info() {}, warn() {} },
+  });
+  t.after(() => runtime.stop());
+  const awake = await runtime.ensureAwake(id);
+  assert.deepEqual(awake, { ok: true, thawed: true });
+  assert.equal((await gitWorktreeValidate(dir, original.worktreePath, original.branch)).ok, true);
+  assert.equal(git(original.worktreePath, ['rev-parse', 'HEAD']), git(dir, ['rev-parse', 'main']));
+  assert.equal(record.id, id);
+  assert.equal(record.taskBoundTaskId, 'task-original');
+  assert.equal(record.cliSessionId, 'native-original');
+  assert.equal(record.worktreePath, original.worktreePath);
+  assert.equal(record.branch, original.branch);
+  assert.equal(record.workspaceState, 'awake');
+  assert.equal(record.workspaceStateErrorCode, null);
+  assert.equal(chat.cwd, original.worktreePath);
+  assert.equal(invalidSessions.has(id), false);
 });

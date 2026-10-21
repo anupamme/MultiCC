@@ -386,6 +386,70 @@ test('startup worktree initialization skips sleeping records and requires retain
   assert.equal(records.get('sleeping').worktreePath.includes('sleeping'), true);
 });
 
+test('启动仅将任务聊天缺失分支交给正常唤醒，保留其他失效保护', async t => {
+  const cases = [
+    { name: '任务聊天缺失分支', code: 'WORKTREE_BRANCH_MISSING', patch: {}, recoverable: true },
+    { name: '分支不匹配', code: 'WORKTREE_BRANCH_MISMATCH', patch: {}, recoverable: false },
+    { name: '其他 Git 错误', code: 'EACCES', patch: {}, recoverable: false },
+    { name: '普通聊天缺失分支', code: 'WORKTREE_BRANCH_MISSING', patch: { taskBoundTaskId: null }, recoverable: false },
+    { name: '任务终端缺失分支', code: 'WORKTREE_BRANCH_MISSING', patch: { kind: 'terminal' }, recoverable: false },
+  ];
+  for (const example of cases) await t.test(example.name, async () => {
+    const record = bound('startup-recovery', iso(DAY), {
+      _pathExists: false, _branchExists: false, cliSessionId: 'retained-native-thread',
+      ...example.patch,
+    });
+    const before = structuredClone(record);
+    const records = new Map([[record.id, record]]);
+    const invalidSessions = new Map();
+    const saved = [];
+    const calls = [];
+    const h = harness({ records });
+    const result = await initializeSessionWorktrees({
+      records, directories: h.directories, invalidSessions,
+      realPathOf: value => value, isHomeOrAbove: () => false,
+      ensureDirGitReady: async () => ({ ok: true }),
+      addWorktree: async (_path, id, _base, options) => {
+        calls.push({ id, options });
+        throw Object.assign(new Error('startup git failure'), { code: example.code });
+      },
+      existsSync: () => false,
+      tmuxHasSession: async () => false, tmuxKillSession: async () => {},
+      saveDirectories: () => {},
+      saveSessions: source => saved.push({ source, record: structuredClone(record) }),
+      log: { log() {} },
+    });
+    assert.equal(result.built, 0);
+    assert.equal(calls.length, 1, '启动不从主分支擅自重建');
+    assert.equal(calls[0].options.requireExistingBranch, record.taskBoundTaskId ? true : undefined);
+    assert.equal(saved.length, 1, '只有延迟恢复时也必须持久化');
+    assert.equal(saved[0].source, 'startup.worktree-migration');
+    assert.equal(records.get(record.id), record);
+    if (!example.recoverable) {
+      assert.equal(result.invalid, 1);
+      assert.match(invalidSessions.get(record.id), /^worktree create failed:/);
+      assert.deepEqual(record, before);
+      return;
+    }
+    assert.equal(result.invalid, 0);
+    assert.equal(invalidSessions.has(record.id), false, '聊天连接不能被启动失效标记挡住');
+    assert.deepEqual(saved[0].record, {
+      ...before, workspaceState: 'hibernated', workspaceStateErrorCode: 'hibernate_branch_missing',
+    }, '保留会话、任务、原生对话及工作区标识');
+    let admissions = 0;
+    const awake = await h.runtime.admit(record.id, async () => {
+      admissions += 1;
+      return { ok: true };
+    });
+    assert.equal(awake.ok, true);
+    assert.equal(admissions, 1);
+    assert.equal(record.workspaceState, 'awake');
+    assert.equal(record.workspaceStateErrorCode, null);
+    assert.equal(record.cliSessionId, before.cliSessionId);
+    assert.ok(h.events.some(event => event.action === 'thaw' && event.status === 'success'));
+  });
+});
+
 test('startup reconcile implements the crash matrix without creating a branch', async () => {
   const cases = [
     bound('hp', iso(DAY), { workspaceState: 'hibernating', _pathExists: true }),

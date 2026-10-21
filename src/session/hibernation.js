@@ -607,6 +607,7 @@ async function initializeSessionWorktrees(options = {}) {
     else seenPaths.set(resolved, directory.id);
   }
   let built = 0;
+  let deferred = 0;
   for (const session of records.values()) {
     if (session.type === 'aux' || session.id === auxSessionId || session.type === 'gateway') continue;
     if (session.loginFlow) continue; // gitless login terminals: no worktree to rebuild
@@ -628,10 +629,20 @@ async function initializeSessionWorktrees(options = {}) {
       built += 1;
       if (session.kind === 'terminal' && await tmuxHasSession(session.id)) await tmuxKillSession(session.id);
     } catch (error) {
+      if (error?.code === 'WORKTREE_BRANCH_MISSING' && session.kind === 'chat'
+        && session.taskBoundTaskId && session.branch) {
+        // Let normal admission restore this task's isolated workspace. Marking
+        // it invalid here would reject the chat WebSocket before thaw can run.
+        // Keep all other startup failures behind the existing invalid gate.
+        session.workspaceState = 'hibernated';
+        session.workspaceStateErrorCode = safeErrorCode(error);
+        deferred += 1;
+        continue;
+      }
       invalidSessions.set(session.id, `worktree create failed: ${safeErrorCode(error, 'git_error')}`);
     }
   }
-  if (built > 0 || invalidSessions.size > 0) { saveDirectories(); saveSessions('startup.worktree-migration'); }
+  if (built > 0 || deferred > 0 || invalidSessions.size > 0) { saveDirectories(); saveSessions('startup.worktree-migration'); }
   log.log?.(`[multicc] worktrees: ${built} built, ${invalidSessions.size} session(s) invalid`);
   return { built, invalid: invalidSessions.size };
 }
