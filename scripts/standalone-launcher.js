@@ -488,7 +488,15 @@ function createLauncher({
     }
     // A stale or unknown server on this data directory must not fight us for
     // the SQLite files or the port — the same rule the desktop shell applies.
-    await reclaimImpl({ infoFile, fetchImpl, spawn: spawnImpl, logger });
+    try {
+      const reclaimed = await reclaimImpl({ infoFile, fetchImpl, spawn: spawnImpl, logger });
+      if (reclaimed.reason === 'unkillable') {
+        throw new Error(`旧后端进程 ${reclaimed.pid} 仍在运行，已拒绝启动新实例。`);
+      }
+    } catch (error) {
+      clearPidFile();
+      throw error;
+    }
     const port = args.port || await findFreePortImpl(startPort);
     const dotenv = readEnvValues(desktopEnv.envFile);
     // supervisor.start() only spawns; readiness arrives through onPhase. Gate
@@ -612,6 +620,10 @@ async function main(argv = process.argv.slice(2)) {
   }
   if (args.mode === 'stop') {
     const result = await launcher.stop();
+    if (result.reason === 'unkillable' || launcher.otherLauncher()) {
+      logger.error('停止失败：旧实例仍在运行，不能继续更新。');
+      return 1;
+    }
     if (result.ownerSignalled) logger.log('stopped (launcher signal)');
     else if (result.reclaimed) logger.log(`stopped (${result.method})`);
     else logger.log(`nothing to stop (${result.reason})`);
