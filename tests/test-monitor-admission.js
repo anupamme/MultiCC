@@ -75,8 +75,8 @@ test('background hold releases after quiet, waits out a busy self-wake at the ca
   assert.equal(idle.start(main), false, 'nothing to hold without background work');
 });
 
-async function until(predicate, message = 'Monitor notification did not complete') {
-  const deadline = Date.now() + 10000;
+async function until(predicate, message = 'Monitor notification did not complete', timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error(message);
     await new Promise(resolve => setTimeout(resolve, 10));
@@ -91,7 +91,16 @@ async function until(predicate, message = 'Monitor notification did not complete
 // in fact held correctly. Wait for the child's own output first, then ask
 // whether the turn settled — the hold is then observed, not raced.
 async function untilRequests(s, count) {
-  await until(() => s.main.length >= count, `the CLI child never issued ${count} main requests`);
+  // 启动真实 CLI 并跑完首个工具需要独立预算，不能复用通知传输的 10 秒窗口。
+  try {
+    await until(() => {
+      if (s.turnError) throw s.turnError;
+      return s.main.length >= count;
+    }, `the CLI child never issued ${count} main requests`, 20000);
+  } catch (error) {
+    error.message += `; received=${s.main.length}, alive=${s.stream.isAlive(s.name)}, events=${JSON.stringify(s.recentEvents)}`;
+    throw error;
+  }
 }
 
 for (const lane of ['sdk', 'legacy']) test(`real ${lane} Monitor holds its turn open: events and end stream into that turn, never a 🔇`, { timeout: 30000 }, async t => {
@@ -277,6 +286,8 @@ for (const lane of ['sdk', 'legacy']) test(`real ${lane} Monitor progress during
 // production background runtime deciding every native notification.
 async function residentSession(t, lane, reply, backgroundHold = { quietMs: 300 }, managedRoute = false) {
   const injections = [], decisions = [], main = [], broadcasts = [];
+  const recentEvents = [];
+  let turnError;
   const f = await sdkFixture(t, args => {
     const first = JSON.stringify(args.input.messages[0]?.content || '');
     if (first.includes('SUBAGENT_JOB')) return reply.sub?.(args);
@@ -320,19 +331,30 @@ async function residentSession(t, lane, reply, backgroundHold = { quietMs: 300 }
     try { await stream.closeAndWait(name); } finally { background.stopAll(); }
   });
   let turns = 0;
-  async function turn(text) {
+  function turn(text) {
+    turnError = undefined;
     state.isStreaming = true;
     state._activeTurn = { turnId: `turn-${++turns}` };
-    try {
-      return await stream.send(name, text, event => {
-        if (event.type !== 'assistant' || event.parent_tool_use_id) return;
-        for (const block of event.message?.content || []) if (block.type === 'tool_use') {
-          state.currentToolCalls.push(block); background.recordMainToolUseId(name, block.id);
-        }
-      });
-    } finally { state.isStreaming = false; }
+    const pending = (async () => {
+      try {
+        return await stream.send(name, text, event => {
+          recentEvents.push({ type: event.type, subtype: event.subtype,
+            content: event.message?.content, error: event.error });
+          if (recentEvents.length > 5) recentEvents.shift();
+          if (event.type !== 'assistant' || event.parent_tool_use_id) return;
+          for (const block of event.message?.content || []) if (block.type === 'tool_use') {
+            state.currentToolCalls.push(block); background.recordMainToolUseId(name, block.id);
+          }
+        });
+      } finally { state.isStreaming = false; }
+    })();
+    // 前置断言失败后 teardown 会取消尚未 await 的回合。先观察拒绝以免污染
+    // 下一条用例；仍返回原始 Promise，调用方 await 时会收到原始失败。
+    pending.catch(error => { turnError = error; });
+    return pending;
   }
-  return { f, stream, name, background, turn, injections, decisions, main, broadcasts, go: file => fs.writeFileSync(path.join(f.cwd, file), 'go') };
+  return { f, stream, name, background, turn, injections, decisions, main, broadcasts, recentEvents,
+    get turnError() { return turnError; }, go: file => fs.writeFileSync(path.join(f.cwd, file), 'go') };
 }
 
 const backgroundAgent = { type: 'tool_use', id: 'agent-tool', name: 'Agent', input: {
