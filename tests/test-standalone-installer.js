@@ -872,6 +872,36 @@ test('a service that cannot be paused blocks the swap', { skip: PLATFORM !== 'da
   assert.doesNotMatch(fs.readFileSync(f.events, 'utf8'), /old:stop/);
 });
 
+test('暂停服务清除 PID 记录后，升级仍须确认此前的进程已退出', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const statusFile = path.join(f.home, 'old-status.json');
+  write(statusFile, JSON.stringify({ pid: process.pid, dataDir: f.env.MULTICC_STANDALONE_HOME }));
+  // 只模拟状态和停机命令，不向真实进程发信号。
+  write(path.join(f.target, 'multicc'), `#!/bin/sh
+echo "old:$1" >> "$TEST_EVENTS"
+case "$1" in
+  status)
+    if [ -f "$TEST_STATUS" ]; then cat "$TEST_STATUS"
+    else printf '{"pid":null,"dataDir":"%s"}\\n' "$MULTICC_STANDALONE_HOME"; fi ;;
+  stop|start) exit 0 ;;
+  *) exit 1 ;;
+esac
+`, 0o755);
+  const service = path.join(f.bin, 'launchctl');
+  fs.writeFileSync(service, fs.readFileSync(service, 'utf8').replace(
+    'rm -f "$TEST_LOADED"', 'rm -f "$TEST_LOADED" "$TEST_STATUS"',
+  ));
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], {
+    env: { ...f.env, TEST_STATUS: statusFile },
+  });
+  assert.notEqual(res.status, 0, res.stdout);
+  assert.match(res.stdout, /旧进程.*仍在运行/);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  const events = fs.readFileSync(f.events, 'utf8').trim().split('\n');
+  assert.ok(events.indexOf('old:status') < events.indexOf('unload'), events.join('\n'));
+  assert.equal(fs.readdirSync(f.home).some(name => name.startsWith('MultiCC.old-')), false);
+});
+
 test('a failed replacement restores the previous files and reloads its service', { skip: PLATFORM !== 'darwin' }, t => {
   const f = serviceFixture();
   t.after(() => spawnSync(path.join(f.target, 'multicc'), ['stop'], { env: { ...process.env, ...f.env } }));

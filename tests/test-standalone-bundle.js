@@ -541,6 +541,35 @@ test('ownership of the data directory is proved, and a stale pid file is taken o
   fs.rmSync(pidFile, { force: true });
 });
 
+test('旧后端停止失败时保留进程记录，禁止启动新实例', async t => {
+  const scratch = tmpdir('multicc-stop-failed-');
+  t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
+  const paths = launcherScript.resolveStandalonePaths({
+    resources: path.join(scratch, 'Resources'),
+    env: { MULTICC_STANDALONE_HOME: path.join(scratch, 'data') },
+  });
+  const infoFile = paths.desktopEnv.runtimeInfoFile;
+  fs.mkdirSync(path.dirname(infoFile), { recursive: true });
+  fs.writeFileSync(infoFile, JSON.stringify({ pid: process.pid }));
+  const { reclaimOrphan } = require('../desktop/lib/orphan-reclaim');
+  const logger = { log() {}, error() {} };
+  const result = await reclaimOrphan({
+    infoFile, logger, drainMs: 0, killWaitMs: 0,
+    fetchImpl: async () => { throw new Error('模拟旧服务无响应'); },
+    killTree() {}, // 不向测试进程发送信号，模拟终止失败。
+  });
+  assert.equal(result.reason, 'unkillable');
+  assert.equal(JSON.parse(fs.readFileSync(infoFile)).pid, process.pid, '失败不能删除旧进程记录');
+  let spawned = false;
+  const launcher = launcherScript.createLauncher({
+    paths, logger, reclaimImpl: async () => result,
+    createSupervisor() { spawned = true; throw new Error('不应启动新进程'); },
+  });
+  await assert.rejects(launcher.start({}), /仍在运行/);
+  assert.equal(spawned, false);
+  assert.equal(fs.existsSync(launcher.pidFile), false, '失败后释放本次启动器的占用');
+});
+
 test('--detach hands off to a background launcher that --stop can still drain', { timeout: 180_000 }, async () => {
   const scratch = tmpdir('multicc-standalone-detach-');
   const resources = path.join(scratch, 'Resources');

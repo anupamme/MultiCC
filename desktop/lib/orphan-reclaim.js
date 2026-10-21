@@ -45,6 +45,7 @@ async function reclaimOrphan({
   postTimeoutMs = 6_000,
   drainMs = 20_000,
   killWaitMs = 5_000,
+  killTree = killProcessTree,
 } = {}) {
   if (!infoFile) return { reclaimed: false, reason: 'no-info-file' };
   const info = readRuntimeInfo(infoFile);
@@ -73,13 +74,13 @@ async function reclaimOrphan({
     return { reclaimed: true, method: 'http-drain' };
   }
   // 2) Hard kill the whole tree.
-  killProcessTree(info.pid, { spawn });
+  killTree(info.pid, { spawn });
   await waitGone(info.pid, killWaitMs);
-  try { fs.unlinkSync(infoFile); } catch (_) {}
   if (pidAlive(info.pid)) {
     logger.error(`[desktop] could not stop orphaned backend pid ${info.pid}`);
     return { reclaimed: false, reason: 'unkillable', pid: info.pid };
   }
+  try { fs.unlinkSync(infoFile); } catch (_) {}
   return { reclaimed: true, method: 'kill-tree' };
 }
 

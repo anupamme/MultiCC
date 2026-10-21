@@ -499,6 +499,9 @@ UPGRADE_SERVICE_RESTORED=false
 UPGRADE_COMMITTED=false
 UPGRADE_START_ATTEMPTED=false
 UPGRADE_PREVIOUS_RUNNING=false
+UPGRADE_PREVIOUS_PIDS=""
+UPGRADE_PIDS_CAPTURED=false
+UPGRADE_STOP_ATTEMPTED=false
 UPGRADE_NEW_INSTALLED=false
 INSTALL_LOCK_DIR=""
 UPGRADE_PLIST="${HOME}/Library/LaunchAgents/com.multicc.server.plist"
@@ -520,7 +523,7 @@ cleanup() {
     if [ "$UPGRADE_SERVICE_PAUSED" = true ]; then
       launchctl load "$UPGRADE_PLIST" >/dev/null 2>&1 \
         || warn "旧版文件已保留，但后台服务恢复失败，请手动检查。"
-    elif [ "$UPGRADE_PREVIOUS_RUNNING" = true ] && [ "$UPGRADE_SERVICE_RESTORED" = false ]; then
+    elif [ "$UPGRADE_STOP_ATTEMPTED" = true ] && [ "$UPGRADE_PREVIOUS_RUNNING" = true ] && [ "$UPGRADE_SERVICE_RESTORED" = false ]; then
       "${MULTICC_CMD[@]}" start --no-open >/dev/null 2>&1 \
         || warn "旧版启动失败，请手动检查。"
     fi
@@ -562,6 +565,10 @@ pause_selected_service() {
       err "已加载的开机服务与目标安装不一致，已停止升级，未替换文件。"
       exit 1
     fi
+    # 确认服务归属后、暂停服务前保存 PID，避免停机清理文件后漏检旧进程。
+    if [ "$LEGACY_PENDING" != true ] && is_multicc_install "$INSTALL_DIR"; then
+      snapshot_selected_installation
+    fi
     launchctl unload "$UPGRADE_PLIST" || { err "无法暂停开机服务，未替换安装。"; exit 1; }
     UPGRADE_SERVICE_PAUSED=true
     ok "已暂停所选安装的开机服务，替换期间不会自动拉起旧进程"
@@ -570,12 +577,12 @@ pause_selected_service() {
   NO_SERVICE=true
 }
 
-stop_selected_installation() {
-  local state pids pid attempt
+snapshot_selected_installation() {
+  local state pid
   state="$("${MULTICC_CMD[@]}" status --json)" || { err "无法核对旧实例状态，未替换安装。"; exit 1; }
   # Use the bundled runtime, never require a host Node. Keep the snapshot
   # outside the bundle: stopping can remove the pid files, even on failure.
-  pids="$("$INSTALL_DIR/$RUNTIME_REL" -e '
+  UPGRADE_PREVIOUS_PIDS="$("$INSTALL_DIR/$RUNTIME_REL" -e '
     const fs = require("fs"), path = require("path");
     const state = JSON.parse(process.argv[1]);
     const ids = [state.pid];
@@ -587,7 +594,14 @@ stop_selected_installation() {
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
     if kill -0 "$pid" 2>/dev/null; then UPGRADE_PREVIOUS_RUNNING=true; fi
-  done <<< "$pids"
+  done <<< "$UPGRADE_PREVIOUS_PIDS"
+  UPGRADE_PIDS_CAPTURED=true
+}
+
+stop_selected_installation() {
+  local pid attempt
+  if [ "$UPGRADE_PIDS_CAPTURED" != true ]; then snapshot_selected_installation; fi
+  UPGRADE_STOP_ATTEMPTED=true
   "${MULTICC_CMD[@]}" stop || { err "旧实例停止失败，未替换安装。"; exit 1; }
   while IFS= read -r pid; do
     [ -n "$pid" ] || continue
@@ -599,7 +613,7 @@ stop_selected_installation() {
       err "旧进程 $pid 仍在运行，已停止升级，未替换文件。"
       exit 1
     fi
-  done <<< "$pids"
+  done <<< "$UPGRADE_PREVIOUS_PIDS"
   ok "旧实例已退出"
 }
 
