@@ -146,7 +146,8 @@ function macPermissionTargets({ execPath = process.execPath, env = process.env }
 
 function macPermissionGuidance(targets = macPermissionTargets()) {
   const lines = [
-    'git 无权访问该目录：macOS 的隐私保护会拦截「桌面 / 文档 / 下载 / iCloud 云盘 / 外接磁盘」这些受保护位置。',
+    'MultiCC 访问或写入该目录时被拒绝：可能是 macOS 隐私保护，也可能是目录或父目录的文件权限、属主或 ACL 限制。',
+    '如果目录位于「桌面 / 文档 / 下载 / iCloud 云盘 / 外接磁盘」，请检查 macOS 隐私授权：',
   ];
   if (targets.translocated) {
     lines.push(
