@@ -1,5 +1,10 @@
 'use strict';
 
+// Stub the shared outbound transport: no test can accidentally use live credentials.
+let testFetch = async () => { throw new Error('unexpected outbound request'); };
+require('node:test').mock.method(require('../src/network/outbound'), 'outboundFetch',
+  (...args) => testFetch(...args));
+
 // 借道余量透传（relay-quota）端到端契约：
 //   1. 导入方识别 —— core.getProviderLimitTarget 把 baseUrl 指向另一台 multicc
 //      中转端点的 provider 解析成 strategy 'relay-quota'（识别来自
@@ -7,7 +12,7 @@
 //   2. 透传链路 —— usage-limit-poller 的 pollRelayQuota POST 出借方的
 //      mountProviderRelayQuotaRoutes 端点，出借方收到后触发真实厂商查询并把
 //      最新 DTO 传回，导入方原样透传。
-// 这里用 stub 的 global.fetch 把两端在进程内桥接起来，等价于一次真实 HTTP
+// 这里用 stub 的 testFetch 把两端在进程内桥接起来，等价于一次真实 HTTP
 // 往返（URL / method / Authorization / 响应体全部走真实代码路径）。
 
 const assert = require('node:assert/strict');
@@ -167,8 +172,8 @@ test('end-to-end: borrower detection → relay adapter → lender endpoint → f
 
   // ── 桥接层：把 B 端适配器的 fetch 直接投递给 A 端已注册的路由处理器 ──
   const seenRequests = [];
-  const origFetch = global.fetch;
-  global.fetch = async (url, opts) => {
+  const origFetch = testFetch;
+  testFetch = async (url, opts) => {
     seenRequests.push({ url, opts });
     const u = new URL(url);
     assert.equal(opts.method, 'POST', 'relay adapter always POSTs');
@@ -204,7 +209,7 @@ test('end-to-end: borrower detection → relay adapter → lender endpoint → f
     assert.equal(again.utilization, 0.42);
     assert.equal(vendorRuns, 2, 'each settled request triggers a fresh real query (no TTL cache)');
   } finally {
-    global.fetch = origFetch;
+    testFetch = origFetch;
   }
 });
 
@@ -228,8 +233,8 @@ test('official Claude quota survives lender → borrower → durable snapshot wi
       stored = { ...data, appType, providerId }; return stored;
     } },
   });
-  const originalFetch = global.fetch;
-  global.fetch = async () => {
+  const originalFetch = testFetch;
+  testFetch = async () => {
     let result;
     const res = { set() { return this; }, json(body) { result = body; return this; } };
     await routes['/claude-proxy/:id/remote/quota']({ params: { id: 'lender-provider' } }, res);
@@ -255,14 +260,14 @@ test('official Claude quota survives lender → borrower → durable snapshot wi
     recorder.recordProvider('claude', 'weekly-provider', { ok: true, dto: weekly });
     assert.equal(stored.summary.window, '1wk');
     assert.equal(stored.summary.windows.length, 2);
-  } finally { global.fetch = originalFetch; }
+  } finally { testFetch = originalFetch; }
 });
 
 test('an unsupported lender exposes its reason instead of silently dropping quota', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: true, json: async () => ({ ok: false, reason: 'unsupported' }) });
+  const originalFetch = testFetch;
+  testFetch = async () => ({ ok: true, json: async () => ({ ok: false, reason: 'unsupported' }) });
   try {
     await assert.rejects(poller.pollRelayQuota({ relayUrl: 'https://lender.example/codex-proxy/p', apiKey: RELAY_CREDENTIAL }),
       /lender: unsupported/);
-  } finally { global.fetch = originalFetch; }
+  } finally { testFetch = originalFetch; }
 });

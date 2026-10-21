@@ -29,15 +29,15 @@ test('macOS system proxy and exceptions become proxy env, loopback always direct
   const cfg = resolveProxyEnv({}, parseMacSystemProxy(SCUTIL));
   assert.strictEqual(cfg.HTTPS_PROXY, 'http://127.0.0.1:7897');
   const noProxy = cfg.NO_PROXY.split(',');
-  for (const h of ['localhost', '127.0.0.1', '::1', '192.168.0.0-192.168.255.255', '*.local']) assert.ok(noProxy.includes(h), h);
-  assert.ok(!noProxy.includes('<local>'));
+  for (const h of ['localhost', '127.0.0.1', '::1', '192.168.0.0/16', '*.local']) assert.ok(noProxy.includes(h), h);
+  assert.ok(noProxy.includes('<local>'));
 });
 
 test('explicit env wins over the system proxy; empty env means direct', () => {
   const system = parseMacSystemProxy(SCUTIL);
   assert.strictEqual(resolveProxyEnv({ HTTPS_PROXY: 'http://p:1' }, system).HTTPS_PROXY, 'http://p:1');
   assert.strictEqual(resolveProxyEnv({ HTTPS_PROXY: '' }, system), null);
-  assert.deepStrictEqual(resolveProxyEnv({ ALL_PROXY: 'socks5://p:1' }, system), { socksOnly: 'socks5://p:1' });
+  assert.throws(() => resolveProxyEnv({ ALL_PROXY: 'socks5://p:1' }, system), /HTTP\(S\)/);
   assert.strictEqual(resolveProxyEnv({}, null), null);
 });
 
@@ -91,7 +91,8 @@ test('a SOCKS-only system proxy warns and does not claim to be proxied', async (
     readSystemProxy: async () => ({ httpProxy: '', httpsProxy: '', socksProxy: 'socks5://127.0.0.1:1080', exceptions: [] }),
   });
   await g.ready;
-  assert.deepStrictEqual(applied, [null]);
+  assert.deepStrictEqual(applied, []);
+  await assert.rejects(g.refresh(), /SOCKS/);
   assert.ok(logs.some(m => /SOCKS/.test(m)), logs.join('\n'));
 });
 

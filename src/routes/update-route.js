@@ -151,8 +151,9 @@ function createUpdateRoute(deps) {
       }
 
       try {
-        startDetachedUpdate({
+        await startDetachedUpdate({
           spawn,
+          getChildProxyEnv: deps.getChildProxyEnv,
           rootDir,
           force,
           targetVersion,

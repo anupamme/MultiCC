@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // The Claude Code CLI's own subscription, read straight from the credential
 // store the CLI already maintains:
 //
@@ -97,7 +99,7 @@ async function readCliCredentials(options = {}) {
 // caller try the next source" — never an error the user has to see.
 async function fetchCliUsage(options = {}) {
   const {
-    fetchImpl = globalThis.fetch,
+    fetchImpl = outboundFetch,
     now = () => Date.now(),
     readCredentials = readCliCredentials,
   } = options;

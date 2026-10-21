@@ -11,27 +11,11 @@
 //   no_auth           — ~/.codex/auth.json missing / unreadable (not logged in)
 //   unavailable       — API error / unexpected shape
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const { renderQuotaBar } = require('../quota/quota-bar-view');
 const { codexRateLimitWindows } = require('../codex/rate-limit-windows');
-const { officialFetch } = require('../network/official-fetch');
+const { requestCodexUsage, readCodexAuth } = require('../quota/codex-usage-request');
 
-const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const TIMEOUT_MS = 10000;
-
-function readCodexAuth(authFile) {
-  try {
-    const file = authFile || path.join(os.homedir(), '.codex', 'auth.json');
-    const auth = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const tokens = auth && auth.tokens;
-    if (!tokens || !tokens.access_token) return null;
-    return { accessToken: tokens.access_token, accountId: tokens.account_id || '' };
-  } catch (_) {
-    return null;
-  }
-}
 
 function finite(v) {
   const n = Number(v);
@@ -48,9 +32,6 @@ function windowResetsAt(w, nowMs) {
 }
 
 async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
-  // chatgpt.com is an official upstream: go through officialFetch so the
-  // env / macOS system proxy applies (direct connects time out behind one).
-  const fetchImpl = options.fetch || officialFetch;
   const auth = readCodexAuth(options.authFile);
   if (!auth) return { status: 'no_auth', error: options.authFile ? '该账号尚未完成登录' : '未找到 ~/.codex/auth.json，请先登录 codex' };
 
@@ -58,15 +39,7 @@ async function fetchCodexUsage(nowMs = Date.now(), options = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetchImpl(USAGE_URL, {
-      headers: {
-        Authorization: `Bearer ${auth.accessToken}`,
-        'ChatGPT-Account-Id': auth.accountId,
-        originator: 'codex_cli_rs',
-        Accept: 'application/json',
-      },
-      signal: ctrl.signal,
-    });
+    const res = await requestCodexUsage(auth, { fetch: options.fetch, signal: ctrl.signal });
     if (res.status === 401 || res.status === 403) {
       // e.g. {"error":{"code":"token_revoked"}} — the stored login is dead.
       let code = '';
@@ -144,7 +117,7 @@ function mountCodexQuotaRoutes(app, deps = {}) {
       }
       const result = await fetchCodexUsage(undefined, {
         ...(authFile ? { authFile } : {}),
-        // Tests inject a stub; production keeps the proxy-aware officialFetch.
+        // Tests inject a stub; production keeps the shared proxy-aware request.
         ...(typeof deps.fetch === 'function' ? { fetch: deps.fetch } : {}),
       });
       const status = result?.status || 'unavailable';

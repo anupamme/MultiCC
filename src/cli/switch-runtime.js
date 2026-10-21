@@ -3,6 +3,7 @@
 const { desiredSession, configurationBusy, stageConfiguration } = require('../session/pending-configuration');
 const { isChatStateBusy } = require('../session/runtime-busy');
 const { selectionKey } = require('../chat/auto-provider-selection-key');
+const { getChildProxyEnv } = require('../network/outbound');
 const cliUpstream = require('./cli-upstream-version');
 const capability = require('./cli-capability');
 const homebrewTakeover = require('./homebrew-takeover');
@@ -613,7 +614,7 @@ function createCliSwitchRuntime(options) {
       + `② 移除或重命名被派生的旧安装（${cmd}），让 multicc 回退到新装的那一份。`;
   }
 
-  function launchInstallJob(cli) {
+  async function launchInstallJob(cli) {
     const target = installTargetOf(cli);
     const spec = installSpecs[target];
     const env = buildInstallEnv(cli);
@@ -653,7 +654,8 @@ function createCliSwitchRuntime(options) {
     let proc;
     try {
       // 命令全来自静态表, 无用户输入拼接; 仅用 async spawn, 禁止同步子进程调用。
-      proc = spawn('bash', ['-c', command], { env });
+      const childEnv = await (options.getChildProxyEnv || getChildProxyEnv)(env);
+      proc = spawn('bash', ['-c', command], { env: childEnv });
     } catch (err) {
       job.status = 'error';
       job.endedAt = new Date(clock()).toISOString();
@@ -1142,7 +1144,7 @@ function createCliSwitchRuntime(options) {
             : `${running.cli} 与 ${cli} 使用同一条安装命令，请等它跑完再试`,
         });
       }
-      const job = launchInstallJob(cli);
+      const job = await launchInstallJob(cli);
       return res.status(202).json({ ok: true, jobId: job.id, cli: job.cli, command: job.command });
     }));
 
@@ -1240,7 +1242,7 @@ function createCliSwitchRuntime(options) {
             : `${running.cli} 与 ${cli} 使用同一条安装命令，请等它跑完再试`,
         });
       }
-      const job = launchInstallJob(cli);
+      const job = await launchInstallJob(cli);
       return res.status(202).json({
         ok: true,
         jobId: job.id,

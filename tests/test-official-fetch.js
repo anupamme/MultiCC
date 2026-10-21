@@ -9,12 +9,11 @@ test('macOS system HTTP proxies are parsed only when explicitly enabled', () => 
 });
 
 test('system proxy discovery is singleflight, refreshes, preserves the stream and does not retry failed requests', async () => {
-  let now = 0, scans = 0, calls = 0, closes = 0;
-  const configs = [], requests = [];
+  let now = 0, scans = 0, calls = 0;
+  const requests = [];
   const response = { body: { stream: true } };
   const f = createOfficialFetch({ env: {}, platform: 'darwin', now: () => now,
     readSystemProxy: async () => { scans++; return { httpsProxy: `http://localhost:${scans === 1 ? 7897 : 7898}` }; },
-    createDispatcher: config => { configs.push(config); return { close: async () => { closes++; } }; },
     fetch: async (url, init) => { calls++; requests.push(init); return response; },
   });
   const signal = new AbortController().signal;
@@ -22,15 +21,14 @@ test('system proxy discovery is singleflight, refreshes, preserves the stream an
   const replies = await Promise.all([f('https://chatgpt.com', init), f('https://chatgpt.com', init)]);
   assert.equal(scans, 1);
   assert.equal(calls, 2);
-  assert.equal(configs[0].httpsProxy, 'http://localhost:7897');
+  assert.equal(await requests[0].dispatcher.policy.proxyForUrl('https://chatgpt.com'), 'http://localhost:7897');
   assert.equal(replies[0], response);
   assert.equal(requests[0].body, init.body);
   assert.equal(requests[0].signal, signal);
   assert.equal(requests[0].headers, init.headers);
   now = 30001;
   await f('https://chatgpt.com');
-  assert.equal(configs[1].httpsProxy, 'http://localhost:7898');
-  assert.equal(closes, 1);
+  assert.equal(await requests[0].dispatcher.policy.proxyForUrl('https://chatgpt.com'), 'http://localhost:7898');
   await f.close();
 });
 
@@ -38,10 +36,13 @@ test('explicit environment routing overrides system configuration and carries NO
   let captured;
   const f = createOfficialFetch({ platform: 'darwin', env: { HTTPS_PROXY: 'http://proxy:8080', NO_PROXY: 'localhost,.internal' },
     readSystemProxy: () => { throw new Error('must not read system'); },
-    createDispatcher: config => { captured = config; return { close() {} }; }, fetch: async () => ({ status: 200 }),
+    fetch: async (_, init) => { captured = await init.dispatcher.policy.configuration(); return { status: 200 }; },
   });
   await f('https://chatgpt.com');
-  assert.deepEqual(captured, { httpProxy: '', httpsProxy: 'http://proxy:8080', noProxy: 'localhost,.internal' });
+  assert.equal(captured.httpsProxy, 'http://proxy:8080');
+  assert.ok(captured.noProxy.includes('.internal'));
+  assert.ok(captured.noProxy.includes('127.0.0.1'));
+  await f.close();
 });
 
 test('Linux without proxy settings retains native fetch behavior and failures retain their cause without replay', async () => {
@@ -49,10 +50,11 @@ test('Linux without proxy settings retains native fetch behavior and failures re
   const failure = new TypeError('fetch failed', { cause });
   let calls = 0;
   const f = createOfficialFetch({ env: {}, platform: 'linux', fetch: async (_, init) => {
-    assert.equal(init.dispatcher, undefined); calls++; throw failure;
+    assert.equal(await init.dispatcher.policy.proxyForUrl('https://chatgpt.com'), ''); calls++; throw failure;
   } });
   await assert.rejects(f('https://chatgpt.com'), e => e === failure && e.cause === cause && e.multiccProxyMode === 'direct');
   assert.equal(calls, 1);
+  await f.close();
 });
 
 test('unsupported proxy scheme and discovery failure never silently bypass configured routing', async () => {

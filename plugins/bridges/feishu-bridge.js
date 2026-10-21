@@ -20,7 +20,8 @@
 const express = require('express');
 const path = require('path');
 const os = require('os');
-const WebSocket = require('ws');
+const { outboundAgent } = require('../../src/network/outbound');
+const { createLarkHttpInstance } = require('../../src/network/sdk-bridges');
 const { bridgeConfigFile, bridgeHistoryFile, saveBridgeConfig } = require('./secure-config');
 const {
   stripDispatchMarkers,
@@ -186,9 +187,11 @@ async function startBridge() {
   if (!_gateway.get()) throw new Error('Feishu gateway 未创建，请先在管理页面创建。');
 
   const L = loadLark();
+  const httpInstance = createLarkHttpInstance(L.defaultHttpInstance);
   _apiClient = new L.Client({
     appId: _config.appId,
     appSecret: _config.appSecret,
+    httpInstance,
     appType: L.AppType.SelfBuild,
     domain: _resolveDomain(_config.domain),
   });
@@ -200,8 +203,10 @@ async function startBridge() {
   _wsClient = new L.WSClient({
     appId: _config.appId,
     appSecret: _config.appSecret,
+    httpInstance,
     domain: _resolveDomain(_config.domain),
     loggerLevel: L.LoggerLevel.info,
+    agent: outboundAgent,
   });
 
   _running = true;

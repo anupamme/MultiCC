@@ -1,4 +1,9 @@
 'use strict';
+
+// Stub the shared outbound transport: no test can accidentally use live credentials.
+let testFetch = async () => { throw new Error('unexpected outbound request'); };
+require('node:test').mock.method(require('../src/network/outbound'), 'outboundFetch',
+  (...args) => testFetch(...args));
 // Tests for the SQLite-backed provider-limit cache and its recorder
 // (src/quota/provider-limit-cache.js + src/quota/limit-cache-recorder.js).
 //
@@ -630,9 +635,9 @@ function testEverySourceKeepsItsCycles() {
 }
 
 async function withFetch(body, fn) {
-  const original = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
-  try { return await fn(); } finally { globalThis.fetch = original; }
+  const original = testFetch;
+  testFetch = async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  try { return await fn(); } finally { testFetch = original; }
 }
 
 function testSharedSnapshots() {

@@ -2,6 +2,7 @@
 // Supports multiple providers: Edge TTS, OpenAI TTS, Volcano TTS
 
 const WebSocket = require('ws');
+const { outboundAgent, getChildProxyEnv, policy: outboundProxyPolicy } = require('../network/outbound');
 const { spawn } = require('child_process');
 const https = require('https');
 
@@ -94,45 +95,51 @@ function edgeTtsSession(opts, cb) {
   let settled = false;
   let stopped = false;
   let proc;
-  try {
-    proc = spawn(cfg.edge.command, params);
-  } catch (e) {
-    console.error('[TTS][edge] spawn threw:', e.message);
-    cb.onError(`edge-tts 不可用：${e.message}`);
-    return null;
-  }
+  (async () => {
+    const env = await getChildProxyEnv(process.env);
+    if (stopped) return;
+    // edge-tts 的 WebSocket 通过 --proxy 显式传给 aiohttp。
+    const proxy = await outboundProxyPolicy.proxyForUrl('wss://speech.platform.bing.com');
+    if (stopped) return;
+    proc = spawn(cfg.edge.command, proxy ? [...params, '--proxy', proxy] : params, { env });
 
-  let audioData = [];
+    let audioData = [];
 
-  // CRITICAL: handle the 'error' event (ENOENT when edge-tts is not on PATH,
-  // EACCES, etc.). Without this listener Node re-throws it as an unhandled
-  // exception and crashes the whole server.
-  proc.on('error', (err) => {
-    if (settled) return;
+    // CRITICAL: handle the 'error' event (ENOENT when edge-tts is not on PATH,
+    // EACCES, etc.). Without this listener Node re-throws it as an unhandled
+    // exception and crashes the whole server.
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      console.error('[TTS][edge] spawn error:', err.message);
+      cb.onError(`edge-tts 不可用：${err.message}（请安装 edge-tts 或在设置里切换 TTS 提供方）`);
+    });
+
+    proc.stdout.on('data', (chunk) => {
+      if (!stopped) audioData.push(chunk);
+    });
+
+    proc.stderr.on('data', (err) => {
+      console.error('[TTS][edge] stderr:', err.toString());
+    });
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      if (stopped) return; // interrupted via stop() — drop any partial audio
+      if (code !== 0) {
+        cb.onError(`edge-tts exited with code ${code}`);
+        return;
+      }
+      cb.onReady(cfg.edge.sampleRate);
+      for (const chunk of audioData) cb.onAudio(chunk);
+      cb.onDone();
+    });
+
+  })().catch(() => {
+    if (stopped || settled) return;
     settled = true;
-    console.error('[TTS][edge] spawn error:', err.message);
-    cb.onError(`edge-tts 不可用：${err.message}（请安装 edge-tts 或在设置里切换 TTS 提供方）`);
-  });
-
-  proc.stdout.on('data', (chunk) => {
-    if (!stopped) audioData.push(chunk);
-  });
-
-  proc.stderr.on('data', (err) => {
-    console.error('[TTS][edge] stderr:', err.toString());
-  });
-
-  proc.on('close', (code) => {
-    if (settled) return;
-    settled = true;
-    if (stopped) return; // interrupted via stop() — drop any partial audio
-    if (code !== 0) {
-      cb.onError(`edge-tts exited with code ${code}`);
-      return;
-    }
-    cb.onReady(cfg.edge.sampleRate);
-    for (const chunk of audioData) cb.onAudio(chunk);
-    cb.onDone();
+    cb.onError('edge-tts 启动失败，请检查代理配置或安装状态');
   });
 
   // Session handle: kill the child process to interrupt playback immediately.
@@ -164,6 +171,7 @@ async function openaiTtsSession(opts, cb) {
   
   return new Promise((resolve) => {
     const options = {
+      agent: outboundAgent,
       hostname: url.hostname,
       port: url.port || 443,
       path: url.pathname,
@@ -215,7 +223,7 @@ function volcanoTtsSession(opts, cb) {
     return null;
   }
 
-  const ws = new WebSocket(cfg.volcano.url);
+  const ws = new WebSocket(cfg.volcano.url, { agent: outboundAgent });
   let finished = false;
 
   ws.on('open', () => {

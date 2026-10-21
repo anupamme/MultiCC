@@ -1,5 +1,8 @@
 'use strict';
 
+const { outboundFetch } = require('./network/outbound');
+const { requestCodexUsage, readCodexAuth } = require('./quota/codex-usage-request');
+
 // Usage-limit poller — the ACTIVE-POLL half of the limit subsystem.
 //
 // Some upstreams (Claude official, ChatGPT-backed Codex) report subscription
@@ -24,9 +27,6 @@
 
 const crypto = require('crypto');
 const { publicTransportError } = require('./upstream-error');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const providers = require('./providers/core');
 const { checkEgressIpAllowed } = require('./providers/egress-ip-policy');
 const { codexRateLimitWindows, headlineWindow } = require('./codex/rate-limit-windows');
@@ -77,12 +77,12 @@ async function responseBodySnippet(res) {
   try { return String(await res.text()).slice(0, 200).replace(/\s+/g, ' ').trim(); } catch (_) { return ''; }
 }
 
-async function requestJson(method, url, headers, timeoutMs) {
+async function readJson(request, timeoutMs) {
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    const res = await fetch(url, { method, headers, signal: controller.signal });
+    const res = await request(controller.signal);
     if (!res || !res.ok) {
       const snippet = res ? await responseBodySnippet(res) : '';
       throw limitFetchError(
@@ -107,11 +107,11 @@ async function requestJson(method, url, headers, timeoutMs) {
 }
 
 function fetchJson(url, headers, timeoutMs) {
-  return requestJson('GET', url, headers, timeoutMs);
+  return readJson(signal => outboundFetch(url, { method: 'GET', headers, signal }), timeoutMs);
 }
 
 function postJson(url, headers, timeoutMs) {
-  return requestJson('POST', url, headers, timeoutMs);
+  return readJson(signal => outboundFetch(url, { method: 'POST', headers, signal }), timeoutMs);
 }
 
 // GLM Coding Plan. Auth is the RAW key with NO "Bearer" prefix. The endpoint is
@@ -172,27 +172,6 @@ async function pollDeepseekBalance(target, nowMs, timeoutMs = POLL_TIMEOUT_MS) {
   };
 }
 
-// Official codex OAuth credential lives on disk in ~/.codex/auth.json (shared
-// login) or in an official-account's own auth.json (target.authFile, for
-// providers marked settingsConfig.officialAccount). It is rotated by the codex
-// CLI itself; we read it fresh each poll (never cache the token) so a refresh
-// is picked up automatically. Returns null on any problem → the poll shows
-// nothing rather than fabricating.
-function readCodexAuthFile(file) {
-  try {
-    const auth = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const tokens = auth && auth.tokens;
-    if (!tokens || !tokens.access_token) return null;
-    return { accessToken: tokens.access_token, accountId: tokens.account_id || '' };
-  } catch (_) {
-    return null;
-  }
-}
-
-function readCodexAuth() {
-  return readCodexAuthFile(path.join(os.homedir(), '.codex', 'auth.json'));
-}
-
 // Codex (real ChatGPT backend). Quota comes from the same usage read the codex
 // CLI's /status uses: GET chatgpt.com/backend-api/wham/usage with the OAuth
 // bearer + ChatGPT-Account-Id. This is a read (no messages consumed). Every
@@ -201,19 +180,10 @@ function readCodexAuth() {
 // week. Windows are classified by length (src/codex/rate-limit-windows.js).
 async function pollCodexUsage(target, nowMs, timeoutMs = POLL_TIMEOUT_MS, readAuth = null) {
   const reader = readAuth
-    || (target && target.authFile ? () => readCodexAuthFile(target.authFile) : readCodexAuth);
+    || (target && target.authFile ? () => readCodexAuth(target.authFile) : readCodexAuth);
   const auth = reader();
   if (!auth) return null;
-  const body = await fetchJson(
-    'https://chatgpt.com/backend-api/wham/usage',
-    {
-      Authorization: `Bearer ${auth.accessToken}`,
-      'ChatGPT-Account-Id': auth.accountId,
-      originator: 'codex_cli_rs',
-      Accept: 'application/json',
-    },
-    timeoutMs,
-  );
+  const body = await readJson(signal => requestCodexUsage(auth, { signal }), timeoutMs);
   const rl = body && typeof body === 'object' ? body.rate_limit : null;
   if (!rl || typeof rl !== 'object') return null;
   const windows = codexRateLimitWindows(rl, nowMs);

@@ -256,12 +256,13 @@ test('a standalone install is recognised, and its log lives outside the bundle i
   assert.equal(detectStandaloneUpdate({ rootDir: createFixture(), env: fixture.env }), null);
 });
 
-test('a standalone update fetches install.sh and points it at the bundle root, and is admitted in desktop mode', () => {
+test('a standalone update fetches install.sh and points it at the bundle root, and is admitted in desktop mode', async () => {
   const fixture = createStandaloneFixture();
   const spawned = [];
   const spawn = (command, args, options) => { spawned.push({ command, args, options }); return createChild(); };
   const app = createFakeApp();
   createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions: new Map(), spawn, rootDir: fixture.rootDir, log: { log() {}, error() {} },
     isDesktopMode: () => true,
     isStandalone: () => Boolean(detectStandaloneUpdate({ rootDir: fixture.rootDir, env: fixture.env })),
@@ -277,9 +278,9 @@ test('a standalone update fetches install.sh and points it at the bundle root, a
   try {
     const res = createRes();
     // No fs/path/https/gitRun deps supplied — resolveVersionInfo is skipped and
-    // the handler completes synchronously (see server.js's real wiring for the
+    // the handler only awaits proxy preparation (see server.js's real wiring for the
     // version-resolving case, covered separately by the update-route tests).
-    app.routes.post.get('/api/update')({ body: {} }, res);
+    await app.routes.post.get('/api/update')({ body: {} }, res);
     assert.equal(res.statusCode, 202, JSON.stringify(res.body));
     assert.equal(res.body.targetVersion, null);
   } finally {
@@ -420,11 +421,12 @@ test('an unwritable log directory is refused up front, not discovered by timeout
   }
 });
 
-test('the update child is detached so the restart it performs cannot kill it', () => {
+test('the update child is detached so the restart it performs cannot kill it', async () => {
   const root = createFixture();
   const calls = [];
   const child = createChild();
-  const result = startDetachedUpdate({
+  const result = await startDetachedUpdate({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     spawn(command, args, options) {
       calls.push({ command, args, options });
       return child;
@@ -440,14 +442,15 @@ test('the update child is detached so the restart it performs cannot kill it', (
   assert.equal(calls[0].options.detached, true, 'do_stop kills the server process group');
   assert.equal(calls[0].options.cwd, root);
   assert.equal(calls[0].options.stdio, 'ignore');
-  assert.deepEqual(calls[0].options.env, { MARKER: 'yes' });
+  assert.deepEqual(calls[0].options.env, { MARKER: 'yes', http_proxy: 'http://proxy.test:8080' });
   assert.match(calls[0].args[1], /multicc update --force/);
   assert.equal(child.unrefCount, 1);
 });
 
-test('a synchronous spawn failure reaches the HTTP boundary as 503 with a code, and frees the flag', () => {
+test('a synchronous spawn failure reaches the HTTP boundary as 503 with a code, and frees the flag', async () => {
   const root = createFixture();
   const route = createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions: new Map(),
     spawn() { const error = new Error('nope'); error.code = 'EAGAIN'; throw error; },
     rootDir: root,
@@ -457,17 +460,17 @@ test('a synchronous spawn failure reaches the HTTP boundary as 503 with a code, 
   route.mountRoutes(app);
 
   const res = createRes();
-  app.routes.post.get('/api/update')({ body: {}, id: 'req-1' }, res);
+  await app.routes.post.get('/api/update')({ body: {}, id: 'req-1' }, res);
   assert.equal(res.statusCode, 503);
   assert.equal(res.body.code, 'UPDATE_START_FAILED');
 
   // The failed attempt must not leave the route 409-ing forever.
   const second = createRes();
-  app.routes.post.get('/api/update')({ body: {}, id: 'req-2' }, second);
+  await app.routes.post.get('/api/update')({ body: {}, id: 'req-2' }, second);
   assert.equal(second.statusCode, 503);
 });
 
-test('the route starts one update, reports the turns it will interrupt, and rejects a second', () => {
+test('the route starts one update, reports the turns it will interrupt, and rejects a second', async () => {
   const root = createFixture();
   const spawned = [];
   const chatSessions = new Map([
@@ -476,6 +479,7 @@ test('the route starts one update, reports the turns it will interrupt, and reje
     ['c', { isStreaming: false, lastStreamAt: Date.now() }],
   ]);
   const route = createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions,
     spawn(command, args, options) { spawned.push({ command, args, options }); return createChild(); },
     rootDir: root,
@@ -485,7 +489,7 @@ test('the route starts one update, reports the turns it will interrupt, and reje
   route.mountRoutes(app);
 
   const res = createRes();
-  app.routes.post.get('/api/update')({ body: { force: true }, id: 'req-1' }, res);
+  await app.routes.post.get('/api/update')({ body: { force: true }, id: 'req-1' }, res);
   assert.equal(res.statusCode, 202);
   assert.deepEqual(res.body, { ok: true, status: 'started', force: true, activeStreaming: 1, targetVersion: null });
   assert.match(spawned[0].args[1], /multicc update --force/);
@@ -493,15 +497,16 @@ test('the route starts one update, reports the turns it will interrupt, and reje
   // Second call within the debounce window: the log does not exist yet, so only
   // the in-memory flag can catch this.
   const second = createRes();
-  app.routes.post.get('/api/update')({ body: {}, id: 'req-2' }, second);
+  await app.routes.post.get('/api/update')({ body: {}, id: 'req-2' }, second);
   assert.equal(second.statusCode, 409);
   assert.equal(spawned.length, 1, 'a concurrent update must never be spawned');
 });
 
-test('the update route has no coupling to the retired on-demand APK builder', () => {
+test('the update route has no coupling to the retired on-demand APK builder', async () => {
   const root = createFixture();
   let obsoleteProbeCalls = 0;
   const route = createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions: new Map(),
     spawn() { return createChild(); },
     rootDir: root,
@@ -515,12 +520,12 @@ test('the update route has no coupling to the retired on-demand APK builder', ()
   route.mountRoutes(app);
 
   const response = createRes();
-  app.routes.post.get('/api/update')({ body: {} }, response);
+  await app.routes.post.get('/api/update')({ body: {} }, response);
   assert.equal(response.statusCode, 202);
   assert.equal(obsoleteProbeCalls, 0);
 });
 
-test('a running update on disk blocks a new one even in a server that never started it', () => {
+test('a running update on disk blocks a new one even in a server that never started it', async () => {
   // This is the restart case: the process that answers the second request is
   // not the one that started the update, so its in-memory flag is false.
   const root = createFixture();
@@ -528,6 +533,7 @@ test('a running update on disk blocks a new one even in a server that never star
   fs.writeFileSync(path.join(root, UPDATE_LOG_RELATIVE), `${START_MARKER} 2026-08-03T10:00:00Z force=0\nrunning\n`);
 
   const route = createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions: new Map(),
     spawn() { throw new Error('must not spawn'); },
     rootDir: root,
@@ -537,7 +543,7 @@ test('a running update on disk blocks a new one even in a server that never star
   route.mountRoutes(app);
 
   const res = createRes();
-  app.routes.post.get('/api/update')({ body: {}, id: 'req-1' }, res);
+  await app.routes.post.get('/api/update')({ body: {}, id: 'req-1' }, res);
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.status.state, 'running');
 
@@ -548,6 +554,7 @@ test('a running update on disk blocks a new one even in a server that never star
 
 test('the status route survives an unreadable root instead of failing the page', () => {
   const route = createUpdateRoute({
+    getChildProxyEnv: async env => ({ ...env, http_proxy: 'http://proxy.test:8080' }),
     chatSessions: new Map(),
     spawn() {},
     rootDir: path.join(os.tmpdir(), 'multicc-does-not-exist-' + process.pid),
@@ -566,4 +573,23 @@ test('server.js wires the update route with the package root and keeps it auth-g
   const authSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'auth.js'), 'utf8');
   assert.match(hostSrc, /createUpdateRoute\(\{[\s\S]*?rootDir:\s*__dirname/);
   assert.equal(authSrc.includes('/api/update'), false, 'the update route must not be in the auth bypass list');
+});
+
+test('代理准备失败阻止更新派生并释放路由占用', async () => {
+  const rootDir = createFixture();
+  let spawned = false;
+  const app = createFakeApp();
+  createUpdateRoute({
+    rootDir,
+    spawn() { spawned = true; return createChild(); },
+    getChildProxyEnv: async () => { throw new Error('proxy discovery failed'); },
+    log: { log() {}, error() {} },
+  }).mountRoutes(app);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = createRes();
+    await app.routes.post.get('/api/update')({ body: {} }, res);
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.body.code, 'UPDATE_START_FAILED');
+  }
+  assert.equal(spawned, false);
 });

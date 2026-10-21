@@ -43,6 +43,14 @@ const {
 const { pidAlive, readRuntimeInfo } = require(path.join(LIB_DIR, 'orphan-reclaim'));
 const { dequarantine, translocationGuidance } = require(path.join(LIB_DIR, 'desktop-env'));
 
+// 独立包的 launcher 与完整 app-server 同级；开发时直接使用仓库模块。
+const networkModule = fs.existsSync(path.join(__dirname, '..', 'app-server', 'src', 'network', 'outbound.js'))
+  ? path.join(__dirname, '..', 'app-server', 'src', 'network', 'outbound')
+  : path.join(__dirname, '..', 'src', 'network', 'outbound');
+// 本地 config/status/stop 不依赖网络模块，残缺安装也能进行本地修复。
+const outboundFetch = (...args) => require(networkModule).outboundFetch(...args);
+const getChildProxyEnv = (...args) => require(networkModule).getChildProxyEnv(...args);
+
 const REPO = 'lsjwzh/MultiCC';
 const RELEASES_URL = `https://github.com/${REPO}/releases`;
 const API_LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -448,7 +456,7 @@ async function runInstallerScript({ layout, release, env, workDir, logger: log }
   process.stdout.write(`Updating with install.sh → ${release.tag}...\n`);
   const res = spawnSync('bash', [script, ...installerDelegateArgs({
     bundleRoot: layout.bundleRoot, tag: release.tag,
-  })], { stdio: 'inherit', env });
+  })], { stdio: 'inherit', env: await getChildProxyEnv(env) });
   // Only the script goes: the caller still owns workDir for the fallback path.
   fs.rmSync(script, { force: true });
   if (res.error) {
@@ -466,7 +474,7 @@ async function runInstallerScript({ layout, release, env, workDir, logger: log }
   return res.status || 1;
 }
 
-async function latestRelease({ fetchImpl = fetch, logger: log } = {}) {
+async function latestRelease({ fetchImpl = outboundFetch, logger: log } = {}) {
   try {
     const res = await fetchImpl(API_LATEST, {
       headers: { accept: 'application/vnd.github+json' },
@@ -528,7 +536,7 @@ function downloadProgressText({ received, total, elapsedMs }) {
 // while it arrives and a 60 MB archive never sits in memory twice. `onProgress`
 // is throttled to one call per `progressEveryMs` plus a final one.
 async function downloadTo(url, dest, {
-  fetchImpl = fetch, logger: log, onProgress = null, progressEveryMs = 1000, now = Date.now,
+  fetchImpl = outboundFetch, logger: log, onProgress = null, progressEveryMs = 1000, now = Date.now,
 } = {}) {
   const res = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(30 * 60_000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);

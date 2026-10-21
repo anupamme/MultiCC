@@ -1,5 +1,7 @@
 'use strict';
 
+const { outboundFetch } = require('../network/outbound');
+
 // GET /api/kimi/quota — fetch Moonshot/Kimi (api.moonshot.cn) prepaid balance for
 // every configured Kimi provider.
 //
@@ -106,11 +108,11 @@ function balanceHost(host) {
 // Fetch one account's balance. Returns { available, voucher, cash, currency } on
 // success or { error: true, httpStatus, reason } on failure so the caller can
 // propagate a specific reason to the frontend.
-async function fetchKimiBalance(target, timeoutMs = 6000) {
+async function fetchKimiBalance(target, timeoutMs = 6000, fetchImpl = outboundFetch) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`https://${balanceHost(target.host)}/v1/users/me/balance`, {
+    const res = await fetchImpl(`https://${balanceHost(target.host)}/v1/users/me/balance`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${target.apiKey}` },
       signal: controller.signal,

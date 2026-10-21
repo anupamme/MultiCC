@@ -12,7 +12,7 @@
 const express = require('express');
 const path = require('path');
 const os = require('os');
-const WebSocket = require('ws');
+const { outboundAgent } = require('../../src/network/outbound');
 const { bridgeConfigFile, bridgeHistoryFile, saveBridgeConfig } = require('./secure-config');
 const {
   createEchoStore, createLogStore, createGatewayLifecycle, createChatWsClient, chunkOutbound,
@@ -195,6 +195,9 @@ async function startBridge() {
     token: _config.botToken,
     appToken: _config.appToken,
     socketMode: true,
+    agent: outboundAgent,
+    // Bolt passes Socket Mode options separately from its REST client.
+    installerOptions: { clientOptions: { agent: outboundAgent } },
   });
 
   try {
