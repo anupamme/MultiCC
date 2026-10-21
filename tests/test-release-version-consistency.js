@@ -290,15 +290,18 @@ test('core runner covers every selected path and expands declared variants', () 
   //   - app/test/remote_touch_controller_test.dart（flutter）：触摸手势→RFB 指针的坐标
   //     与状态机契约，纯 Dart 不碰 Widget，按非 UI Flutter 计入 core。
   // 337，deterministic 285，isolated 27，flutter 25。
-  assert.equal(core.length, 337, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 337);
+  // v2.8.3 复核新增 7 项：错误持久化、任务清理、HTTP/WS/额度/语音代理
+  // 6 项 Node 机制测试使用 stub、临时库或进程内假服务器；Air 删除超时为
+  // MockClient + fakeAsync 的非 Widget 测试。均无真实凭据或外部服务依赖。
+  assert.equal(core.length, 344, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 344);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 285);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 291);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 27);
-  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 25,
+  assert.equal(core.filter(entry => entry.lane === 'flutter').length, 26,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
 
   const expectedPaths = core.flatMap(entry => Array.from(
@@ -306,8 +309,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 315,
-    '312 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 321,
+    '318 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

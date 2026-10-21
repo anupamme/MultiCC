@@ -967,7 +967,7 @@ test('desktop packaging config: pinned versions, stable names, user-scope instal
   assert.deepEqual(b.win.target.flatMap(t => t.arch), ['x64']);
 });
 
-test('desktop-release workflow: three native runners, attaches (never creates) the release, secrets only as env', () => {
+test('desktop-release workflow: three native runners, publishes before Android, secrets only as env', () => {
   const wf = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'desktop-release.yml'), 'utf8');
   for (const os of ['macos-latest', 'windows-latest', 'ubuntu-latest']) {
     assert.ok(wf.includes(os), `matrix must include ${os}`);
@@ -987,7 +987,8 @@ test('desktop-release workflow: three native runners, attaches (never creates) t
   assert.match(wf, /gh release upload/);
   // Comments explain the rule; the steps themselves must follow it.
   const wfCode = wf.replace(/^\s*#.*$/gm, '');
-  assert.doesNotMatch(wfCode, /gh release create/, 'release.yml (APK) owns creation');
+  assert.match(wfCode, /gh release create.*desktop-out\/\*/, '桌面与 standalone 一起创建 Release');
+  assert.doesNotMatch(wfCode, /Wait for the APK/, '桌面发布不等待移动端');
   // Secrets may only appear in env: mappings — never inside run: scripts, where
   // an echo would leak them into logs.
   for (const line of wf.split('\n')) {

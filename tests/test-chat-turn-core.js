@@ -1105,8 +1105,12 @@ test('hard turn-control paths terminalize the provider attempt before teardown o
   assert.match(clearBody, /clearHistory\(sessionName, msg, cs\)/);
   assert.doesNotMatch(clearBody, /cancelActiveTurn|killReason|hasLiveBackgroundTasks/,
     'display clearing must not cancel active work or wait for background tasks');
-  assert.match(source, /const proxyRequired = providers\.codexProxyConfigRequired\([\s\S]{0,520}providers\.assertCodexProxyConfigApplied\(\{ required: proxyRequired, applied: proxyApplied \}\)/,
-    'a routed Codex attempt must apply the explicit route policy before spawning');
+  const proxyStart = source.indexOf('const proxyRequired = providers.codexProxyConfigRequired(');
+  const proxyEnd = source.indexOf('} catch (error)', proxyStart);
+  assert.ok(proxyStart >= 0 && proxyEnd > proxyStart);
+  const proxyBody = source.slice(proxyStart, proxyEnd);
+  assert.match(proxyBody, /const proxyApplied = providers\.applyCodexProxyConfig\([\s\S]*?providers\.assertCodexProxyConfigApplied\(\{ required: proxyRequired, applied: proxyApplied \}\)/,
+    'a routed Codex attempt must apply the explicit route policy before leaving the guarded setup block');
 });
 
 test('tool timing stamps ride in the persisted tools array (replay upgrade)', () => {

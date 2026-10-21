@@ -76,7 +76,10 @@ for (const secret of [
 ]) {
   assert.ok(releaseWorkflow.includes(`secrets.${secret}`), `release workflow must require ${secret}`);
 }
-assert.match(releaseWorkflow, /gh release create/);
+assert.match(releaseWorkflow, /gh release upload/);
+assert.doesNotMatch(releaseWorkflow, /gh release create/, '桌面工作流先创建 Release');
+assert.match(releaseWorkflow, /grep -qx 'SHA256SUMS.txt'/, 'APK 等待桌面资产发布');
+assert.match(releaseWorkflow, /apk_count.*-ne 3/, '拒绝覆盖不完整的 APK 资产');
 assert.match(releaseWorkflow, /multicc\.apk\.json/);
 assert.match(releaseWorkflow, /multicc\.apk\.sha256/);
 assert.doesNotMatch(releaseWorkflow, /--clobber/, 'published APK assets must never be destructively replaced');
