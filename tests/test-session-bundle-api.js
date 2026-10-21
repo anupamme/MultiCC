@@ -543,6 +543,20 @@ async function stopServer() {
     if ((await disposeFixtureTasks()).length === 0) break;
   }
   response = await api('DELETE', `/api/directories/${dirId}?force=1`);
+  // Attribution is asynchronous, so a card adopted from the fixture's chat can
+  // still land after the last empty sweep — and history disposal then refuses
+  // the delete naming the task that pins it. Dispose exactly what the refusal
+  // names and retry, instead of failing on a timing window.
+  for (let attempt = 0; attempt < 10 && response.status !== 200; attempt += 1) {
+    const named = (response.data && Array.isArray(response.data.tasks)) ? response.data.tasks : [];
+    assert.ok(named.length, JSON.stringify(response.data));
+    for (const task of named) {
+      const removed = await api('DELETE', `/api/task-board/tasks/${task.id}`, { force: true });
+      assert.equal(removed.status, 200, JSON.stringify(removed.data));
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    response = await api('DELETE', `/api/directories/${dirId}?force=1`);
+  }
   assert.equal(response.status, 200, JSON.stringify(response.data));
   await stopServer();
   assertTestDir(tmpRoot);

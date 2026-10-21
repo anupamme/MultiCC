@@ -242,6 +242,10 @@
         {
           "file": "scripts/setup-local-asr.sh",
           "anchor": "MODEL_DIR=\"${ASR_LOCAL_MODEL_DIR:-$HOME/.multicc/asr-models}\""
+        },
+        {
+          "file": "scripts/asr-compare/server.js",
+          "anchor": "const MODEL_ROOT = process.env.ASR_LOCAL_MODEL_DIR || path.join(os.homedir(), '.multicc', 'asr-models');"
         }
       ]
     },
