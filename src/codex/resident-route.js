@@ -75,6 +75,7 @@ function createCodexResidentRoutes({ providers, logger = console } = {}) {
     const logicalSessionId = clean(options.logicalSessionId);
     const capability = clean(options.sessionId);
     if (!logicalSessionId || !capability) return false;
+    const model = clean(options.inheritModel);
     let entry = homes.get(logicalSessionId);
     // A home may only outlive the route baked into it while nobody is reading
     // it. A moved capability means config.toml disagrees with the capability the
@@ -82,7 +83,9 @@ function createCodexResidentRoutes({ providers, logger = console } = {}) {
     // for a different reason — either way the replacement has to be a DIFFERENT
     // directory, because that is the change the lane's routing fingerprint turns
     // into a respawn.
-    if (entry && (entry.capability !== capability || !fs.existsSync(entry.holder.CODEX_HOME))) {
+    // The sub-agent role files bake in the main model, so a model switch is as
+    // much a moved route as a moved capability.
+    if (entry && (entry.capability !== capability || entry.model !== model || !fs.existsSync(entry.holder.CODEX_HOME))) {
       homes.delete(logicalSessionId);
       retire(entry);
       entry = null;
@@ -92,7 +95,7 @@ function createCodexResidentRoutes({ providers, logger = console } = {}) {
       // keeps its lease private; here the holder itself is what stays live.
       const holder = { CODEX_HOME: String(childEnv.CODEX_HOME || '') };
       if (!providers.applyCodexProxyConfig(holder, options)) return false;
-      entry = { capability, holder, readers: 0, retired: false };
+      entry = { capability, model, holder, readers: 0, retired: false };
       homes.set(logicalSessionId, entry);
       entries.set(holder.CODEX_HOME, entry);
     }

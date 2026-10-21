@@ -2282,13 +2282,12 @@ const codexUsageHost = createCodexUsageHost({
   logger,
 });
 
+const chatErrors = require('./src/chat/error-persistence').createErrorPersister({ appendChatMessage }); // errors reach history, not only the live line
 function chatBroadcast(sessionName, payload) {
-  payload = scopeHostProviderEvent(payload);
-  // #110: journal every client-visible event (never blocks or throws)…
+  payload = chatErrors.annotate(sessionName, scopeHostProviderEvent(payload));
+  // #110: journal every client-visible event (never blocks or throws), then fan out.
   turnEventJournal.note(sessionName, payload);
-  // …then fan out. The sync dispatch bridge observes the same normalized
-  // stream as Web/App, but only through an operation-lineage filter and a
-  // redacting reducer.
+  // The sync dispatch bridge sees the same stream via an operation-lineage filter + redacting reducer.
   bus.emit('chat:stream-progress', sessionName, payload);
   taskContextHost.broadcast(sessionName, payload);
 }

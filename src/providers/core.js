@@ -2385,7 +2385,10 @@ function applyCodexProxyConfig(env, options) {
       mainProviderId: providerId,
       mainProxyable: true,
       subProviderId,
-      subModel: explicitSubProviderId ? String(options.subagent.model || '').trim() : '',
+      // No sub-agent configured → the roles ride the main provider, and a role
+      // file without `model` makes Codex pick its own built-in default, which that
+      // provider usually does not serve (upstream 404). Follow the main model.
+      subModel: explicitSubProviderId ? String(options.subagent.model || '').trim() : String(options.inheritModel || '').trim(),
     });
     preparationStage = 'sanitize-official-config';
     if (applied && containsOfficial) sanitizeCodexOfficialAttemptHome(lease.home, options);
