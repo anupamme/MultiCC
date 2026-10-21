@@ -93,6 +93,7 @@ const Map<String, String> airTaskActionErrors = {
   'title_too_long': '任务标题最多 40 个字符。',
   'task_workspace_dirty': '工作区还有未提交改动，需要再次确认后才能删除。',
   'task_workspace_unmerged': '工作区还有未合并到基分支的提交，需要再次确认后才能删除。',
+  'task_workspace_unverifiable': '无法确认工作区是否可安全删除。请检查仓库、任务分支和工作区状态后重试。',
   'task_session_shared': '会话还被其他任务共享，无法删除。',
   'shell_workspace_referenced': '工作区被其他会话引用，无法删除。',
   'task_shell_shared': '任务的会话壳还挂着别的任务，不能整体移动。',

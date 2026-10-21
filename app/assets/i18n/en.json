@@ -1810,6 +1810,7 @@
   "airErrUnmergedMove": "There are commits not yet merged into the base branch. Merge them in the task details first, then move.",
   "airErrWorkspaceDirty": "The workspace still has uncommitted changes; confirm again before deleting.",
   "airErrWorkspaceUnmerged": "The workspace has commits not merged into the base branch; confirm again before deleting.",
+  "airErrWorkspaceUnverifiable": "Cannot verify that the workspace is safe to delete. Check the repository, task branch and workspace state, then retry.",
   "airExpand": "Expand",
   "airExpandLayer": "Expand overlay",
   "airFilterDirectoryTaskStatus": "Filter this workspace's tasks by status",

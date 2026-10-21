@@ -19,6 +19,7 @@ test('Air task detail archives, restores, moves with carry and deletes', async t
     attribution: {}, configuration: { cli: 'codex', model: 'gpt-5.5', effectiveModel: 'gpt-5.5' }, roleBindings: null, messages: [] };
   const listed = () => [{ ...entry.task, dirId: entry.task.dirId || 'd1', updatedAt: Date.now(), resource: entry.resource }];
   const statusCalls = [], renameCalls = [], relocateCalls = [], deleteCalls = [];
+  let refuseUnverifiable = true;
 
   for (const file of fs.readdirSync(publicDir).filter(f => /\.(js|css|html)$/.test(f))) {
     routes['/' + file] = { body: fs.readFileSync(path.join(publicDir, file)),
@@ -60,6 +61,10 @@ test('Air task detail archives, restores, moves with carry and deletes', async t
   routes['DELETE /api/task-board/tasks/tsk_a'] = ({ body }) => {
     const value = body.length ? JSON.parse(body) : null;
     deleteCalls.push(value);
+    if (refuseUnverifiable) {
+      refuseUnverifiable = false;
+      return { ...json({ ok: false, error: 'task_workspace_unverifiable' }), status: 409 };
+    }
     if (!value?.force) return { ...json({ ok: false, error: 'task_workspace_dirty',
       reasons: ['task_workspace_dirty', 'task_workspace_unmerged'] }), status: 409 };
     return json({ ok: true, deleted: true, taskIds: ['tsk_a'] });
@@ -130,6 +135,15 @@ test('Air task detail archives, restores, moves with carry and deletes', async t
     await page.screenshot('move-dialog-frame');
     assert.ok(await page.waitFor(`document.querySelectorAll('.move-task-dialog').length===0`), 'dialog removed after the move');
     assert.ok(await page.waitFor(`location.search.includes('dir=d2')`), 'the page followed the task to its new directory');
+
+    // 无法验证时说明原因，保留任务，不自动发起强制删除。
+    await page.evaluate(`window.__confirmed=[];window.confirm=text=>{window.__confirmed.push(text);return true}`);
+    await page.evaluate(`document.querySelector('[data-action="delete"]').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('notice').textContent.includes('无法确认工作区是否可安全删除')`));
+    assert.deepEqual(deleteCalls, [null]);
+    assert.equal(await page.evaluate(`window.__confirmed.length`), 1);
+    assert.equal(await page.evaluate(`location.search.includes('task=tsk_a')`), true);
+    deleteCalls.length = 0;
 
     // 删除：确认框要说清不可撤销，删完离开这条任务，列表里不再留影子。
     await page.evaluate(`window.__confirmed=[];window.confirm=text=>{window.__confirmed.push(text);return true}`);

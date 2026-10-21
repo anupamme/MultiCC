@@ -262,6 +262,74 @@ test('delete reports every workspace risk, then forwards explicit force to clean
   ]);
 });
 
+async function reclaimedWorkspace(t, { ahead = false, planned = false, bound = false } = {}) {
+  const exec = require('node:util').promisify(require('node:child_process').execFile);
+  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'multicc-reclaimed-delete-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = async (...args) => (await exec('git', args, { cwd: root })).stdout.trim();
+  await git('init', '-b', 'main');
+  await git('-c', 'user.name=test', '-c', 'user.email=test@local', 'commit', '--allow-empty', '-m', 'initial');
+  const worktreePath = path.join(root, 'task-worktree'), branch = 'task-branch';
+  if (!planned) {
+    await git('worktree', 'add', '-b', branch, worktreePath);
+    if (ahead) await exec('git', ['-c', 'user.name=test', '-c', 'user.email=test@local',
+      'commit', '--allow-empty', '-m', 'unmerged work'], { cwd: worktreePath });
+    await git('worktree', 'remove', worktreePath);
+  }
+  const task = { id: 'old', dirId: 'd', refs: [], worktreePath, branch, workspaceState: 'hibernated' };
+  const record = { ...task, id: 'bound', taskBoundTaskId: task.id };
+  const dir = { id: 'd', path: root, baseBranch: 'main' };
+  const host = createTaskLifecycleHost({ records: new Map(bound ? [[record.id, record]] : []),
+    getBoard: () => ({ tasks: { old: task }, modules: {} }),
+    getShell: () => ({ stateTarget: () => ({}), purgeTasks() {} }),
+    getHistory: () => [], getState: () => null, getRunState: () => 'idle',
+    directories: new Map([['d', dir]]), persist() {} });
+  return { root, git, task, dir, host };
+}
+
+for (const bound of [false, true]) test(`merged reclaimed workspace passes deletion preflight (bound=${bound})`, async t => {
+  const { host, task, git } = await reclaimedWorkspace(t, { bound });
+  // A sleeping branch can be behind main; it need not be restored to delete it.
+  await git('-c', 'user.name=test', '-c', 'user.email=test@local', 'commit', '--allow-empty', '-m', 'base advanced');
+  await host.prepareTaskDelete(task, [task.id], { automatic: true });
+  if (!bound) {
+    await host.purgeTaskData(task, [task.id]);
+    assert.equal(await git('branch', '--list', task.branch), '');
+  }
+});
+
+test('reclaimed branch with unique commits is reported as unmerged and preserved', async t => {
+  const { host, task, git } = await reclaimedWorkspace(t, { ahead: true });
+  await assert.rejects(host.prepareTaskDelete(task, [task.id]), { code: 'task_workspace_unmerged' });
+  assert.equal(await git('rev-list', '--count', `main..${task.branch}`), '1');
+});
+
+test('planned workspace with no checkout or branch can be deleted', async t => {
+  const { host, task } = await reclaimedWorkspace(t, { planned: true });
+  await host.purgeTaskData(task, [task.id]);
+});
+
+test('reclaimed workspace refuses an unavailable base branch', async t => {
+  const { host, task, dir, git } = await reclaimedWorkspace(t);
+  dir.baseBranch = 'missing-base';
+  await assert.rejects(host.prepareTaskDelete(task, [task.id]), { code: 'task_workspace_unverifiable' });
+  assert.ok(await git('branch', '--list', task.branch));
+});
+
+test('Git read failures cannot make a planned branch appear never created', async t => {
+  const { host, task, root } = await reclaimedWorkspace(t, { planned: true });
+  fs.renameSync(path.join(root, '.git'), path.join(root, 'unavailable-git'));
+  await assert.rejects(host.prepareTaskDelete(task, [task.id]), { code: 'task_workspace_unverifiable' });
+});
+
+test('a reclaimed record cannot delete a branch checked out at another path', async t => {
+  const { host, task, root, git } = await reclaimedWorkspace(t);
+  const other = path.join(root, 'other-checkout');
+  await git('worktree', 'add', other, task.branch);
+  await assert.rejects(host.prepareTaskDelete(task, [task.id]), { code: 'task_workspace_unverifiable' });
+  assert.equal(fs.existsSync(other), true);
+});
+
 test('a legacy planned task deletes its own clean worktree without a chat session', async t => {
   const { execFile } = require('node:child_process');
   const exec = require('node:util').promisify(execFile);

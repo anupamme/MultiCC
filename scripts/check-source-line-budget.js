@@ -417,8 +417,9 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +2 双语键（docsCollapseAll/docsExpandAll）：服务与文档的分组头可收起/展开 + 全部收起/展开。
     // +17 双语键（airQuotaGuard*）：Provider 页的「官方账号额度保护」卡片。
     //   两条改动合并后重跑生成器，实测 9420/597286，按真实高水位抬一格。
-    maxLines: 9420,
-    maxBytes: 597286,
+    // +1 双语键（airErrWorkspaceUnverifiable）：任务删除无法验证时的可读原因。
+    maxLines: 9422,
+    maxBytes: 597587,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
