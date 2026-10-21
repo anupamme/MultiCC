@@ -2,6 +2,7 @@ use multicc_core::{search::SearchIndex, usage};
 use napi::{bindgen_prelude::AsyncTask, Env, Result, Task};
 use napi_derive::napi;
 use std::{sync::Arc, time::Instant};
+pub mod sqlite;
 
 #[napi(object)]
 pub struct NativeResult {

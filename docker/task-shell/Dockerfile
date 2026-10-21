@@ -1,3 +1,8 @@
+FROM rust:1.98-bookworm AS rust-build
+WORKDIR /build
+COPY native ./native
+RUN cargo build --locked --release --manifest-path native/Cargo.toml
+
 FROM node:22-bookworm-slim AS tools
 
 # curl + tar + unzip are the only tools install.sh is allowed to need: it
@@ -11,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM tools AS clean-install
 WORKDIR /candidate
 COPY . .
+COPY --from=rust-build /build/native/target/release/libmulticc_addon.so /tmp/multicc-core.node
+RUN arch="$(uname -m)"; case "$arch" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) exit 1 ;; esac; \
+    mkdir -p "native/prebuilt/linux-$arch" && mv /tmp/multicc-core.node "native/prebuilt/linux-$arch/multicc_core.node"
 RUN chown -R node:node /candidate
 USER node
 ENV NODE_ENV=test ASR_LOCAL=off MULTICC_CHROME_BIN=/usr/bin/chromium
@@ -22,6 +30,9 @@ WORKDIR /opt/multicc
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
+COPY --from=rust-build /build/native/target/release/libmulticc_addon.so /tmp/multicc-core.node
+RUN arch="$(uname -m)"; case "$arch" in x86_64) arch=x64 ;; aarch64) arch=arm64 ;; *) exit 1 ;; esac; \
+    mkdir -p "native/prebuilt/linux-$arch" && mv /tmp/multicc-core.node "native/prebuilt/linux-$arch/multicc_core.node"
 RUN chmod +x docker/task-shell/fake-codex.js \
     && mkdir -p /var/lib/multicc \
     && chown -R node:node /opt/multicc /var/lib/multicc

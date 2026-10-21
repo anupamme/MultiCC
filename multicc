@@ -90,11 +90,9 @@ check_runtime_dependencies() {
     return 0
   fi
 
-  # Exit 10 = this Node cannot open SQLite databases. SQLite is part of Node
-  # (node:sqlite since 22.5), so there is no addon to rebuild: the fix is a
-  # newer Node, not a repair of the install tree.
+  # Exit 10 identifies a missing or incompatible Rust SQLite module.
   if [ "$check_rc" -eq 10 ]; then
-    echo "This Node ($("$NODE" -v)) cannot open SQLite databases; MultiCC needs Node 22.16 or newer."
+    echo "Rust SQLite is unavailable; install the matching MultiCC package, or build: npm run build:rust (set MULTICC_RUST_PREBUILT_DIR)."
   fi
   return "$check_rc"
 }

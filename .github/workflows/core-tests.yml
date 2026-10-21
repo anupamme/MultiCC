@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
@@ -33,6 +34,13 @@ jobs:
           npm ci --no-audit --no-fund
           cd app
           flutter pub get --enforce-lockfile
+
+      - name: Build Rust SQLite
+        run: node scripts/build-rust-kernels.js
+        env:
+          MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
+      - name: Configure Rust module
+        run: echo "MULTICC_RUST_PREBUILT_DIR=${{ runner.temp }}/multicc-rust-prebuilt" >> "$GITHUB_ENV"
 
       # scripts/run-test-tier.js reads tests/test-tiers.json directly. Its
       # command log is the auditable list of every selected path and variant.

@@ -106,7 +106,7 @@ function loadDatabaseConstructor() {
     return databaseConstructor();
   } catch (cause) {
     throw new OrchestrationSqliteError(
-      'SQLite is unavailable in this Node.js runtime; MultiCC needs Node 22.16 or newer (node:sqlite)',
+      'Rust SQLite is unavailable; install the matching MultiCC native module',
       { cause },
     );
   }

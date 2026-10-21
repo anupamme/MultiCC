@@ -53,12 +53,12 @@ const missing = checkSqliteRuntime({
 assert.strictEqual(missing.ok, false);
 assert.strictEqual(missing.exitCode, EXIT_SQLITE_UNAVAILABLE);
 assert.deepStrictEqual(missing.failures, [{
-  dependency: 'node:sqlite',
+  dependency: 'rust:sqlite',
   message: "Cannot find module 'node:sqlite'",
 }]);
 const report = formatReport(missing);
 assert.match(report, /Runtime: Node v22\.23\.2, ABI 127, darwin\/x64/);
-assert.match(report, /node:sqlite: Cannot find module/);
+assert.match(report, /rust:sqlite: Cannot find module/);
 assert.ok(report.includes(REQUIREMENT), 'the report must name the Node floor');
 assert.doesNotMatch(report, /npm rebuild/, 'nothing to rebuild: SQLite ships inside Node');
 

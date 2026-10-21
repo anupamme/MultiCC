@@ -11,9 +11,7 @@ function stageRustKernels({ repoRoot, out, npmEnv = {}, logger = console }) {
   const relative = path.join(`${platform}-${arch}`, 'multicc_core.node');
   const source = path.join(root, relative);
   if (!fs.existsSync(source)) {
-    if (process.env.MULTICC_REQUIRE_RUST_BUNDLE === '1') throw new Error(`打包缺少 Rust 模块：${platform}-${arch}`);
-    logger.log('[Rust] 未提供目标模块，安装包使用 Node 实现');
-    return null;
+    throw new Error(`打包缺少 Rust 模块：${platform}-${arch}`);
   }
   verify(source, platform, arch);
   const dest = path.join(out, 'native/prebuilt', relative);

@@ -1,22 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// MultiCC stores its durable state (task runs, task shells, orchestration,
-// provider quota cache) in SQLite, and SQLite now comes from Node itself:
-// `node:sqlite` has been in core since Node 22.5 and flag-free since 22.13.
-//
-// That replaced a compiled `better-sqlite3` addon, which was the only reason a
-// MultiCC install ever needed a compiler, a matching prebuild or a matching
-// ABI. There is nothing left to rebuild — so this probe answers exactly one
-// question, and `install.sh` / `./multicc` turn a failure into "your Node is
-// too old" instead of a stack trace at the first write.
+// 校验随包提供的 Rust SQLite 模块；不依赖宿主 SQLite 或编译器。
 
 const path = require('path');
 const { databaseConstructor } = require('../src/sqlite/driver');
 
 const EXIT_OK = 0;
 const EXIT_SQLITE_UNAVAILABLE = 10;
-const REQUIREMENT = 'Node 22.16 or newer';
+const REQUIREMENT = 'matching Rust SQLite native module';
 
 function runtimeDetails(runtime = process) {
   return {
@@ -32,8 +24,7 @@ function errorMessage(error) {
   return String(error.message || error).split('\n')[0];
 }
 
-// Loading the module is not a health check: the built-in SQLite can fail on the
-// first statement (or be missing entirely on an older Node). Open and close a
+// Loading the module is not a health check. Open and close a
 // real in-memory database, exactly like the CC-Switch import does.
 function checkSqliteRuntime({
   loadDatabase = () => databaseConstructor(),
@@ -49,7 +40,7 @@ function checkSqliteRuntime({
       if (database && typeof database.close === 'function') database.close();
     }
   } catch (error) {
-    failures.push({ dependency: 'node:sqlite', message: errorMessage(error) });
+    failures.push({ dependency: 'rust:sqlite', message: errorMessage(error) });
   }
 
   return {
@@ -66,13 +57,13 @@ function checkSqliteRuntime({
 function formatReport(result) {
   const r = result.runtime;
   if (result.ok) {
-    return `SQLite runtime OK (Node ${r.node}, ${r.platform}/${r.arch}) — storage needs no compiled dependency`;
+    return `SQLite runtime OK (Node ${r.node}, ${r.platform}/${r.arch}) — Rust SQLite module ready`;
   }
   return [
     'SQLite runtime check failed.',
     `Runtime: Node ${r.node}, ABI ${r.abi}, ${r.platform}/${r.arch}`,
     ...result.failures.map(failure => `- ${failure.dependency}: ${failure.message}`),
-    `Repair: run MultiCC on ${result.requirement} (the same floor package.json declares).`,
+    `Repair: install the ${result.requirement}; source checkouts: npm run build:rust and configure MULTICC_RUST_PREBUILT_DIR.`,
   ].join('\n');
 }
 

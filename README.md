@@ -508,7 +508,7 @@ The linked survey is historical, not evidence that individual features remain ex
 
 Key decisions: vendor transcripts are never translated; authoritative conversation and provider records remain inspectable local files, while orchestration and rebuildable search indexes use `node:sqlite`; each session owns a branch and worktree; the network bind is fail-closed. The desktop app adds one more client without adding a second UI — it embeds this same server and serves this same web page from a loopback port.
 
-**Built with:** Node.js · Express · ws · node:sqlite (built into Node 22.16+, so there is no compiled SQLite addon) · sherpa-onnx (on-device ASR) · cli-provider-router · chokidar · tmux · Flutter · Electron (desktop shell). No frontend build step — the web client is plain JavaScript.
+**Built with:** Node.js · Express · ws · Rust SQLite (bundled through napi-rs) · sherpa-onnx (on-device ASR) · cli-provider-router · chokidar · tmux · Flutter · Electron (desktop shell). No frontend build step — the web client is plain JavaScript.
 
 **→ [Architecture](docs/architecture.md)**
 

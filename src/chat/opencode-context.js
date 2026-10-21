@@ -10,7 +10,7 @@
 // session_started event, so sibling sessions in the same working directory are
 // never mis-attributed.
 //
-// Everything here is read-only (node:sqlite readOnly connection tolerates the
+// Everything here is read-only (Rust SQLite readOnly connection tolerates the
 // live WAL). MultiCC never writes to the user's OpenCode database.
 
 const path = require('path');
@@ -37,10 +37,8 @@ function resolveThreshold(env = process.env) {
 }
 
 function openDefaultDatabase(dbPath) {
-  // Lazy require: node:sqlite is experimental and emits a startup warning; the
-  // lazy load also keeps the module requireable in environments without it.
-  const { DatabaseSync } = require('node:sqlite');
-  return new DatabaseSync(dbPath, { readOnly: true });
+  const Database = require('../sqlite/driver').databaseConstructor();
+  return new Database(dbPath, { readOnly: true, fileMustExist: true });
 }
 
 function extractTokens(data) {

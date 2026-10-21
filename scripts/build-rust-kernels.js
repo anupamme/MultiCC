@@ -36,7 +36,7 @@ function build({ platform = process.platform, arch = process.arch,
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.copyFileSync(source, file);
   if (platform === process.platform && arch === process.arch) {
-    if (require(file).protocolVersion() !== 1) throw new Error('Rust 接口版本不匹配');
+    if (require(file).protocolVersion() !== 1 || typeof require(file).RustDatabase !== 'function') throw new Error('Rust 接口版本不匹配');
   }
   console.log(`Rust 模块已构建：${file}`);
   return file;
