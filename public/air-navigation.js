@@ -19,9 +19,36 @@
     if (history.state?.airPrevious?.url?.startsWith('/air')) history.back();
     else context.setMode(context.mode === 'attention' || ['docs', 'memory', 'taskgraph'].includes(context.mode) ? 'overview' : 'settings');
   }
+  // 控制台 → 目录 → 任务是三层浮层：从控制台点开的目录页（来路是 view=overview）
+  // 带一颗「关闭」，关掉退回控制台；目录里再开任务走 air.js 的 #chat-layer，关掉
+  // 回到目录。开着任务时历史条目的来路是目录本身，所以「是不是一层」只在没开任务
+  // 时重算 —— 否则关掉任务那一下 class 被摘了又挂回来，滑入动画会再放一遍。
+  let consoleLayer = false;
+  const fromConsole = entry => { try { return new URL(entry.url, location.origin).searchParams.get('view') === 'overview'; } catch (_) { return false; } };
+  function closeLayer() {
+    const layout = $('task-layout');
+    const leave = () => {
+      layout.classList.remove('is-leaving');
+      if (history.state?.airPrevious && fromConsole(history.state.airPrevious)) history.back();
+      else context.setMode('overview');
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { leave(); return; }
+    layout.classList.add('is-leaving');
+    setTimeout(leave, 160);
+  }
+  function renderLayer(mode, taskId) {
+    if (mode !== 'tasks') consoleLayer = false;
+    else if (!taskId) consoleLayer = !!history.state?.airPrevious && fromConsole(history.state.airPrevious);
+    $('task-layout').classList.toggle('is-console-layer', consoleLayer);
+    const close = $('directory-layer-close');
+    if (!close) return;
+    close.hidden = !consoleLayer;
+    close.onclick = closeLayer;
+  }
   function render(next) {
     context = next;
     const { mode, taskId, setMode } = context;
+    renderLayer(mode, taskId);
     const button = $('page-back');
     button.hidden = !!taskId || primary.has(mode);
     const previous = history.state?.airPrevious;
@@ -43,7 +70,7 @@
     $('side-more').onclick = () => setMode('settings');
     $('recent-all').onclick = () => { if (matchMedia('(max-width: 760px)').matches) setMode('recent'); else { root.MultiCCAirAdmin.showAllTasks(); setMode('overview'); } };
   }
-  root.MultiCCAirNavigation = { write, render, back, go: view => context?.setMode(view),
+  root.MultiCCAirNavigation = { write, render, back, closeLayer, go: view => context?.setMode(view),
     restore: () => requestAnimationFrame(() => {
       const scroller = document.querySelector('#console-center:not([hidden]), #admin-center:not([hidden])');
       if (scroller) scroller.scrollTop = history.state?.airScroll || 0;

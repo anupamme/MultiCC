@@ -306,6 +306,10 @@
               <button id="directory-mode-terminal" type="button" role="tab" aria-selected="false" data-i18n="airModeTerminal">Terminal</button>
             </div>
             <button id="directory-memo" type="button" data-i18n="memoTitle">📝 备忘</button>
+            <!-- 从控制台点开的目录页是盖在控制台上的一层（控制台 → 目录 → 任务，三层
+                 浮层）：关掉它就回到控制台，看法 / 滚动位置原样。只在来路是控制台时
+                 出现，由 air-navigation.js 管显隐。 -->
+            <button id="directory-layer-close" class="directory-layer-close" type="button" hidden aria-label="返回控制台" data-i18n-aria-label="airAdminBackToConsole" title="返回控制台" data-i18n-title="airAdminBackToConsole"><span aria-hidden="true">✕</span> <span data-i18n="close">关闭</span></button>
           </div>
           <section id="directory-terminals" aria-label="本目录终端" data-i18n-aria-label="airDirectoryTerminals">
             <div class="section-heading">

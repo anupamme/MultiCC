@@ -279,3 +279,30 @@ test('the standalone artifacts page owns the list, its two PATCH actions and the
   assert.match(css, /\.directory-artifact-actions \{ flex: 0 0 auto; display: flex; gap: 5px; \}/);
   assert.match(css, /@media \(max-width: 520px\)/);
 });
+
+// 控制台两种看法（按任务 / 按目录）与「控制台 → 目录 → 任务」三层浮层。真浏览器里的
+// 开关链路在 tests/test-air-console-layers-cdp.js；CDP 那组不在 CI，这里钉形状。
+test('console view switch and the console-to-directory layer keep their shape', () => {
+  const html = read('public/air.html');
+  const admin = read('public/air-admin.js');
+  const nav = read('public/air-navigation.js');
+  const css = read('public/air-navigation.css');
+  // 看法切换：同一种 tablist，记在本机，词沿用「按任务 / 按目录」。
+  assert.match(admin, /const CONSOLE_VIEW_KEY = 'air:console-view'/);
+  assert.match(admin, /\['tasks', 'docsScopeTask'\], \['dirs', 'docsScopeDir'\]/);
+  assert.equal(zh.docsScopeTask, '按任务');
+  assert.equal(zh.docsScopeDir, '按目录');
+  assert.match(admin, /home\.dataset\.view = consoleView/);
+  assert.match(css, /\.console-home\[data-view="dirs"\] > \.console-flow/);
+  // 目录卡把「等我处理」写出来：目录看法里没有待办流。
+  assert.match(admin, /directory-card-needs/);
+  // 目录这一层：关闭钮在目录工具条里、默认藏着，文案走词典。
+  assert.match(html, /id="directory-layer-close"[^>]*hidden[^>]*data-i18n-aria-label="airAdminBackToConsole"/);
+  assert.equal(zh.airAdminBackToConsole, '返回控制台');
+  assert.match(nav, /classList\.toggle\('is-console-layer', consoleLayer\)/);
+  assert.match(nav, /searchParams\.get\('view'\) === 'overview'/);
+  // 平时不许在 #task-layout 上留 transform：展开态对话浮层是 position: fixed。
+  assert.match(css, /#task-layout\.is-console-layer:not\(\[hidden\]\) \{ animation: air-layer-in/);
+  assert.doesNotMatch(css, /#task-layout\.is-console-layer[^{]*\{[^}]*transform:/);
+  assert.doesNotMatch(read('public/air.js'), /is-console-layer|directory-layer-close/);
+});

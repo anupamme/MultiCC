@@ -79,6 +79,14 @@
   // 底部「更多」也不该每次快照刷新都自己合上。
   let consoleHomeQuery = '';
   let consoleMoreOpen = false;
+  // 控制台两种看法，顶上一道 tab 直接切：tasks = 以任务为主（待办流 + 目录 + 更多，
+  // 原样）；dirs = 只铺目录卡，点一张就在当前窗口开那个目录（盖在控制台上的一层，
+  // 关掉回到这里 —— 见 air-navigation.js 的 is-console-layer）。选择记在本机：
+  // 从目录退回来、刷新、下次打开都还是同一种看法。
+  const CONSOLE_VIEW_KEY = 'air:console-view';
+  let consoleView = (() => {
+    try { return root.localStorage.getItem(CONSOLE_VIEW_KEY) === 'dirs' ? 'dirs' : 'tasks'; } catch (_) { return 'tasks'; }
+  })();
   // 输入法组合期（拼音还没选词）里整页重建，等于把搜索框从文档里摘走：浏览器会就此
   // 结束这次组合，一个字也提交不了 —— 中文打不出来，英文却没事（英文的每个字符本来
   // 就已经落在 value 里）。所以组合期间不重建，只记一笔「欠一次」，
@@ -709,7 +717,26 @@
     const newDirectory = action(t('airAddDirectory'), () => el('add-directory').click(), 'console-home-add-directory');
     newDirectory.id = 'console-home-new-directory';
     homeActions.append(newTask, newDirectory);
-    top.append(homeSearch, homeActions);
+    // 形状照抄目录页那道 Chat / Terminal 切换（.directory-mode）：同一种 tab，同一套样式。
+    const viewSwitch = make('div', null, 'directory-mode console-view-switch');
+    viewSwitch.id = 'console-view-switch';
+    viewSwitch.setAttribute('role', 'tablist');
+    viewSwitch.setAttribute('aria-label', t('airConsole'));
+    for (const [view, key] of [['tasks', 'docsScopeTask'], ['dirs', 'docsScopeDir']]) {
+      const tab = make('button', t(key));
+      tab.type = 'button';
+      tab.id = `console-view-${view}`;
+      tab.setAttribute('role', 'tab');
+      tab.dataset.consoleView = view;
+      tab.onclick = () => {
+        if (consoleView === view) return;
+        consoleView = view;
+        try { root.localStorage.setItem(CONSOLE_VIEW_KEY, view); } catch (_) { /* 无痕模式：只在本页记住 */ }
+        applyView();
+      };
+      viewSwitch.append(tab);
+    }
+    top.append(viewSwitch, homeSearch, homeActions);
 
     const flow = make('section', null, 'console-flow');
     const attention = make('section', null, 'console-priority');
@@ -758,8 +785,17 @@
     mobileSlot.id = 'console-mobile-slot';
 
     const home = make('section', null, 'console-home');
+    home.id = 'console-home';
     home.append(top, flow, mobileSlot, directoryPanel, more);
     content.replaceChildren(home);
+    // 目录看法只留顶栏与目录网格（其余几块由 air-navigation.css 按 data-view 让开，
+    // 节点不拆：切回任务看法不用重画，手机那张卡也照旧挂着）；搜索框跟着改搜目录。
+    function applyView() {
+      home.dataset.view = consoleView;
+      for (const tab of viewSwitch.children) tab.setAttribute('aria-selected', String(tab.dataset.consoleView === consoleView));
+      homeSearch.placeholder = t(consoleView === 'dirs' ? 'airSearchNameOrPath' : 'airAdminSearchPlaceholder');
+    }
+    applyView();
 
     // 「最近使用」按最后一次更新时间倒序；已经出现在上面两段的（待办 /
     // 正在运行）不在这里重复 —— 首屏同一件事只说一次。
@@ -783,11 +819,16 @@
       const dirTasks = tasks.filter(task => task.dirId === directory.id);
       const activeCount = context.data.taskStats?.[directory.id]?.running ?? dirTasks.filter(isRunning).length;
       const total = context.data.taskStats?.[directory.id]?.total ?? dirTasks.length;
+      // 「等我处理」也挂到卡上：目录看法里没有待办流，哪个目录在等人得从卡上看出来。
+      const needs = context.data.taskStats?.[directory.id]?.needs
+        ?? todos.filter(task => task.dirId === directory.id).length;
+      const needsBadge = needs ? [make('small', `${t('airNeedsMeFilter')} ${needs}`, 'directory-card-needs')] : [];
       button.append(make('strong', '▣ ' + (directory.name || directory.id)),
         make('small', directory.path || ''),
         make('small', activeCount
           ? t('airDirTaskCountActive', { total, active: activeCount })
           : t('airDirTaskCount', { total })),
+        ...needsBadge,
         // 与目录库同一份 worktree 口径（air-worktrees.js 的 summary）。
         make('small', root.MultiCCAirWorktrees?.summary?.(directory)
           || t('airDirWorktreeCount', { n: directory.worktreeCount || 0 })));
