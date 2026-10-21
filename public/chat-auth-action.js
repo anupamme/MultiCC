@@ -42,7 +42,7 @@
           );
           btn.textContent = '✓ 已打开登录终端';
           window.open(data.url, '_blank');
-          addSystemMsg(`已在新标签页打开 ${label} 登录终端：在终端里输入 ${action.loginCommand || '/login'} 完成登录，然后回到这里重新发送消息即可。`);
+          addSystemMsg(`已在新标签页打开 ${label} 登录终端：${action.autoStart ? '按提示完成浏览器授权' : `在终端里输入 ${action.loginCommand || '/login'} 完成登录`}，然后回到这里重新发送消息即可。`);
         } catch (e) {
           btn.disabled = false;
           btn.textContent = `打开 ${label} 登录终端`;

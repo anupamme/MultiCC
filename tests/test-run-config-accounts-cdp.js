@@ -34,6 +34,7 @@ ${['auth-client.js', 'i18n-catalog.js', 'i18n.js', 'shared/dom-helpers.js', 'sha
 };
 routes['/api/sessions'] = () => json({ ok: true, sessions: [], directories: [] });
 routes['/api/providers'] = () => json({ providers: [], defaults: {} });
+routes['GET /api/commandcode/auth/status'] = () => json({ ok: true, credentialSaved: false, userName: '', environmentKey: false });
 
 const NEW_ID = 'aaaaaaaaaaaaaaaa';
 const OLD_ID = 'bbbbbbbbbbbbbbbb';
@@ -41,6 +42,44 @@ const qaDir = () => process.env.MULTICC_RUN_CONFIG_ACCOUNTS_QA_DIR || path.join(
 const optionTexts = `[...document.querySelectorAll('.air-config-dialog[open] .rc-account option')].map(o => o.value + '=' + o.textContent)`;
 // 只认当前打开的那个对话框：关掉的旧对话框要等 close 事件派发完才从 DOM 摘掉。
 const visible = selector => `(() => { const el = document.querySelector(${JSON.stringify('.air-config-dialog[open] ' + selector)}); return !!el && !el.closest('[hidden]') && el.getBoundingClientRect().height > 0; })()`;
+
+test('官方账号登录：移动端打开终端、刷新身份，保留已有 API Key 选择并提供弹窗拦截后的入口', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  let saved = false;
+  let logins = 0;
+  const fixture = { ...routes,
+    'GET /api/cli-accounts/commandcode': () => json({ accounts: [{ id: OLD_ID, label: '独立密钥', keyHint: '…test' }] }),
+    'GET /api/commandcode/auth/status': () => json({ ok: true, credentialSaved: saved, userName: saved ? '官方测试用户' : '', environmentKey: false }),
+    'POST /api/commandcode/auth/login': () => { logins++; saved = true; return json({ ok: true, sessionId: 'commandcode-login' }); },
+  };
+  await withCdpHarness({ routes: fixture, screenshotDir: qaDir() }, async page => {
+    await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await page.navigate('/run-config-host.html');
+    assert.ok(await page.waitFor('window.MultiCCRunConfig && window.MultiCCChatAiConfig'));
+    await page.evaluate(`window.open = () => ({ opener: null, location: { replace: url => { window.loginPopupUrl = url; } } });
+      window.MultiCCRunConfig.open({ configuration: { cli: 'commandcode', cliAccounts: { commandcode: '${OLD_ID}' } } }, ['commandcode', 'opencode'], () => {})`);
+    assert.ok(await page.waitFor(`document.querySelector('.rc-account-login-row [role="status"]')?.textContent.includes('尚未保存')`));
+    assert.equal(await page.evaluate(visible('.rc-account-login')), true);
+    await page.evaluate(`document.querySelector('.rc-account-login').click()`);
+    assert.ok(await page.waitFor(`window.loginPopupUrl === '/?id=commandcode-login'`));
+    assert.equal(logins, 1);
+    assert.equal(await page.evaluate(`document.querySelector('.rc-account').value`), OLD_ID);
+    assert.match(await page.evaluate(`document.querySelector('.rc-account-login-row [role="status"]').textContent`), /完成浏览器授权/);
+    await page.evaluate(`document.querySelector('.rc-account-login-refresh').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('.rc-account-login-row [role="status"]')?.textContent.includes('官方测试用户')`));
+    assert.equal(await page.evaluate(`document.querySelector('.rc-account').value`), OLD_ID);
+    // 浏览器拦截窗口时，仍能通过链接打开登录终端。
+    await page.evaluate(`window.open = () => null; document.querySelector('.rc-account-login').click()`);
+    assert.ok(await page.waitFor(`!document.querySelector('.rc-account-login').disabled`));
+    assert.equal(logins, 2);
+    assert.equal(await page.evaluate(visible('.rc-account-login-link')), true);
+    assert.equal(await page.evaluate(`document.querySelector('.rc-account-login-link').getAttribute('href')`), '/?id=commandcode-login');
+    await page.evaluate(`document.querySelector('.rc-account-login').scrollIntoView({ block: 'center' })`);
+    console.log('官方账号登录界面截图：', await page.screenshot('commandcode-official-login'));
+    await page.evaluate(`document.querySelector('.rc-cli-card[data-cli="opencode"]').click()`);
+    assert.ok(await page.waitFor(`!${visible('.rc-account-login-row')}`));
+  });
+});
 
 test('Command Code: add an account inline, save the pick, delete it back to the local login', async t => {
   if (!findChromeBinary()) return t.skip('Chrome required');

@@ -1081,6 +1081,8 @@ async function createSession(id) {
   const routeSession = terminalProxyRoutes.sessionSegment(persisted);
   const provEnv = providerRouterRuntime.resolveSpawnEnv(persisted);
   const termEnv = { ...provEnv.env, ...(persisted.loginEnv || {}) }; secretsVault.applyEnvOverlay(termEnv); // loginEnv: allowlisted login-terminal pins (sanitizeLoginEnv), e.g. CODEX_HOME=<account dir>; 保险箱条目按名注入 env（set-if-absent，见 src/secrets-vault.js）
+  // 登录终端必须走官方浏览器授权，不能被继承的 API Key 短路。
+  if (persisted.loginFlow === 'commandcode-login') termEnv.COMMAND_CODE_API_KEY = '';
   if (persisted.cli === 'claude') {
     for (const k of providers.CLAUDE_ROUTING_KEYS) {
       if (!(k in termEnv)) termEnv[k] = '';
@@ -2125,6 +2127,14 @@ providerRoutes.mountCatalogRoutes(app);
 // (provider/model strings, cached for 1 day). Used by the chat picker when an
 // opencode session has no multicc-managed provider's model list to render.
 mountOpenCodeModelRoutes(app); require('./src/routes/cli-key-accounts').mountCliKeyAccountRoutes(app, { store: require('./src/cli-key-accounts').sharedCliKeyAccountStore(), sessionPersistence }); require('./src/routes/codex-models').mountCodexModelRoutes(app); // account-entitled Codex app-server model/list, 60s cache + explicit refresh
+require('./src/routes/commandcode-auth').mountCommandcodeAuthRoutes(app, {
+  directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id),
+  getStatus: () => {
+    const env = { ...process.env };
+    secretsVault.applyEnvOverlay(env);
+    return require('./src/routes/commandcode-auth').readCommandcodeLogin({ env });
+  },
+});
 require('./src/routes/pricing').mountPricingRoutes(app, { priceTable: require('./src/pricing/price-table').sharedPriceTable(), asyncHandler }); // GET /api/pricing/status|lookup|search + POST /api/pricing/refresh — process-wide models.dev price table for the Auto router (src/pricing/price-table.js)
 
 // GET /api/qoder/models — the Qoder CN catalog entitled to the logged-in

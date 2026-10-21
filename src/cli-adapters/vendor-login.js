@@ -8,6 +8,12 @@
 const { displayNameOf } = require('../cli/cli-capability');
 
 const VENDOR_LOGIN = Object.freeze({
+  commandcode: Object.freeze({
+    loginFlow: 'commandcode-login',
+    label: displayNameOf('commandcode'),
+    loginCommand: 'command-code login',
+    autoStart: true,
+  }),
   codebuddy: Object.freeze({
     loginFlow: 'codebuddy-login',
     label: displayNameOf('codebuddy'),
@@ -37,6 +43,10 @@ function cliForLoginFlow(loginFlow) {
 // login flow → caller keeps its normal terminal command).
 function vendorLoginTerminalCmd(loginFlow, cliCommands) {
   const cli = cliForLoginFlow(loginFlow);
+  if (cli === 'commandcode' && cliCommands && cliCommands[cli]) {
+    const quoted = `'${String(cliCommands[cli]).replace(/'/g, `'"'"'`)}'`;
+    return `${quoted} login --no-auto-update`;
+  }
   return cli && cliCommands && cliCommands[cli] ? `${cliCommands[cli]}` : null;
 }
 

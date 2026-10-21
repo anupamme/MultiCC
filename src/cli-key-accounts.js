@@ -1,7 +1,7 @@
 'use strict';
 
-// API-key accounts for CLIs that authenticate with a plain key rather than an
-// OAuth login — Command Code and OpenCode's own opencode.ai lines (Zen/Go).
+// 为 Command Code 和 OpenCode 的 opencode.ai 线路（Zen/Go）保存独立 API Key 账户。
+// Command Code 也支持官方浏览器登录；该入口由 routes/commandcode-auth 管理。
 // The user keeps several keys here and each session picks one per lane
 // (`session.cliAccounts = {<cli>: <accountId>}`); a session without a pick
 // keeps the CLI's own login exactly as before.

@@ -102,6 +102,10 @@ dialog .air-config-field input { margin-top: 7px; }
 .rc-account-row select { flex: 1 1 auto; width: auto; }
 .rc-account-delete, .rc-account-form button { min-height: 32px; padding: 0 11px; color: #4c7daa; border: 1px solid #d5e2ef; border-radius: 8px; background: #fff; font-size: 11px; cursor: pointer; }
 .rc-account-delete { flex: none; color: #b3423a; }
+.rc-account-login-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.rc-account-login-row .rc-login-status { flex: 1 1 100%; margin: 0; font-size: 11px; line-height: 1.5; color: #67829c; }
+.rc-account-login-row button { min-height: 32px; padding: 0 11px; color: #4c7daa; border: 1px solid #d5e2ef; border-radius: 8px; background: #fff; cursor: pointer; }
+.rc-account-login-row[hidden], .rc-account-login-link[hidden] { display: none; }
 .rc-account-form { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
 .rc-account-form input { flex: 1 1 160px; width: auto; }
 .rc-account-form button.primary { color: #146dcc; background: #eaf4ff; border-color: #b9d9f8; }

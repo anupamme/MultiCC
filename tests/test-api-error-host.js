@@ -557,6 +557,23 @@ test('a vendor-auth CLI owns its account, so its revocation never parks the prov
   assert.deepEqual(parks, [], 'the vendor TUI owns that account; eviction would be wrong');
 });
 
+test('官方账号认证失败提供自动登录入口，独立 API Key 失败不提示切换本机账号', () => {
+  for (const pickedKey of [false, true]) {
+    const h = harness();
+    h.decideWith(() => revokedDecision({
+      error: { category: 'authentication_permission', rootCause: REVOKED_TEXT, sanitizedMessage: REVOKED_TEXT },
+    }));
+    revokedTurn(h, { cli: 'commandcode', ...(pickedKey ? { cliAccounts: { commandcode: 'test-account' } } : {}) });
+    const notice = h.broadcasts.find(item => item.payload.type === 'api_error_policy').payload;
+    if (pickedKey) assert.equal(notice.authAction, undefined);
+    else {
+      assert.equal(notice.authAction.cli, 'commandcode');
+      assert.equal(notice.authAction.autoStart, true);
+      assert.match(notice.message, /完成浏览器授权/);
+    }
+  }
+});
+
 test('a providerless default route is never parked', () => {
   const parks = [];
   const h = harness({ recordProviderFailure: input => parks.push(input) });
