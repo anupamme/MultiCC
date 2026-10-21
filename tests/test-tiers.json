@@ -968,6 +968,15 @@
       ]
     },
     {
+      "path": "tests/test-air-console-layers-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp",
+      "entrypoints": [
+        "npm:test:cdp"
+      ]
+    },
+    {
       "path": "tests/test-air-dir-schedules-cdp.js",
       "tier": "flow",
       "lane": "cdp",

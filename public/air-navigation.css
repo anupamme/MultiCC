@@ -84,6 +84,29 @@
 .console-more > summary { padding: 14px 2px 6px; color: var(--muted); font-size: 13px; cursor: pointer; }
 .console-more-body { padding-top: 10px; }
 .console-more-body .admin-stats { margin-top: 6px; }
+/* 控制台的两种看法（air-admin.js 的 consoleView）：目录看法只留顶栏与目录网格。 */
+.console-view-switch { flex-shrink: 0; margin: 0; }
+.console-home[data-view="dirs"] > .console-flow,
+.console-home[data-view="dirs"] > .console-mobile-slot,
+.console-home[data-view="dirs"] > .console-more { display: none; }
+.console-home[data-view="dirs"] > .console-directories { margin-top: 0; }
+.console-directory-grid small.directory-card-needs { color: var(--warning); font-weight: 600; }
+/* 从控制台点开的目录页 = 盖在控制台上的一层（air-navigation.js 的 renderLayer）：
+   升起来、关掉时落下去。位移只在动画那一下存在 —— 平时 #task-layout 不能带 transform，
+   否则展开态的对话浮层（position: fixed）会被它困在这一格里。 */
+#task-layout.is-console-layer:not([hidden]) { animation: air-layer-in .22s ease-out; }
+#task-layout.is-console-layer.is-leaving { animation: air-layer-out .16s ease-in forwards; }
+@keyframes air-layer-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+@keyframes air-layer-out { to { opacity: 0; transform: translateY(18px); } }
+@media (prefers-reduced-motion: reduce) { #task-layout.is-console-layer:not([hidden]), #task-layout.is-console-layer.is-leaving { animation: none; } }
+.directory-layer-close { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: 9px; color: var(--accent-strong); font-weight: 600; }
+/* 窄屏工具条第二行已经是三颗平分的入口（air.css 560px 那段）：关闭钮不去挤它们，
+   挪到第一行 Chat / Terminal 的右边。 */
+@media (max-width: 560px) {
+  /* 两颗加起来正好一整行（88 + 8 的间距），后面三颗于是一定折到第二行。 */
+  .directory-toolbar:has(> #directory-layer-close:not([hidden])) > .directory-mode { order: -2; flex: 0 0 calc(100% - 96px); }
+  .directory-toolbar > #directory-layer-close { order: -1; flex: 0 0 88px; justify-content: center; padding: 0; }
+}
 @media (max-width: 760px) {
   .console-home-top { flex-wrap: wrap; gap: 8px; }
   .console-home-top input { flex-basis: 100%; }
