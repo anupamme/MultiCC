@@ -115,7 +115,15 @@ function readEnvValues(envFile) {
 // runtime, and is set only when the child really is that binary (dev mode):
 // packaged builds run the staged Node runtime, where the variable is at best
 // meaningless and at worst confusing in a stack trace.
-function buildChildEnv({ port, desktopEnv, baseEnv = {}, dotenv = {}, runtimeNode }) {
+//
+// `desktopShell` marks the child as served by this Electron shell. The shell's
+// packaged Resources tree is byte-for-byte the one a standalone install carries
+// (app-server/ + runtime/ + launcher/), so the server cannot tell them apart by
+// looking at the filesystem — and must not: it would run install.sh with the
+// folder holding MultiCC.app as its target. The standalone launcher uses this
+// same module and never sets the flag, so a tarball install keeps updating
+// itself through install.sh.
+function buildChildEnv({ port, desktopEnv, baseEnv = {}, dotenv = {}, runtimeNode, desktopShell = false }) {
   if (!Number.isInteger(port) || port <= 0) throw new TypeError('[desktop-env] port is required');
   if (!desktopEnv || !desktopEnv.dataRoot) throw new TypeError('[desktop-env] desktopEnv is required');
   const env = { ...baseEnv };
@@ -128,6 +136,11 @@ function buildChildEnv({ port, desktopEnv, baseEnv = {}, dotenv = {}, runtimeNod
   env.MULTICC_MEMORY_ROOT = desktopEnv.memoryRoot;
   env.MULTICC_ENV_FILE = desktopEnv.envFile;
   env.MULTICC_DESKTOP = '1';
+  // Always written explicitly: the marker describes the process tree, never
+  // whatever the launching environment happened to carry. The standalone
+  // launcher leaves it unset, which is exactly what makes it updatable.
+  if (desktopShell) env.MULTICC_DESKTOP_SHELL = '1';
+  else delete env.MULTICC_DESKTOP_SHELL;
   if (desktopEnv.electronRuntime) env.ELECTRON_RUN_AS_NODE = '1';
   else delete env.ELECTRON_RUN_AS_NODE;
   // Put the runtime the child will actually run on first on PATH:

@@ -90,6 +90,14 @@ function detectStandaloneUpdate(options = {}) {
   const { rootDir, env = process.env, fsImpl = fs, pathImpl = path, platform = process.platform } = options;
   if (!rootDir || !/^(1|true|yes|on)$/i.test(String(env.MULTICC_DESKTOP || '').trim())) return null;
   if (env.ELECTRON_RUN_AS_NODE) return null;
+  // The Electron desktop shell stages the same Resources tree a standalone
+  // package carries, so the layout alone cannot tell them apart — and the
+  // difference matters: here bundleRoot would be the directory that HAPPENS to
+  // hold MultiCC.app (e.g. /Applications), which install.sh would treat as an
+  // old installation and move aside. The shell marks its backend explicitly
+  // (desktop/lib/desktop-env.js); a real standalone install never does, and
+  // keeps updating itself through install.sh.
+  if (/^(1|true|yes|on)$/i.test(String(env.MULTICC_DESKTOP_SHELL || '').trim())) return null;
   const resources = pathImpl.dirname(rootDir);
   const cliPath = pathImpl.join(resources, 'launcher', 'standalone-cli.js');
   const runtimeNode = platform === 'win32'

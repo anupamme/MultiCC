@@ -179,6 +179,14 @@ test('buildChildEnv: dotenv fills gaps, desktop knobs always win, bundled runtim
   assert.equal(env.MULTICC_MEMORY_ROOT, layout.memoryRoot);
   assert.equal(env.MULTICC_ENV_FILE, layout.envFile);
   assert.equal(env.MULTICC_DESKTOP, '1');
+  // No file tree can tell this shell from a standalone install (both stage
+  // app-server/ + runtime/ + launcher/), so the backend carries an explicit
+  // marker; the standalone launcher calls the same module without it.
+  assert.equal(env.MULTICC_DESKTOP_SHELL, undefined, 'standalone-style children carry no shell marker');
+  const shellEnv = desktopEnv.buildChildEnv({
+    port: 3457, desktopEnv: layout, baseEnv: { MULTICC_DESKTOP_SHELL: 'stale' }, dotenv: {}, desktopShell: true,
+  });
+  assert.equal(shellEnv.MULTICC_DESKTOP_SHELL, '1');
   // The child is the staged Node runtime, not the Electron binary: the flag
   // that turns Electron into Node must not leak into a real Node process.
   assert.equal(env.ELECTRON_RUN_AS_NODE, undefined, 'packaged children run the bundled runtime');
@@ -787,6 +795,41 @@ test('update route: desktop installs refuse git-based self-update', withEnv({ MU
   handlers['POST /api/update']({ id: 'u1', body: {} }, res);
   assert.equal(res.statusCode, 409);
   assert.equal(res.body.code, 'DESKTOP_UPDATE_UNSUPPORTED');
+}));
+
+test('update route: a desktop shell staging the standalone tree still reports kind "desktop" and refuses', withEnv({ MULTICC_DESKTOP: '1', MULTICC_DESKTOP_SHELL: '1' }, async () => {
+  // The packaged app really does carry launcher/ + runtime/ (that is how it
+  // runs the same server a standalone install ships), so the old layout-only
+  // detection saw "standalone" and ran install.sh with --dir <folder holding
+  // MultiCC.app>. The shell marker is what keeps that from happening.
+  const base = tmpdir('multicc-desktop-shell-');
+  const resources = path.join(base, 'MultiCC.app', 'Contents', 'Resources');
+  const rootDir = path.join(resources, 'app-server');
+  fs.mkdirSync(path.join(resources, 'launcher'), { recursive: true });
+  fs.mkdirSync(path.join(resources, 'runtime', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(resources, 'launcher', 'standalone-cli.js'), '');
+  fs.writeFileSync(path.join(resources, 'runtime', 'bin', 'node'), '', { mode: 0o755 });
+
+  const { createUpdateRoute } = require(path.join(ROOT, 'src', 'routes', 'update-route.js'));
+  const { app, handlers } = fakeApp();
+  const spawned = [];
+  createUpdateRoute({
+    chatSessions: new Map(),
+    spawn: (...args) => { spawned.push(args); return { unref() {}, on() {}, pid: 1 }; },
+    rootDir,
+    getShuttingDown: () => false,
+  }).mountRoutes(app);
+
+  const status = fakeRouteRes();
+  handlers['GET /api/update/status']({ id: 's1' }, status);
+  assert.equal(status.body.kind, 'desktop');
+
+  const res = fakeRouteRes();
+  handlers['POST /api/update']({ id: 'u1', body: {} }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(res.body.code, 'DESKTOP_UPDATE_UNSUPPORTED');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(spawned.length, 0, 'install.sh must never run from inside the desktop shell');
 }));
 
 test('host-env honors MULTICC_ENV_FILE for read and write', withEnv({ MULTICC_ENV_FILE: undefined }, async () => {

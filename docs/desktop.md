@@ -76,7 +76,7 @@ userData 的物理路径：macOS `~/Library/Application Support/MultiCC`；Windo
 
 ### 桌面版与 CLI 版的差异
 
-- **更新**：桌面版内点「检查更新」会提示 `DESKTOP_UPDATE_UNSUPPORTED`——请下载新的桌面安装包覆盖安装（数据保留在 userData，不受影响）。
+- **更新**：桌面版不能自更新。侧栏底部的版本行照常检查新版本，点开的对话框只提供「打开发布页」——下载新的桌面安装包覆盖安装即可（数据保留在 userData，不受影响）。服务端的 `/api/update` 对桌面版固定返回 409 `DESKTOP_UPDATE_UNSUPPORTED`：桌面版的程序就是 `.app` 本体，`install.sh` 那套「替换安装目录」在这里没有对应物。`/api/update/status` 因此报 `kind: "desktop"`（独立安装包仍是 `standalone`，git 检出是 `git`）。
 - **重启**：桌面版的「重启」不再拉起外部管理脚本，而是优雅退出、由主进程自动重新拉起服务端（同一数据目录与端口），进行中的输出会先落盘。
 - **网络**：桌面版后端永远只绑定 `127.0.0.1`；局域网/远程访问请继续使用 CLI 安装方式。
 - 与 CLI 版可并存，但两者数据目录不同，互不共享会话。

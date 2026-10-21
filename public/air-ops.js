@@ -541,10 +541,23 @@
     }
 
     if (result.status === 409) {
+      // Only a 409 that carries a run state means "another update is in
+      // flight". A refusal (desktop shell, draining server) has no `status`,
+      // and treating it as a takeover left the dialog pretending to wait for
+      // a run that does not exist until the 20-minute timeout.
+      const refusal = result.data || {};
+      if (!refusal.status) {
+        dialog.setTitle(t('airOpsCannotStart'));
+        dialog.setBody(refusal.code === 'DESKTOP_UPDATE_UNSUPPORTED'
+          ? t('airOpsDesktopUpdateUnsupported')
+          : (refusal.error || `HTTP ${result.status}`) + (refusal.code ? `\n(${refusal.code})` : ''));
+        dialog.setButtons([{ label: t('airOpsClose'), onClick: () => dialog.close() }], () => dialog.close());
+        return;
+      }
       // Someone (or a previous tab) already started one — attach to it rather
       // than reporting an error the user can do nothing about.
       dialog.setBody(t('airOpsUpdateTakeover'));
-      const runningStatus = (result.data && result.data.status) || {};
+      const runningStatus = refusal.status || {};
       await pollUntilDone({ force: !!runningStatus.force, kind, targetVersion: runningStatus.targetVersion || null });
       return;
     }
@@ -596,6 +609,48 @@
     ], () => dialog.close());
   }
 
+  // The Electron desktop shell hosts this same UI, but its program is the app
+  // bundle (`MultiCC.app`), not a directory an installer can swap: the server
+  // refuses /api/update with DESKTOP_UPDATE_UNSUPPORTED and the only real path
+  // is installing a new desktop release. Say that here, with the download page
+  // one click away, instead of walking the user into a dialog that ends in a
+  // refusal. (Before kind==='desktop' existed, this branch ran install.sh
+  // against the folder holding the .app.)
+  const RELEASES_URL = 'https://github.com/lsjwzh/MultiCC/releases/latest';
+  function openReleases() {
+    // Inside the desktop app window.open is routed to the system browser by
+    // the shell's window-open handler; in a browser tab it is a normal tab.
+    if (root && typeof root.open === 'function') root.open(RELEASES_URL, '_blank', 'noopener');
+    else if (typeof location !== 'undefined' && location.assign) location.assign(RELEASES_URL);
+  }
+
+  function showDesktopUpdate(info) {
+    const dialog = openDialog();
+    const updateAvailable = !!(info && info.updateAvailable);
+    const latestText = info && info.latest ? info.latest : (info && info.latestVersion) || null;
+    dialog.setTitle(t('airOpsDesktopUpdateTitle'));
+    dialog.setBody([
+      t('airOpsCurrentVersion', { current: `v${(info && info.current) || '—'}`, channel: (info && info.channel) || 'dev' }),
+      updateAvailable
+        ? t('airOpsLatestVersion', { latest: latestText })
+        : (info && info.apiError ? t('airOpsLatestOffline') : t('airOpsLatestIsCurrent', { latest: latestText || t('airOpsUnknown') })),
+      '',
+      t('airOpsDesktopUpdateBody'),
+    ].join('\n'));
+    dialog.setExtra(null);
+    dialog.setLog('');
+    const buttons = [{ label: t('airOpsClose'), onClick: () => dialog.close() }];
+    if (updateAvailable) {
+      buttons.unshift({
+        label: t('airOpsOpenReleases'),
+        kind: 'primary',
+        onClick: () => { openReleases(); dialog.close(); },
+      });
+    }
+    dialog.setButtons(buttons, () => dialog.close());
+    return dialog;
+  }
+
   let updateFlowOpen = false;
   async function openUpdateFlow() {
     if (updateFlowOpen) return;
@@ -623,7 +678,12 @@
         status(t('airOpsCheckFailedRetry'), 'err');
         return;
       }
-      await confirmThenUpdate(info, { kind: running && running.kind });
+      const kind = running && running.kind;
+      if (kind === 'desktop') {
+        showDesktopUpdate(info);
+        return;
+      }
+      await confirmThenUpdate(info, { kind });
     } finally {
       updateFlowOpen = false;
     }
