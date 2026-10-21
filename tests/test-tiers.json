@@ -1838,6 +1838,15 @@
       ]
     },
     {
+      "path": "tests/test-chat-error-persistence.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:provider-router",
+      "entrypoints": [
+        "npm:test:provider-router"
+      ]
+    },
+    {
       "path": "tests/test-chat-event-controller.js",
       "tier": "core",
       "lane": "deterministic",

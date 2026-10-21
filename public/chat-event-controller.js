@@ -907,6 +907,9 @@
             const errorLine = host.addSystemMsg?.(`Error: ${message.error === 'task_switching'
               ? host.translate?.('taskSwitchingRefused') || message.error
               : (message.error || 'Unknown chat error')}`);
+            // Same key as the persisted history record (src/chat/error-persistence.js),
+            // so a replay adopts this line instead of drawing the error twice.
+            if (errorLine?.dataset && message.errorClientMsgId) errorLine.dataset.clientMsgId = message.errorClientMsgId;
             host.offerDoctor?.(errorLine);
           }
           state.isStreaming = false;

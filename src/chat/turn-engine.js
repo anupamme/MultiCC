@@ -1619,7 +1619,7 @@ function createChatTurnEngine(deps) {
           });
           const proxyApplied = providers.applyCodexProxyConfig(childEnv, {
             providerId: binding.providerId, sessionId: proxySessionId,
-            subagent: persisted.subagent, port: getPort(),
+            subagent: persisted.subagent, port: getPort(), inheritModel: prepared.invocationEnvelope?.spawnOpts?.effectiveModel,
             logicalSessionId: sessionName, nativeSessionId: persisted.cliSessionId,
             allowMissingNativeSession: prepared.invocationEnvelope.historyHandle.isFirstTurn === true,
           });
@@ -2228,7 +2228,7 @@ function createChatTurnEngine(deps) {
     }, routeOverrides);
     providers.prepareResidentChildEnv(childEnv, {
       cli: persisted.cli, providerId: binding.providerId, sessionId: proxySessionId,
-      subagent: persisted.subagent, port: getPort(), logicalSessionId: sessionName,
+      subagent: persisted.subagent, port: getPort(), logicalSessionId: sessionName, inheritModel: prepared.invocationEnvelope?.spawnOpts?.effectiveModel,
       nativeSessionId: persisted.cliSessionId, allowMissingNativeSession: !persisted.cliSessionId,
       officialOAuth: getClaudeOfficialViaProxy(),
     });

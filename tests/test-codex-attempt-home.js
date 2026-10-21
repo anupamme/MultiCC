@@ -789,3 +789,43 @@ test('concurrent Codex attempts isolate proxy capabilities from the provider hom
   assert.equal(fs.existsSync(secondHome), false);
   assert.equal(treeText(providerHome).includes('pr1.'), false);
 });
+
+test('without a configured sub-agent the Codex role files follow the main model, not Codex built-in defaults', () => {
+  const main = providers.createProvider({
+    appType: 'codex', name: 'Inherit model main fixture',
+    baseUrl: 'https://inherit-main.example/v1', authToken: 'inherit-main-key',
+    model: 'main-model', apiFormat: 'openai_responses',
+  });
+  const sub = providers.createProvider({
+    appType: 'codex', name: 'Inherit model sub fixture',
+    baseUrl: 'https://inherit-sub.example/v1', authToken: 'inherit-sub-key',
+    model: 'sub-default', apiFormat: 'openai_responses',
+  });
+  const roleModels = home => ['default', 'worker', 'explorer'].map(role => (
+    fs.readFileSync(path.join(home, 'agents', `${role}.toml`), 'utf8').match(/^model = "([^"]*)"$/m)?.[1] ?? null));
+  const apply = extra => {
+    const { env } = providers.buildChildEnv({}, { cli: 'codex', provider: main.id, model: 'main-model' });
+    assert.equal(providers.applyCodexProxyConfig(env, {
+      providerId: main.id, sessionId: 'pr1.inherit.model', port: 3000, ...extra,
+    }), true);
+    return env;
+  };
+
+  // No sub-agent: roles carry the main model so upstream never sees a model it does not serve (404).
+  let env = apply({ inheritModel: 'main-model' });
+  assert.deepEqual(roleModels(env.CODEX_HOME), ['main-model', 'main-model', 'main-model']);
+  providers.releaseCodexProxyConfig(env);
+
+  // Unknown main model keeps the previous behaviour: no `model` line is invented.
+  env = apply({});
+  assert.deepEqual(roleModels(env.CODEX_HOME), [null, null, null]);
+  providers.releaseCodexProxyConfig(env);
+
+  // An explicit sub-agent keeps its own model; the main model must not leak into another provider.
+  env = apply({ inheritModel: 'main-model', subagent: { providerId: sub.id, model: 'sub-model' } });
+  assert.deepEqual(roleModels(env.CODEX_HOME), ['sub-model', 'sub-model', 'sub-model']);
+  providers.releaseCodexProxyConfig(env);
+  env = apply({ inheritModel: 'main-model', subagent: { providerId: sub.id } });
+  assert.deepEqual(roleModels(env.CODEX_HOME), [null, null, null]);
+  providers.releaseCodexProxyConfig(env);
+});
