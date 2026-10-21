@@ -61,7 +61,15 @@
     const head = node('header', null, 'schedule-card-head');
     const title = node('div');
     title.append(node('span', 'HOOK', 'eyebrow'), node('h3', rule.name || rule.on.map(eventLabel).join(' / ')));
-    head.append(title, node('span', rule.enabled ? t('airScheduleEnabled') : t('airScheduleDisabled'),
+    // 一次性钩子必须在列表里一眼可见：用掉之后显示「已触发」而不是只剩一个灰的
+    // 「已停用」，否则用户只会以为规则自己坏了/消失了（这就是加 once 的原因）。
+    const spent = Boolean(rule.once && !rule.enabled && rule.firedAt);
+    head.append(title);
+    if (rule.once) {
+      head.append(node('span', spent ? t('hookOnceUsed') : t('hookOnceBadge'),
+        `schedule-badge${spent ? '' : ' enabled'}`));
+    }
+    head.append(node('span', rule.enabled ? t('airScheduleEnabled') : t('airScheduleDisabled'),
       `schedule-badge ${rule.enabled ? 'enabled' : ''}`));
 
     const flow = node('div', null, 'hook-flow');
@@ -74,6 +82,7 @@
     owner.append(node('small', run
       ? `${t('hookLastRun')} ${when(run.ts)}${run.steps ? ` · ${run.step}/${run.steps}` : ''} · ${run.ok ? t('hookRunOk') : t('hookRunFail', { msg: run.error || '' })}`
       : (rule.lastFiredAt ? `${t('hookLastRun')} ${when(rule.lastFiredAt)}` : t('hookNeverRan'))));
+    if (spent) owner.append(node('small', t('hookOnceFiredAt', { time: when(rule.firedAt) })));
 
     const actions = node('footer', null, 'schedule-actions');
     actions.append(

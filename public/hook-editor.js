@@ -139,6 +139,9 @@ dialog.hook-dialog #hook-chain-add{align-self:flex-start;font:inherit;padding:4p
         h('p', { class: 'hook-note', text: tr('hookChainHint') })),
       h('label', {}, h('span', { text: tr('hookCooldown') }),
         h('input', { type: 'number', name: 'cooldown', min: '0', max: '86400', step: '1' })),
+      h('label', { class: 'hook-check' }, h('input', { type: 'checkbox', name: 'once' }),
+        h('span', { text: tr('hookOnce') })),
+      h('p', { class: 'hook-note', text: tr('hookOnceHint') }),
       h('label', { class: 'hook-check' }, h('input', { type: 'checkbox', name: 'enabled', checked: true }),
         h('span', { text: tr('hookEnabled') })),
       h('p', { class: 'hook-error', id: 'hook-error', role: 'alert' }),
@@ -297,6 +300,7 @@ dialog.hook-dialog #hook-chain-add{align-self:flex-start;font:inherit;padding:4p
     form.elements.includeConclusion.checked = action.includeConclusion === true;
     form.elements.prompt.value = action.prompt || '';
     form.elements.cooldown.value = rule && rule.cooldownMs ? String(Math.round(rule.cooldownMs / 1000)) : '';
+    form.elements.once.checked = Boolean(rule && rule.once);
     form.elements.enabled.checked = rule ? rule.enabled !== false : true;
     form.querySelector('#hook-error').textContent = '';
     form.querySelector('#hook-chain').textContent = '';
@@ -362,6 +366,7 @@ dialog.hook-dialog #hook-chain-add{align-self:flex-start;font:inherit;padding:4p
     const body = {
       type: 'event', name: form.elements.name.value.trim(), on, filter, action, then: collectChain(),
       enabled: form.elements.enabled.checked,
+      once: form.elements.once.checked,
     };
     const cooldown = form.elements.cooldown.value;
     if (cooldown !== '') body.cooldownMs = Math.max(0, parseInt(cooldown, 10) || 0) * 1000;
