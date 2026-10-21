@@ -682,13 +682,15 @@ const { withModelConnectWatch } = require('../src/providers/model-connect-watch'
 test('公共默认值覆盖所有 CLI，并明确区分深度推理与普通请求', () => {
   for (const cli of ['claude', 'claude-exp', 'codex', 'codex-exp', 'opencode', 'codebuddy']) {
     assert.deepEqual(resolveModelRequestPolicy({ cli }, {}), {
-      stallTimeoutMs: 300_000, requestTimeoutMs: 900_000, connectTimeoutMs: 30_000,
+      stallTimeoutMs: 300_000, requestTimeoutMs: 900_000, connectTimeoutMs: 600_000,
     });
     assert.deepEqual(resolveModelRequestPolicy({ cli, effort: 'high' }, {}), {
-      stallTimeoutMs: 600_000, requestTimeoutMs: 1_800_000, connectTimeoutMs: 30_000,
+      stallTimeoutMs: 600_000, requestTimeoutMs: 1_800_000, connectTimeoutMs: 600_000,
     });
   }
   assert.equal(resolveModelRequestPolicy({}, { MULTICC_MODEL_IDLE_TIMEOUT_MS: '1000' }).stallTimeoutMs, 15_000);
+  assert.equal(resolveModelRequestPolicy({}, { MULTICC_MODEL_CONNECT_TIMEOUT_MS: '600000' }).connectTimeoutMs, 600_000,
+    '显式配置 600 秒不能被旧的 120 秒上限截断');
   const disabled = resolveModelRequestPolicy({}, { MULTICC_MODEL_IDLE_TIMEOUT_MS: '0' });
   assert.equal(disabled.stallTimeoutMs, 0);
   assert.equal(disabled.requestTimeoutMs, 900_000, '关闭空闲计时不取消总预算');
