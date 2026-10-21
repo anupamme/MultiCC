@@ -2,11 +2,7 @@ name: desktop-release
 
 # Cross-platform desktop builds (macOS dmg / Windows exe / Linux AppImage+deb).
 #
-# Tag flow: the Android release workflow (.github/workflows/release.yml) owns
-# `gh release create` for a tag. This workflow BUILDS desktop installers on all
-# three native runners and then ATTACHES them to that same release — it never
-# creates one first (release.yml's consistency check treats a pre-existing
-# release without APK assets as an error).
+# 标签发布先创建含桌面和 standalone 资产的 Release，Android 随后追加。
 #
 # workflow_dispatch runs the build/validation half only — no release, no tag.
 #
@@ -373,7 +369,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: attach desktop assets to release
+    name: 发布桌面与 standalone 资产
     # Both producers, not just the installers: a failed standalone build must
     # stop the release instead of publishing a Release whose assets are
     # incomplete.
@@ -383,6 +379,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验发布标签与主分支
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          VERSION="$(node -p "require('./package.json').version")"
+          [ "$TAG" = "v$VERSION" ]
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
 
       - uses: actions/download-artifact@v4
         with:
@@ -395,24 +406,6 @@ jobs:
           path: desktop-out
           pattern: standalone-*
           merge-multiple: true
-
-      - name: Wait for the APK release to exist (release.yml owns creation)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        timeout-minutes: 45
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          for i in $(seq 1 90); do
-            if gh release view "$TAG" >/dev/null 2>&1; then
-              echo "release $TAG exists after ${i} check(s)"
-              exit 0
-            fi
-            sleep 30
-          done
-          echo "::error::Release $TAG not created within 45 minutes. Did the Android release workflow (.github/workflows/release.yml) succeed for this tag?"
-          exit 1
 
       - name: Upload desktop assets to the release
         shell: bash
@@ -430,7 +423,11 @@ jobs:
             [ -f "$sidecar" ] && cat "$sidecar" >> desktop-out/SHA256SUMS.txt
           done
           sort -u -o desktop-out/SHA256SUMS.txt desktop-out/SHA256SUMS.txt
-          gh release upload "$TAG" desktop-out/* --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" desktop-out/* --clobber
+          else
+            gh release create "$TAG" desktop-out/* --verify-tag --title "$TAG" --generate-notes
+          fi
           echo "uploaded assets:"
           gh release view "$TAG" --json assets -q '.assets[].name'
 

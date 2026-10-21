@@ -2,6 +2,15 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.3 — 桌面优先发布、安装更新与网络可靠性修复（2026-10-21）
+
+- standalone 与桌面安装包先发布到 GitHub Release，官方签名 Android APK 随后追加，移动端不再阻塞桌面发布。
+- 改进 standalone 安装与更新、桌面运行环境，以及工作区休眠和任务清理时的 Git 安全检查。
+- HTTP、WebSocket、额度查询及语音子进程统一使用出站代理策略，修复 HTTP/2 请求被误判为连接超时。
+- 持久化聊天错误信息，改善 CLI 切换、账号选择与额度显示。
+- 改善网页与 App 的移动导航、任务列表和批量清理；App 删除请求允许较长的服务端处理时间。
+- App 版本更新为 2.36.2（构建 171）；App Store 发布安排在桌面与 OTA 验收之后。
+
 ## v2.8.2 — The v2.8.1 changes, recut with the three red CI checks fixed (2026-10-21)
 
 `v2.8.1` published its release assets, but the tag's CI run was red on three

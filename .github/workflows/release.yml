@@ -27,7 +27,7 @@ jobs:
     needs: [core-tests, clean-install]
     name: Sign and publish Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     environment: android-release
     env:
       GH_TOKEN: ${{ github.token }}
@@ -223,15 +223,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+      - name: 保存已验证的官方 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-android-apk
+          path: public/multicc.apk*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 等待桌面与 standalone 发布完成
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 115); do
+            if gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | grep -qx 'SHA256SUMS.txt'; then
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::桌面与 standalone 尚未发布，保留 APK 构建结果并停止追加"
+          exit 1
+
       - name: Refuse to replace inconsistent published assets
         id: existing-release
         shell: bash
         run: |
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
+          names="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          apk_count="$(printf '%s\n' "$names" | grep -Ec '^multicc\.apk(\.json|\.sha256)?$' || true)"
+          if [ "$apk_count" -eq 0 ]; then
             echo "matching=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ "$apk_count" -ne 3 ]; then
+            echo "::error::已发布的 APK 资产不完整，拒绝覆盖"
+            exit 1
           fi
 
           existing="$RUNNER_TEMP/existing-release-assets"
@@ -248,15 +276,12 @@ jobs:
           done
           echo "matching=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release with APK assets
+      - name: 向已发布版本追加官方 APK
         if: steps.existing-release.outputs.matching != 'true'
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" \
+          gh release upload "$GITHUB_REF_NAME" \
             public/multicc.apk \
             public/multicc.apk.json \
-            public/multicc.apk.sha256 \
-            --verify-tag \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            public/multicc.apk.sha256
