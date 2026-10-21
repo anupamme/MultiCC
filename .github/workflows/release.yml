@@ -23,15 +23,27 @@ jobs:
     permissions:
       contents: read
 
+  cancel-on-core-failure:
+    needs: [core-tests]
+    if: ${{ always() && needs.core-tests.result != 'success' }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/cancel-release.yml
+
+  cancel-on-install-failure:
+    needs: [clean-install]
+    if: ${{ always() && needs.clean-install.result != 'success' }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/cancel-release.yml
+
   android-apk:
-    needs: [core-tests, clean-install]
-    name: Sign and publish Android APK
+    name: 构建并签名 Android APK
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: android-release
-    env:
-      GH_TOKEN: ${{ github.token }}
-
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@v4
@@ -230,6 +242,22 @@ jobs:
           path: public/multicc.apk*
           if-no-files-found: error
           retention-days: 14
+
+  publish-apk:
+    name: 门禁通过后追加官方 APK
+    needs: [core-tests, clean-install, android-apk]
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-android-apk
+          path: public
 
       - name: 等待桌面与 standalone 发布完成
         timeout-minutes: 60

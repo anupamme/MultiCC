@@ -131,7 +131,7 @@ npm run test:desktop    # 桌面壳全部单元/静态测试（node:test）
 
 ### CI 与发布
 
-推 `v*.*.*` tag 后 `desktop-release.yml` 在 macOS/Windows/Ubuntu 原生 runner 上各构建本平台产物，全部上传到**同一个** GitHub Release（该 Release 由既有的 android `release.yml` 创建；desktop 侧只等待并 `gh release upload`，不自行创建）。也支持 `workflow_dispatch` 手动触发做未发布验证（产物留为 workflow artifact，不上传 Release）。每个 Release 固定包含：三个平台的 5 个安装包 + 各自 `.sha256` + `SHA256SUMS.txt` + 每平台 `SIGNING-STATUS-<platform>.txt`，以及各平台两个架构的 `multicc-standalone-<版本>-<平台>-<架构>.tar.gz`（Windows 为 `.zip`）——同一套 staging 代码，一次构建两种形态。
+推 `v*.*.*` tag 后，核心测试、全新安装测试与 macOS/Windows/Ubuntu 构建同时启动。任一测试门禁失败，独立的取消任务会取消当前工作流中尚在运行或排队的构建；构建完成的产物仅留在 Actions 中，不会绕过门禁发布。`desktop-release.yml` 的正式发布任务必须等待两项门禁、全部桌面和 standalone 构建成功，才创建或更新 GitHub Release。Android 在自己的两项门禁和签名构建成功后，向桌面已发布的同一个 Release 追加 APK。也支持 `workflow_dispatch` 手动触发做未发布验证（产物留为 workflow artifact，不上传 Release）。每个 Release 固定包含：三个平台的 5 个安装包 + 各自 `.sha256` + `SHA256SUMS.txt` + 每平台 `SIGNING-STATUS-<platform>.txt`，以及各平台两个架构的 `multicc-standalone-<版本>-<平台>-<架构>.tar.gz`（Windows 为 `.zip`）——同一套 staging 代码，一次构建两种形态。
 
 ### 签名密钥配置
 
