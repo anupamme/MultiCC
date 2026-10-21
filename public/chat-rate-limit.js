@@ -302,13 +302,24 @@
       try {
         const res = await fetch(opts.getUrl(), { method: 'POST', credentials: 'same-origin' });
         let data = null; try { data = await res.json(); } catch (_) {}
-        if (requestRevision !== revision || (currentProviderSnapshot?.kind === opts.kind)) return current;
+        if (requestRevision !== revision) return current;
         if (!data) data = { status: 'unavailable', error: 'invalid response' };
+        // A provider snapshot of the same kind owns this slot only until the
+        // user's own refresh answers: the click re-queries the same account,
+        // and dropping its answer (the old behavior) made the bar a dead end —
+        // no update ever landed. An automatic refresh still yields to the
+        // snapshot, and so does a click that raced an even newer one.
+        const snapshot = currentProviderSnapshot?.kind === opts.kind ? currentProviderSnapshot : null;
+        if (snapshot) {
+          const snapshotAt = finiteNumber(snapshot.updatedAt) ?? finiteNumber(snapshot.fetchedAt) ?? 0;
+          if (!force || (data.status === 'ok' && snapshotAt > (finiteNumber(data.fetchedAt) ?? 0))) return current;
+        }
         current = data;
         if (data.status === 'ok') { lastErrorAt = 0; store.save(data); }
         else lastErrorAt = Date.now();
       } catch (_) {
-        if (requestRevision !== revision || (currentProviderSnapshot?.kind === opts.kind)) return current;
+        if (requestRevision !== revision) return current;
+        if (!force && currentProviderSnapshot?.kind === opts.kind) return current;
         lastErrorAt = Date.now();
         current = { status: 'unavailable', error: 'fetch failed' };
       } finally { if (requestRevision === revision) inFlight = false; }
@@ -473,6 +484,10 @@
       // including Zhipu providers, whose windows come only from this query now
       // that the dedicated vendor slot is gone.
       bar = currentProviderWindowBar;
+      // The click below starts a balance query that takes seconds; without a
+      // 'loading' repaint the tap looked exactly as dead as the vendor slots'
+      // did (the bar carries states.loading since the renderer learned it).
+      state = providerLimitInFlightKey ? 'loading' : undefined;
       // The render's trailing '⟳' segment promises a refresh; wire it to the
       // same query that produced the bar.
       onBarClick = () => refreshProviderLimit();
@@ -572,6 +587,7 @@
     if (providerLimitInFlightKey === inFlightKey) return null;
     const revision = providerRevision;
     providerLimitInFlightKey = inFlightKey;
+    renderCurrent();
     try {
       const url = `/api/providers/${encodeURIComponent(currentProviderAppType)}/${encodeURIComponent(currentProviderId)}/balance`;
       if (preferCache) {
@@ -590,7 +606,12 @@
       renderAll();
       return kind === 'balance' ? currentBalanceBar : currentProviderWindowBar;
     } catch (_) { return null; }
-    finally { if (providerLimitInFlightKey === inFlightKey) providerLimitInFlightKey = null; }
+    finally {
+      if (providerLimitInFlightKey === inFlightKey) providerLimitInFlightKey = null;
+      // A failed query lands here without touching the bars; the repaint still
+      // has to happen so the 'loading' state painted above is lifted.
+      renderCurrent();
+    }
   }
   function restoreFiveHourRateLimit(sessionName) {
     currentSession = String(sessionName || '').trim();

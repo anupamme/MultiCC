@@ -1372,7 +1372,28 @@ function providerLimitBar(entry) {
     if (ago) textParts.push(part('limitUpdatedAgo', { ago }, `更新于 ${ago}`));
   }
   if (entry.stale && base.text) textParts.push(part('limitStale', null, '过期'));
-  return textParts.length ? partsView(textParts, base.color, base.titleParts) : null;
+  const view = textParts.length ? partsView(textParts, base.color, base.titleParts) : null;
+  if (!view) return null;
+  // The same click-feedback contract the vendor bars carry (renderQuotaBar):
+  // the chat clients repaint this bar with state 'loading' while its refresh
+  // query is in flight. resolveQuotaBar falls back to the default render for a
+  // state the bar does not carry, so a states-less bar made the tap look dead.
+  const labelKind = providerStateLabelKind(entry, summary);
+  if (!labelKind) return view;
+  const label = vendorLabel(labelKind);
+  return withStates(view, {
+    loading: loadingView(label, LOADING_TITLE[labelKind] || null),
+    unreachable: unreachableView(label),
+  });
+}
+
+// providerLimitBar's entry.kind is as often the snapshot species ('window' /
+// 'balance') as the vendor, so the vendor name for the loading/unreachable
+// states comes from summary.provider then; 'glm' reads as its product name.
+function providerStateLabelKind(entry, summary) {
+  const raw = VENDOR_LABEL[entry.kind] ? entry.kind : summary.provider;
+  const mapped = raw === 'glm' ? 'zhipu' : raw;
+  return VENDOR_LABEL[mapped] ? mapped : null;
 }
 
 /**
