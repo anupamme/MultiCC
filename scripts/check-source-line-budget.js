@@ -109,6 +109,17 @@ const MIGRATION_DEBT = Object.freeze({
   // 编排，而不是继续抬天花板。
   // 2026-09-28 前后它自己降回 2993（<= 3000），这条登记按闸的要求退休 —— 别再把它
   // 加回来。该拆的仍是渲染/事件编排。
+  // scripts/macos-agent/MultiCCAgent.swift 是 Swift 写的 macOS 桌面 Agent 单文件实现，
+  // 远程接入那一轮（输入串行化、XWayland 假成功、Esc 断打字等修复）叠上来后实测
+  // 3015/143469，越过 3k。这次只按实测高水位登记，不动 Swift（同文件还要在 macOS CI
+  // 里真编译）；下一次动它该拆的是「屏幕采集 / 输入注入 / 权限探测」那三族，落回
+  // <= 3000 就把这条删掉。
+  'scripts/macos-agent/MultiCCAgent.swift': Object.freeze({
+    ceiling: 3015,
+    byteCeiling: 143469,
+    target: 3000,
+    reason: 'macOS desktop agent single-file implementation; split screen capture / input injection / permission probing next',
+  }),
 });
 
 // Reviewed third-party/generated assets are not first-party maintainability

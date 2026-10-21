@@ -78,6 +78,8 @@ test('the current tracked tree satisfies the ratcheted budget', () => {
   // budget is a violation above, so this pins the declared set — a new god file
   // cannot be quietly parked here, and retiring an entry (by splitting the file
   // back under 3000) means shrinking this list in the same commit.
-  // 当前主线已清除所有迁移债务，不能继续要求 server.js 保留过时例外。
-  assert.deepEqual(result.debts.map(entry => entry.file), []);
+  // 当前主线只剩一笔登记：macOS 桌面 Agent 的 Swift 单文件实现（见
+  // scripts/check-source-line-budget.js 里那条注释）。任何新增都必须同时在这里
+  // 显式列出；拆回 3000 行以内要连同 MIGRATION_DEBT 一起删掉。
+  assert.deepEqual(result.debts.map(entry => entry.file), ['scripts/macos-agent/MultiCCAgent.swift']);
 });
