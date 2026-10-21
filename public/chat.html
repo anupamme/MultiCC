@@ -509,8 +509,7 @@
     }
 
     /* ── Tool call cards ── */
-    /* All tool cards of one turn live inside a bounded, scrollable stack so a
-       long run of tool calls can't flood the chat and yank it to the bottom. */
+    /* Basic view is a closed summary; the tool list opens only on request. */
     .tool-stack {
       margin: 8px 0;
       overflow-y: auto;
@@ -519,6 +518,10 @@
       padding: 6px 8px;
       scrollbar-width: thin;
     }
+    .tool-stack-summary {
+      padding: 6px 4px; cursor: pointer; color: var(--chat-muted); font-size: 12px;
+    }
+    .tool-stack[open] > .tool-stack-summary { margin-bottom: 8px; }
     .tool-stack::-webkit-scrollbar { width: 8px; }
     .tool-stack::-webkit-scrollbar-thumb { background: var(--chat-line, #30363d); border-radius: 4px; }
     .tool-stack::-webkit-scrollbar-track { background: transparent; }

@@ -240,17 +240,33 @@
     function getToolStack(contentEl) {
       let stack = directChildByClass(contentEl, 'tool-stack');
       if (!stack) {
-        stack = document.createElement('div');
+        stack = document.createElement('details');
         stack.className = 'tool-stack';
+        const summary = document.createElement('summary');
+        summary.className = 'tool-stack-summary';
+        stack.appendChild(summary);
         contentEl.appendChild(stack);
       }
       return stack;
     }
 
+    function updateToolSummary(stack) {
+      if (!stack || !stack.classList.contains('tool-stack')) return;
+      const cards = Array.from(stack.querySelectorAll('.tool-card'));
+      const running = cards.some(card => card.classList.contains('tool-running'));
+      const failed = cards.some(card => card.dataset.toolError === '1');
+      const statusKey = running ? 'workProgressRunning' : failed ? 'workProgressIssue' : 'workProgressChecked';
+      const fallback = running ? 'AI 正在处理' : failed ? '处理时遇到问题' : '处理步骤已完成';
+      const label = translate ? translate(statusKey) : fallback;
+      const count = translate ? translate('technicalDetailsCount', { n: cards.length }) : '技术详情 · ' + cards.length;
+      stack.querySelector('.tool-stack-summary').textContent = label + ' · ' + count;
+    }
+
     function appendToolCard(contentEl, card) {
       const stack = getToolStack(contentEl);
       stack.appendChild(card);
-      stack.scrollTop = stack.scrollHeight;
+      updateToolSummary(stack);
+      if (stack.open) stack.scrollTop = stack.scrollHeight;
       return card;
     }
 
@@ -327,6 +343,8 @@
     function addToolResult(toolState, value, isError) {
       if (!toolState || !toolState.card) return;
       toolState.card.classList.remove('tool-running');
+      toolState.card.dataset.toolError = isError ? '1' : '0';
+      updateToolSummary(toolState.card.parentNode);
       const body = toolState.card.querySelector('.tool-body');
       if (!body) return;
       // A repeated tool_result is an upsert, not a second result block.

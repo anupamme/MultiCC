@@ -710,8 +710,13 @@ class _AssistantBubble extends StatelessWidget {
                       text: message.content,
                       isStreaming: message.isStreaming,
                     ),
-                  if (hasTools && advancedMode)
-                    ToolCallGroup(toolCalls: message.toolCalls),
+                  if (hasTools)
+                    _BasicToolSummary(
+                      toolCalls: message.toolCalls,
+                      durationMs: message.durationMs,
+                      timeline: message.timeline,
+                      showTrajectory: !advancedMode,
+                    ),
                   if ((hasTools || hasTimeline) && advancedMode)
                     ToolTrajectory(
                       toolCalls: message.toolCalls,
@@ -720,12 +725,6 @@ class _AssistantBubble extends StatelessWidget {
                       attribution: trajectoryShown
                           ? message.modelAttribution
                           : null,
-                    ),
-                  if (hasTools && !advancedMode)
-                    _BasicToolSummary(
-                      toolCalls: message.toolCalls,
-                      durationMs: message.durationMs,
-                      timeline: message.timeline,
                     ),
                   if (!hasText && !hasTools && message.isStreaming)
                     const _StreamingDot(),
@@ -867,10 +866,12 @@ class _BasicToolSummary extends StatefulWidget {
     required this.toolCalls,
     this.durationMs,
     this.timeline,
+    this.showTrajectory = true,
   });
   final List<ToolCall> toolCalls;
   final int? durationMs;
   final TurnTimeline? timeline;
+  final bool showTrajectory;
 
   @override
   State<_BasicToolSummary> createState() => _BasicToolSummaryState();
@@ -964,11 +965,12 @@ class _BasicToolSummaryState extends State<_BasicToolSummary> {
               child: Column(
                 children: [
                   ToolCallGroup(toolCalls: widget.toolCalls),
-                  ToolTrajectory(
-                    toolCalls: widget.toolCalls,
-                    turnDurationMs: widget.durationMs,
-                    timeline: widget.timeline,
-                  ),
+                  if (widget.showTrajectory)
+                    ToolTrajectory(
+                      toolCalls: widget.toolCalls,
+                      turnDurationMs: widget.durationMs,
+                      timeline: widget.timeline,
+                    ),
                 ],
               ),
             ),

@@ -360,6 +360,51 @@ test('assistant Markdown uses the one safe boundary and tool cards stay text-onl
   assert.match(node.querySelector('.tool-body').textContent, /<svg>result<\/svg>/);
 });
 
+test('工具汇总默认收起，实时调用及结果更新不会自动展开列表', () => {
+  const { document, view } = fixture();
+  const content = document.createElement('div');
+  const first = { card: view.createToolCard('Bash', 'one'), id: 'one' };
+  view.appendToolCard(content, first.card);
+  const stack = content.querySelector('.tool-stack');
+  assert.equal(stack.tagName, 'DETAILS');
+  assert.ok(!stack.open);
+  assert.equal(stack.querySelector('.tool-stack-summary').textContent, 'AI 正在处理 · 技术详情 · 1');
+  view.addToolResult(first, '失败详情', true);
+  assert.equal(stack.querySelector('.tool-stack-summary').textContent, '处理时遇到问题 · 技术详情 · 1');
+  assert.ok(!stack.open);
+
+  stack.open = true;
+  const second = { card: view.createToolCard('Read', 'two'), id: 'two' };
+  view.appendToolCard(content, second.card);
+  assert.equal(stack.querySelector('.tool-stack-summary').textContent, 'AI 正在处理 · 技术详情 · 2');
+  view.addToolResult(second, '完成', false);
+  assert.equal(stack.open, true, '保留用户手动展开的状态');
+  stack.open = false;
+  view.addToolResult(first, '重试成功', false);
+  assert.equal(stack.querySelector('.tool-stack-summary').textContent, '处理步骤已完成 · 技术详情 · 2');
+  assert.ok(!stack.open, '用户收起后结果更新也不展开');
+  assert.equal(stack.querySelectorAll('.tool-card').length, 2);
+  first.card.querySelector('.tool-header').onclick();
+  assert.ok(first.card.classList.contains('open'), '手动展开后仍可查看单次调用详情');
+});
+
+test('历史工具列表默认收起并保留失败状态和完整详情', () => {
+  const { view } = fixture();
+  const node = view.renderMessage({
+    id: 'history-tools', role: 'assistant', content: '完成',
+    tools: [
+      { id: 'one', name: 'Bash', input: { command: 'pwd' }, result: '失败原因', is_error: true },
+      { id: 'two', name: 'Read', input: { file_path: '/tmp/example' }, result: '文件内容' },
+    ],
+  });
+  const stack = node.querySelector('.tool-stack');
+  assert.equal(stack.tagName, 'DETAILS');
+  assert.ok(!stack.open);
+  assert.equal(stack.querySelector('.tool-stack-summary').textContent, '处理时遇到问题 · 技术详情 · 2');
+  assert.equal(stack.querySelectorAll('.tool-card').length, 2);
+  assert.match(stack.querySelector('.tool-body').textContent, /失败原因/);
+});
+
 test('repeated tool results replace the owned result block', () => {
   const { view } = fixture();
   const card = view.createToolCard('Bash', 'tool-1');

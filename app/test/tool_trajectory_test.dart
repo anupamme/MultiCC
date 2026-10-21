@@ -135,7 +135,7 @@ void main() {
     expect(find.text('⏱ 2 tools · 10s wall-clock'), findsOneWidget);
   });
 
-  testWidgets('assistant bubble includes the trajectory under its tools', (
+  testWidgets('工具列表默认收起，点击汇总后可查看调用且轨迹不会重复', (
     tester,
   ) async {
     final message = ChatMessage(
@@ -154,9 +154,20 @@ void main() {
       ),
     );
 
+    expect(find.byKey(const ValueKey('basic-tool-summary')), findsOneWidget);
+    expect(find.byType(ToolCallGroup), findsNothing);
+    final summaryHeader = find.descendant(
+      of: find.byKey(const ValueKey('basic-tool-summary')),
+      matching: find.byType(InkWell),
+    ).first;
+    await tester.tap(summaryHeader);
+    await tester.pump();
     expect(find.byType(ToolCallGroup), findsOneWidget);
     expect(find.byType(ToolTrajectory), findsOneWidget);
     expect(find.text('⏱ 2 tools · 8.0s wall-clock'), findsOneWidget);
+    await tester.tap(summaryHeader);
+    await tester.pump();
+    expect(find.byType(ToolCallGroup), findsNothing);
   });
 
   testWidgets('server timeline draws request/thinking/output from the turn origin', (tester) async {
