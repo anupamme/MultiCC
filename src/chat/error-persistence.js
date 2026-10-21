@@ -18,8 +18,11 @@ const MAX_TEXT = 4000;
 // Same predicate as public/chat-event-controller.js: a transient Codex reconnect
 // is not shown live, so it must not appear in history either.
 function isRecoverableReconnect(text) {
-  return /^(?:Codex|Codex Exp|Codex Exec) 出错：Reconnecting\.\.\.\s*\d+\/\d+\s*\(/i.test(text)
-    && /stream disconnected before completion|response\.completed/i.test(text);
+  const value = String(text || '').trim();
+  const prefix = /^(?:Codex|Codex Exp|Codex Exec) 出错：Reconnecting\.\.\.\s*\d+\/\d+/i;
+  if (!prefix.test(value)) return false;
+  if (/^(?:Codex|Codex Exp|Codex Exec) 出错：Reconnecting\.\.\.\s*\d+\/\d+\s*$/i.test(value)) return true;
+  return /\(.*(?:stream disconnected before completion|response\.completed).*\)\s*$/i.test(value);
 }
 
 function createErrorPersister({ appendChatMessage, now = Date.now, windowMs = DEDUPE_WINDOW_MS }) {

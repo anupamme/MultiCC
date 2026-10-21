@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { createAdapterCompletion } = require('../src/cli-adapters/completion');
-const { addUsage, appServerUsage, createCodexExpAdapter, requestUserInputEvent } = require('../src/cli-adapters/codex-exp');
+const { addUsage, appServerUsage, createCodexExpAdapter, isReconnectProgress, requestUserInputEvent } = require('../src/cli-adapters/codex-exp');
 const { appendAdapterAssistantText } = require('../src/chat/turn-engine');
 const { createSessionRecordFactory } = require('../src/session/create-record');
 const { isResidentSession } = require('../src/cli/cli-capability');
@@ -95,6 +95,23 @@ test('app-server usage and terminal status normalize into existing contracts', (
   const interrupted = { method: 'turn/completed', params: { turn: { id: 't2', status: 'interrupted' } } };
   interruptedTracker.observe(interrupted, adapter.decodeEvent(interrupted));
   assert.equal(interruptedTracker.finish({ kind: 'process', code: 0 }).state, 'cancelled');
+});
+
+test('codex-exp reconnect progress stays transient and a later completion succeeds', () => {
+  const adapter = createCodexExpAdapter();
+  const tracker = createAdapterCompletion(adapter);
+  const reconnect = { method: 'error', params: { message: 'Reconnecting... 1/5' } };
+  const progress = adapter.decodeEvent(reconnect);
+  assert.deepEqual(progress, [{ type: 'activity', phase: 'recovering', message: 'Reconnecting... 1/5' }]);
+  tracker.observe(reconnect, progress);
+
+  const completed = { method: 'turn/completed', params: { turn: { id: 'after-reconnect', status: 'completed' } } };
+  tracker.observe(completed, adapter.decodeEvent(completed));
+  assert.equal(tracker.finish({ kind: 'stream', resolved: true }).state, 'completed');
+
+  assert.equal(isReconnectProgress('Reconnecting... 5/5 (stream disconnected before completion)'), true);
+  assert.equal(isReconnectProgress('upstream request failed'), false);
+  assert.equal(adapter.decodeEvent({ method: 'error', params: { message: 'upstream request failed' } })[0].type, 'error');
 });
 
 test('native requestUserInput becomes the shared waiting signal', () => {

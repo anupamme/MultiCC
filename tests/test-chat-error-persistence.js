@@ -33,6 +33,7 @@ test('non-error events, empty errors and transient reconnects are not persisted'
   const result = { type: 'result' };
   assert.equal(persister.annotate('s1', result), result);
   persister.annotate('s1', { type: 'error', error: '   ' });
+  persister.annotate('s1', { type: 'error', error: 'Codex 出错：Reconnecting... 1/5' });
   persister.annotate('s1', { type: 'error', error: 'Codex 出错：Reconnecting... 2/5 (stream disconnected before completion)' });
   assert.equal(appended.length, 0);
   assert.equal(isRecoverableReconnect('boom'), false);

@@ -1357,6 +1357,10 @@ test('recoverable reconnect errors stay quiet while real errors finish the owned
   const generation = fixture.controller.beginGeneration();
   fixture.state.isStreaming = true;
   fixture.controller.handleEvent({
+    type: 'error', error: 'Codex 出错：Reconnecting... 1/5',
+  }, generation);
+  assert.equal(fixture.state.isStreaming, true);
+  fixture.controller.handleEvent({
     type: 'error', error: 'Codex 出错：Reconnecting... 2/5 (response.completed not received)',
   }, generation);
   assert.equal(fixture.state.isStreaming, true);

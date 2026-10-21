@@ -50,6 +50,16 @@ function requestUserInputEvent(params) {
   };
 }
 
+// Codex app-server reports an in-progress automatic retry through the generic
+// `error` notification channel.  It is not a terminal turn failure: the same
+// turn stays alive and later emits turn/completed (or a real failed terminal
+// status if retrying is exhausted).  Treating this notice as a provider error
+// sticks adapterError onto the runner and produces a false failure after an
+// otherwise successful turn.
+function isReconnectProgress(message) {
+  return /^Reconnecting\.\.\.\s*\d+\/\d+(?:\s*\([^\r\n]*\))?\s*$/i.test(String(message || '').trim());
+}
+
 function createCodexExpAdapter(deps = {}) {
   const bridge = deps.bridge || path.join(__dirname, 'codex-app-server-bridge.cjs');
   const textDeltaItems = new Set();
@@ -241,7 +251,11 @@ function createCodexExpAdapter(deps = {}) {
         return [{ type: 'complete', cost: null, usage }];
       }
       if (method === 'error') {
-        return [{ type: 'error', label: displayNameOf('codex-exp'), message: params.error?.message || params.message || 'app-server error', kind: 'provider', error: params.error }];
+        const message = params.error?.message || params.message || 'app-server error';
+        if (isReconnectProgress(message)) {
+          return [{ type: 'activity', phase: 'recovering', message }];
+        }
+        return [{ type: 'error', label: displayNameOf('codex-exp'), message, kind: 'provider', error: params.error }];
       }
       if (method === 'warning' || method === 'configWarning' || method === 'deprecationNotice') {
         return [{ type: 'activity', phase: 'warning', message: params.message || params.summary || '' }];
@@ -252,4 +266,4 @@ function createCodexExpAdapter(deps = {}) {
   };
 }
 
-module.exports = { addUsage, appServerUsage, createCodexExpAdapter, requestUserInputEvent };
+module.exports = { addUsage, appServerUsage, createCodexExpAdapter, isReconnectProgress, requestUserInputEvent };
