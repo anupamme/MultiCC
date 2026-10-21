@@ -53,6 +53,7 @@ function createTaskWorktreeService(options = {}) {
     existsSync = p => require('fs').existsSync(p),
     isTaskRunning = null,
     beginTaskOperation = null,
+    withCleanup = async (_task, remove, complete) => complete(await remove({})),
     logger = console,
   } = options;
   for (const [name, value] of Object.entries({
@@ -163,28 +164,39 @@ function createTaskWorktreeService(options = {}) {
       if (busy) return busy;
       const dir = getDirectory(taskDirIdOf(task));
       if (!dir) return { ok: false, code: 'directory_not_found' };
-      if (!existsSync(task.worktreePath)) {
-        // Removal succeeded but the ledger write was lost (crash between the
-        // two): heal by clearing the stale fields without touching git.
-        updateTask(id, { worktreePath: null, branch: null });
-        return { ok: true, removed: true, alreadyGone: true };
-      }
-      const merged = await gitMergeBack(dir, {
-        id: taskWorktreeToken(id),
-        worktreePath: task.worktreePath,
-        branch: task.branch,
+      const expected = { ...task };
+      const result = await withCleanup(expected, async ({ sessionId = taskWorktreeToken(id), activeCheck } = {}) => {
+        if (!existsSync(expected.worktreePath)) {
+          // Removal succeeded but the ledger write was lost (crash between the
+          // two): heal by clearing the stale fields without touching git.
+          return { ok: true, removed: true, alreadyGone: true };
+        }
+        const merged = await gitMergeBack(dir, {
+          id: sessionId,
+          worktreePath: expected.worktreePath,
+          branch: expected.branch,
+        }, { activeCheck });
+        if (!merged.ok) return { ok: false, code: 'merge_failed', merge: merged };
+        const removal = await gitWorktreeRemove(dir.path, expected.worktreePath, expected.branch, {
+          sessionId, activeCheck,
+          baseBranch: dir.baseBranch,
+          force: opts.force === true,
+        });
+        if (!removal.ok) {
+          return { ok: false, code: 'worktree_remove_refused', merge: merged, removal };
+        }
+        return { ok: true, removed: true, merged: merged.merged === true };
+      }, result => {
+        if (result?.ok && result.removed) {
+          const current = getBoardTask(id);
+          if (current?.worktreePath !== expected.worktreePath || current?.branch !== expected.branch) {
+            return { ok: false, code: 'workspace_changed' };
+          }
+          updateTask(id, { worktreePath: null, branch: null });
+        }
+        return result;
       });
-      if (!merged.ok) return { ok: false, code: 'merge_failed', merge: merged };
-      const removal = await gitWorktreeRemove(dir.path, task.worktreePath, task.branch, {
-        sessionId: taskWorktreeToken(id),
-        baseBranch: dir.baseBranch,
-        force: opts.force === true,
-      });
-      if (!removal.ok) {
-        return { ok: false, code: 'worktree_remove_refused', merge: merged, removal };
-      }
-      updateTask(id, { worktreePath: null, branch: null });
-      return { ok: true, removed: true, merged: merged.merged === true };
+      return result;
     } finally {
       release();
     }
@@ -198,7 +210,16 @@ function createTaskWorktreeService(options = {}) {
   });
 }
 
+// Published evidence can be emitted before its merge actor releases the lease.
+// Queue a no-op behind it, then reclaim outside the actor to avoid re-entry.
+async function cleanupAfterPublication({ repoActor, dirPath, taskId, cleanup }) {
+  if (!dirPath) return { ok: false, code: 'directory_not_found' };
+  await repoActor.run(dirPath, 'task-cleanup-after-publication', async () => null);
+  return cleanup(taskId);
+}
+
 module.exports = {
+  cleanupAfterPublication,
   WORKTREE_SUBDIR,
   taskWorktreeToken,
   slotOwnsWorktree,

@@ -169,12 +169,17 @@ function createTaskBoardRuntime(deps) {
   }
 
   // Optional per-task worktree service.
-  function updateBoardTask(id, patch) {
+  function updateBoardTask(id, patch, { requirePersist = false } = {}) {
     const task = board.tasks[id];
     if (!task) return;
+    const previous = { ...task };
     Object.assign(task, patch);
     task.updatedAt = Date.now();
-    save();
+    if (!save() && requirePersist) {
+      for (const key of Object.keys(task)) delete task[key];
+      Object.assign(task, previous);
+      throw Object.assign(new Error('task state could not be persisted'), { code: 'TASK_PERSISTENCE_FAILED' });
+    }
     notify(null, [id]);
   }
   const resolveDirectoryPort = deps.directories instanceof Map
@@ -192,7 +197,7 @@ function createTaskBoardRuntime(deps) {
             ? board.tasks[id] : null;
           return task && !task.mergedInto ? task : null;
         },
-        updateTask: updateBoardTask,
+        updateTask: (id, patch) => updateBoardTask(id, patch, { requirePersist: true }),
         getDirectory: resolveDirectoryPort,
         taskDirIdOf: task => core.taskDirId(board, task),
         gitWorktreeAdd: deps.gitWorktreeAdd,
@@ -200,6 +205,13 @@ function createTaskBoardRuntime(deps) {
         gitMergeBack: deps.gitMergeBack,
         existsSync: typeof deps.existsSync === 'function' ? deps.existsSync : fs.existsSync,
         beginTaskOperation: holdTaskOperation,
+        withCleanup: async (task, remove, complete) => {
+          if (typeof deps.withTaskWorktreeCleanup === 'function') return deps.withTaskWorktreeCleanup(task, remove, complete);
+          if ([...records.values()].some(record => record.worktreePath === task.worktreePath)) {
+            return { ok: false, code: 'workspace_cleanup_unavailable' };
+          }
+          return complete(await remove({}));
+        },
         logger,
       })
     : null;

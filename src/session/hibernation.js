@@ -334,6 +334,55 @@ function createSessionHibernationRuntime(options = {}) {
     }
   }
 
+  // Task cleanup removes the merged ref too. Keep the conversation identity
+  // and checkout coordinates, so the usual thaw fallback can recreate it.
+  function reclaimMergedWorkspace(sessionId, expected, remove, complete = result => result) {
+    return serialized(sessionId, async () => {
+      const matches = record => record && record.taskBoundTaskId === expected.id
+        && record.dirId === expected.dirId && !record.workspaceOwnerSessionId && record.worktreePath === expected.worktreePath
+        && record.branch === expected.branch;
+      let record = records.get(sessionId);
+      if (!matches(record)) return { ok: false, code: 'workspace_changed' };
+      const blockers = await inspectBlockers(sessionId, record);
+      if (blockers.length) return { ok: false, blocked: true, code: blockers[0] };
+      const previousState = stateOf(record);
+      persistState(sessionId, 'runtime.task-worktree-cleanup.preparing', current => {
+        if (!matches(current)) throw Object.assign(new Error('workspace changed'), { code: 'workspace_changed' });
+        current.workspaceState = 'hibernating';
+      });
+      let result;
+      try {
+        await closePersistent(sessionId, record);
+        record = records.get(sessionId);
+        if (!matches(record)) throw Object.assign(new Error('workspace changed'), { code: 'workspace_changed' });
+        const lateBlockers = await inspectBlockers(sessionId, record);
+        result = lateBlockers.length
+          ? { ok: false, blocked: true, code: lateBlockers[0] } : await remove();
+      } catch (error) {
+        const observed = await inspect(records.get(sessionId)).catch(() => null);
+        persistState(sessionId, 'runtime.task-worktree-cleanup.failed', current => {
+          if (matches(current)) current.workspaceState = !observed ? 'hibernating'
+            : observed.pathExists ? previousState : 'hibernated';
+        });
+        throw error;
+      }
+      const observedAfterFailure = result?.ok && result.removed ? null
+        : await inspect(records.get(sessionId)).catch(() => null);
+      // Required persistence precedes clearing the task's ledger. If this
+      // write fails, the durable preparing state + task coordinates are kept
+      // for retry/startup reconciliation; never report a completed cleanup.
+      persistState(sessionId, 'runtime.task-worktree-cleanup.complete', current => {
+        if (!matches(current)) throw Object.assign(new Error('workspace changed'), { code: 'workspace_changed' });
+        current.workspaceState = result?.ok && result.removed ? 'hibernated'
+          : !observedAfterFailure ? 'hibernating' : observedAfterFailure.pathExists ? previousState : 'hibernated';
+        if (current.workspaceState === 'hibernated') current.hibernatedAt = iso(now());
+        if (result?.ok && result.removed) current.workspaceStateErrorCode = null;
+      });
+      if (result?.ok && result.removed) publish('hibernate', 'success', sessionId);
+      return complete(result);
+    });
+  }
+
   function hibernate(sessionId, options) {
     return serialized(sessionId, () => hibernateUnlocked(sessionId, options));
   }
@@ -564,6 +613,7 @@ function createSessionHibernationRuntime(options = {}) {
     isLocked,
     policy,
     reclaim,
+    reclaimMergedWorkspace,
     reclaimForCapacity: reclaimer.reclaimForCapacity,
     reconcileStartup,
     start,
