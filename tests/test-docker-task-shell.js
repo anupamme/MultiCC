@@ -56,7 +56,7 @@ test('fake Codex emits resumable native identities without a real model', t => {
   assert.equal(guard.enforce({ cli: 'codex', cliSessionId: 'lab-isolated-test' }).action, 'ok');
 });
 
-test('release builds require both exact core and clean-install gates', () => {
+test('构建与门禁并行，发布等待全部成功，任一门禁失败独立取消本次运行', () => {
   for (const [file, jobs] of [
     ['release.yml', ['android-apk']],
     ['desktop-release.yml', ['build', 'standalone']],
@@ -64,13 +64,35 @@ test('release builds require both exact core and clean-install gates', () => {
     const source = fs.readFileSync(path.join(__dirname, '../.github/workflows', file), 'utf8');
     assert.match(source, /clean-install:\s+uses: \.\/\.github\/workflows\/clean-install\.yml/);
     assert.match(source, /core-tests:\s+uses: \.\/\.github\/workflows\/core-tests\.yml/);
-    for (const job of jobs) assert.ok(source.includes(`  ${job}:\n    needs: [core-tests, clean-install]\n`));
+    const blocks = Object.fromEntries([...source.matchAll(/^  ([a-z][\w-]*):\n([\s\S]*?)(?=^  [a-z][\w-]*:\n|(?![\s\S]))/gm)]
+      .map(match => [match[1], match[2]]));
+    for (const job of jobs) {
+      assert.ok(blocks[job], `${file}: 缺少构建 job ${job}`);
+      assert.doesNotMatch(blocks[job], /^    needs:/m, `${job} 必须与测试同时可调度`);
+      assert.doesNotMatch(blocks[job], /gh release (?:create|upload)/, '构建阶段不得发布');
+    }
+    const publish = blocks[file === 'release.yml' ? 'publish-apk' : 'release'];
+    assert.ok(publish);
+    const needs = publish.match(/^    needs: \[([^\]]+)\]/m)?.[1].split(',').map(s => s.trim());
+    assert.deepEqual(needs, ['core-tests', 'clean-install', ...jobs]);
+    assert.doesNotMatch(publish, /if:.*(?:always\(|failure\(|cancelled\()/, '发布不能绕过成功依赖');
+    for (const [suffix, gate] of [['core', 'core-tests'], ['install', 'clean-install']]) {
+      const cancel = blocks[`cancel-on-${suffix}-failure`];
+      assert.ok(cancel);
+      assert.ok(cancel.includes(`needs: [${gate}]`), '失败取消不等待另一项门禁完成');
+      assert.ok(cancel.includes(`always() && needs.${gate}.result != 'success'`));
+      assert.match(cancel, /actions: write/);
+      assert.match(cancel, /uses: \.\/\.github\/workflows\/cancel-release\.yml/);
+    }
   }
   const androidWorkflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/release.yml'), 'utf8');
   assert.doesNotMatch(androidWorkflow, /npm run test:release(?:\s|$)/,
     'the Android build must not repeat the legacy full Node gate');
   assert.doesNotMatch(androidWorkflow, /flutter test/,
     'the Android build must not repeat the full Flutter suite');
+  assert.match(androidWorkflow, /actions\/upload-artifact@v4[\s\S]*name: official-android-apk/);
+  assert.match(androidWorkflow, /actions\/download-artifact@v4[\s\S]*name: official-android-apk/);
+  assert.match(androidWorkflow, /GH_REPO: \$\{\{ github\.repository \}\}/);
   const coreWorkflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/core-tests.yml'), 'utf8');
   assert.match(coreWorkflow, /npm run test:release:core/);
   assert.doesNotMatch(coreWorkflow, /MULTICC_SHELL_BROWSER_TEST/,
@@ -90,4 +112,19 @@ test('release builds require both exact core and clean-install gates', () => {
     'clean-install must not hide a second application regression suite');
   assert.doesNotMatch(installerGate, /await run\('npm', \['ci'/,
     'clean-install must stay a pristine installation test');
+});
+
+
+test('取消动作仅针对调用方当前工作流运行', async () => {
+  const source = fs.readFileSync(path.join(__dirname, '../.github/workflows/cancel-release.yml'), 'utf8');
+  const body = source.split('          script: |\n')[1];
+  assert.ok(body);
+  const calls = [];
+  const github = { rest: { actions: { cancelWorkflowRun: async input => { calls.push(input); } } } };
+  const context = { repo: { owner: 'fixture-owner', repo: 'fixture-repo' }, runId: 123 };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const run = new AsyncFunction('github', 'context', body);
+  await run(github, context);
+  assert.deepEqual(calls, [{ owner: 'fixture-owner', repo: 'fixture-repo', run_id: 123 }]);
+  await assert.rejects(run({ rest: { actions: { cancelWorkflowRun: async () => { throw new Error('取消 API 不可用'); } } } }, context), /取消 API 不可用/);
 });

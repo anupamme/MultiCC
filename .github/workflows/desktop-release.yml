@@ -36,8 +36,21 @@ jobs:
     permissions:
       contents: read
 
+  cancel-on-core-failure:
+    needs: [core-tests]
+    if: ${{ always() && needs.core-tests.result != 'success' }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/cancel-release.yml
+
+  cancel-on-install-failure:
+    needs: [clean-install]
+    if: ${{ always() && needs.clean-install.result != 'success' }}
+    permissions:
+      actions: write
+    uses: ./.github/workflows/cancel-release.yml
+
   build:
-    needs: [core-tests, clean-install]
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -256,7 +269,6 @@ jobs:
   # the Electron desktop app is a shell around, so a failed build here has to
   # stop the release rather than publish a Release whose assets are incomplete.
   standalone:
-    needs: [core-tests, clean-install]
     name: standalone package (${{ matrix.platform }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -373,7 +385,7 @@ jobs:
     # Both producers, not just the installers: a failed standalone build must
     # stop the release instead of publishing a Release whose assets are
     # incomplete.
-    needs: [build, standalone]
+    needs: [core-tests, clean-install, build, standalone]
     # Only real tag pushes publish; workflow_dispatch validates builds only.
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest

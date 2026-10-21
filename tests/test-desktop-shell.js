@@ -1035,7 +1035,7 @@ test('desktop-release workflow: three native runners, publishes before Android, 
   // land on the same release; a failed build blocks publishing instead of
   // shipping a half-populated Release.
   assert.match(wf, /scripts\/standalone-bundle\.js/);
-  assert.match(wf, /needs: \[build, standalone\]/);
+  assert.match(wf, /needs: \[core-tests, clean-install, build, standalone\]/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-darwin-x64\.tar\.gz/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-linux-arm64\.tar\.gz/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-win32-x64\.zip/);
