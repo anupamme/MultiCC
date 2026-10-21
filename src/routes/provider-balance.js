@@ -19,7 +19,7 @@ const {
 } = require('../usage-limit-poller');
 const { fetchKimiBalance } = require('./kimi-quota');
 const { checkEgressIpAllowed } = require('../providers/egress-ip-policy');
-const { balanceBar, renderQuotaBar, COLOR } = require('../quota/quota-bar-view');
+const { balanceBar, renderQuotaBar, providerLimitBar, COLOR } = require('../quota/quota-bar-view');
 const { providerLimitSnapshot } = require('../quota/provider-limit-sync');
 
 function quotaBarFor(strategy, dto, fetchedAt) {
@@ -29,12 +29,19 @@ function quotaBarFor(strategy, dto, fetchedAt) {
   const used = Number(dto.utilization) * 100;
   if (!Number.isFinite(used)) return null;
   const weekly = Number(dto.weeklyUtilization) * 100;
+  if (dto.provider === 'claude' && Array.isArray(dto.windows) && dto.windows.length) {
+    return providerLimitBar({ kind: 'claude', summary: { windows: dto.windows }, fetchedAt });
+  }
   // The provider decides the bar species, not the CLI/provider pool that happens
   // to carry it. A Codex-compatible provider may still be GLM, so appType ===
   // 'codex' must never turn its 5h + weekly GLM windows into a ChatGPT bar.
   if (strategy === 'codex-oauth-usage' || dto.provider === 'codex') {
     return renderQuotaBar('codex', {
       status: 'ok', fetchedAt, planType: dto.tier || null,
+      ...(Array.isArray(dto.windows) && dto.windows.length ? { windows: dto.windows.map(w => ({
+        window: w.window, usedPercent: w.usedPercent,
+        resetsAt: w.resetMs == null ? null : w.resetMs / 1000,
+      })) } : {}),
       // Poller DTO resetsAt is epoch seconds; codexBar owns the seconds→ms
       // conversion. Dividing here made every borrowed reset look like 1970.
       weekly: { usedPercent: used, remainingPercent: Math.max(0, 100 - used),
@@ -75,7 +82,40 @@ async function pollKimiBalance(target, nowMs, timeoutMs, fetchImpl = fetchKimiBa
   };
 }
 
+// Strictly read the shared account: the chat bar's fallback across accounts /
+// browsers would return another person's quota when this account cannot answer.
+async function pollClaudeUsage(target, nowMs, timeoutMs, deps = {}) {
+  const { fetchUsage } = require('../claude-auth/official-oauth');
+  let token;
+  if (target.officialAccountId) {
+    const credentials = deps.credentials || require('../claude-auth/account-credentials')
+      .createClaudeAccountCredentialService({ accounts: require('../official-accounts').createOfficialAccountStore() });
+    const read = await credentials.peekAccountToken(target.officialAccountId);
+    if (!read?.token) throw new Error(`Claude quota credential unavailable: ${read?.reason || 'missing'}`);
+    token = read.token;
+  } else {
+    const read = await (deps.readCliCredentials || require('../quota/claude-cli-oauth').readCliCredentials)();
+    if (!read?.ok || !read.accessToken || (read.expiresAt != null && read.expiresAt <= nowMs)) {
+      throw new Error('Claude quota CLI credential unavailable or expired');
+    }
+    token = read.accessToken;
+  }
+  const usage = await (deps.fetchUsage || fetchUsage)(globalThis.fetch, token);
+  const { summarizeOAuthUsage } = require('./claude-usage-quota');
+  const rows = summarizeOAuthUsage(usage);
+  if (!rows?.length) return null;
+  const windows = rows.map(({ window, label, usedPercent, resetMs }) => ({ window, label, usedPercent, resetMs }));
+  const main = windows.find(w => w.window === '5h') || windows[0];
+  const worst = Math.max(...windows.map(w => w.usedPercent));
+  return { kind: 'window', provider: 'claude',
+    rateLimitType: main.window === '5h' ? 'five_hour' : 'weekly',
+    status: worst >= 100 ? 'rejected' : worst >= 80 ? 'allowed_warning' : 'allowed',
+    utilization: main.usedPercent / 100, resetsAt: main.resetMs == null ? null : main.resetMs / 1000,
+    windows };
+}
+
 const DEFAULT_ADAPTERS = Object.freeze({
+  'claude-oauth-usage': pollClaudeUsage,
   'glm-monitor': pollGlmMonitor,
   'deepseek-balance': pollDeepseekBalance,
   'codex-oauth-usage': pollCodexUsage,
@@ -343,5 +383,6 @@ module.exports = {
   mountProviderBalanceRoutes,
   mountProviderRelayQuotaRoutes,
   pollKimiBalance,
+  pollClaudeUsage,
   DEFAULT_ADAPTERS,
 };

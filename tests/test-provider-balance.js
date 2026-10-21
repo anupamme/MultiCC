@@ -13,6 +13,7 @@ const {
   mountProviderBalanceRoutes,
   mountProviderRelayQuotaRoutes,
   pollKimiBalance,
+  pollClaudeUsage,
   DEFAULT_ADAPTERS,
 } = require('../src/routes/provider-balance');
 
@@ -350,7 +351,64 @@ test('pollKimiBalance normalizes the kimi shape into a balance DTO', async () =>
 
 test('the default adapter table covers every strategy getProviderLimitTarget can emit', () => {
   assert.deepEqual(Object.keys(DEFAULT_ADAPTERS).sort(),
-    ['codex-oauth-usage', 'deepseek-balance', 'glm-monitor', 'kimi-balance', 'relay-quota']);
+    ['claude-oauth-usage', 'codex-oauth-usage', 'deepseek-balance', 'glm-monitor', 'kimi-balance', 'relay-quota']);
+});
+
+test('Claude quota reads only the shared account and preserves every window without credentials', async () => {
+  const seen = [];
+  const dto = await pollClaudeUsage({ officialAccountId: 'account-a' }, 0, undefined, {
+    credentials: { peekAccountToken: id => { seen.push(id); return { token: 'test-account-token' }; } },
+    readCliCredentials: () => { throw new Error('must not fall back to CLI'); },
+    fetchUsage: async (fetchImpl, token) => {
+      assert.equal(token, 'test-account-token');
+      return { five_hour: { utilization: 10, resets_at: '2030-01-01T00:00:00Z' },
+        seven_day: { utilization: 100, resets_at: '2030-01-07T00:00:00Z' } };
+    },
+  });
+  assert.deepEqual(seen, ['account-a']);
+  assert.equal(dto.provider, 'claude');
+  assert.equal(dto.utilization, 0.1);
+  assert.equal(dto.status, 'rejected', 'exhausted week overrides a usable 5h window');
+  assert.deepEqual(dto.windows.map(w => w.usedPercent), [10, 100]);
+  assert.ok(!JSON.stringify(dto).includes('test-account-token'));
+  await assert.rejects(pollClaudeUsage({ officialAccountId: 'account-a' }, 0, undefined, {
+    credentials: { peekAccountToken: () => ({ token: null, reason: 'access_token_expired' }) },
+    readCliCredentials: () => { throw new Error('wrong account fallback'); },
+    fetchUsage: () => { throw new Error('must not fetch'); },
+  }), /access_token_expired/);
+});
+
+test('Claude terminal quota uses the CLI credential and reports upstream failures', async () => {
+  const dto = await pollClaudeUsage({}, 0, undefined, {
+    readCliCredentials: async () => ({ ok: true, accessToken: 'test-cli-token' }),
+    fetchUsage: async (fetchImpl, token) => {
+      assert.equal(token, 'test-cli-token');
+      return { five_hour: { utilization: 25 } };
+    },
+  });
+  assert.equal(dto.utilization, 0.25);
+  await assert.rejects(pollClaudeUsage({}, 0, undefined, {
+    readCliCredentials: async () => ({ ok: true, accessToken: 'test-cli-token' }),
+    fetchUsage: async () => { throw new Error('usage HTTP 429'); },
+  }), /usage HTTP 429/);
+});
+
+test('borrowed Claude and Codex bars keep both cycles with the correct reset timestamps', async () => {
+  for (const provider of ['claude', 'codex']) {
+    const runtime = createProviderBalanceRuntime({
+      getProvider: () => ({ appType: 'claude' }), listProviders: () => [],
+      getProviderLimitTarget: () => ({ strategy: 'relay-quota' }),
+      adapters: { 'relay-quota': async () => ({ kind: 'window', provider, utilization: 0.1,
+        status: 'allowed_warning', rateLimitType: 'five_hour', resetsAt: 1_900_000_000,
+        windows: [{ window: '5h', usedPercent: 10, resetMs: 1_900_000_000_000 },
+          { window: '1wk', usedPercent: 90, resetMs: 1_900_600_000_000 }] }) },
+    });
+    const result = await runtime.queryOne('claude', 'borrowed');
+    assert.match(result.bar.text, /5h 90%/);
+    assert.match(result.bar.text, /1wk 10%/);
+    assert.match(result.bar.text, /1900000000000/);
+    assert.match(result.bar.text, /1900600000000/);
+  }
 });
 
 test('the mounted routes answer the two endpoints', async () => {

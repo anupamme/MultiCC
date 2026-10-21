@@ -252,8 +252,9 @@ async function pollRelayQuota(target, nowMs, timeoutMs = POLL_TIMEOUT_MS) {
   if (!body) return null;
   if (body.ok !== true) {
     // 出借方自己查询失败：透传它给出的 detail（HTTP 状态 / errno 链），没有
-    // detail 时保持 null——绝不把错误抛进聊天流，但根因要一路可见。
+    // detail 时保留 reason；两者都没有才保持 null。调用方负责隔离聊天流。
     if (body.detail) throw limitFetchError(`lender: ${body.detail}`);
+    if (body.reason) throw limitFetchError(`lender: ${String(body.reason).slice(0, 100)}`);
     return null;
   }
   const dto = body.dto;

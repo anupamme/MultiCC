@@ -822,6 +822,13 @@ function getProviderLimitTarget(appType, id) {
     const env = cfg.env || {};
     baseUrl = env.ANTHROPIC_BASE_URL || '';
     apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || '';
+    if (!baseUrl && !apiKey) {
+      const accountId = typeof cfg.officialAccount?.id === 'string' ? cfg.officialAccount.id : '';
+      // On-demand only: intentionally absent from the turn-boundary poller's
+      // adapter table. A shared subscription keeps its account identity.
+      return { providerId: id, appType: 'claude', host: 'api.anthropic.com', apiKey: null,
+        officialAccountId: accountId || null, strategy: 'claude-oauth-usage' };
+    }
   }
   if (!baseUrl || !apiKey) return null;
   let host = '';
