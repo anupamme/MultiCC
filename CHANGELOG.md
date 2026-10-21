@@ -2,6 +2,29 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.2 — The v2.8.1 changes, recut with the three red CI checks fixed (2026-10-21)
+
+`v2.8.1` published its release assets, but the tag's CI run was red on three
+checks that had already been failing before it was cut. `v2.8.2` carries exactly
+the `v2.8.1` changes below, plus the three fixes:
+
+- **A runtime root without a declared source** — `scripts/asr-compare/server.js`
+  derives its model directory from `~/.multicc/asr-models`, and the write
+  inventory had no source anchor for it. The entry now points at the line that
+  builds `MODEL_ROOT`.
+- **A Swift file over the line budget without a declared ceiling** —
+  `scripts/macos-agent/MultiCCAgent.swift` had grown to 3015 lines during the
+  remote-access round. It is registered as migration debt at its measured
+  ceiling, with the intended split (screen capture / input injection /
+  permission probing) written next to it, and the pinned debt list in the budget
+  test follows.
+- **A directory delete that raced task attribution** —
+  `tests/test-session-bundle-api.js` deleted the fixture directory once, after its
+  last empty sweep; adoption is asynchronous, so a card could land between the
+  sweep and the delete and history disposal would then refuse with
+  `TASK_HISTORY_REFERENCED`. The test force-deletes exactly the tasks the refusal
+  names and retries, instead of failing on a timing window.
+
 ## v2.8.1 — The v2.8.0 changes, cut again with a gate that stops exiting early (2026-10-21)
 
 `v2.8.0` published its tag but never produced release assets: the shared core
