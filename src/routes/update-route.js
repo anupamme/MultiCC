@@ -90,7 +90,16 @@ function createUpdateRoute(deps) {
   // Tells the client which updater will run: the standalone package has no
   // git "force" mode, so the dialog leaves that option out.
   function updateKind() {
-    try { return isStandalone() ? 'standalone' : 'git'; } catch (_) { return 'git'; }
+    // 'desktop' is the Electron shell: it runs with MULTICC_DESKTOP=1 like a
+    // standalone package but cannot update itself — its program is the app
+    // bundle, replaced by installing a new desktop release. The client renders
+    // that as a download prompt instead of an in-app update.
+    try {
+      if (isStandalone()) return 'standalone';
+      return isDesktopMode() ? 'desktop' : 'git';
+    } catch (_) {
+      return isDesktopMode() ? 'desktop' : 'git';
+    }
   }
 
   function mountRoutes(app) {

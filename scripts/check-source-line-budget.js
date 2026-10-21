@@ -418,8 +418,11 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +17 双语键（airQuotaGuard*）：Provider 页的「官方账号额度保护」卡片。
     //   两条改动合并后重跑生成器，实测 9420/597286，按真实高水位抬一格。
     // +1 双语键（airErrWorkspaceUnverifiable）：任务删除无法验证时的可读原因。
-    maxLines: 9422,
-    maxBytes: 597587,
+    // +4 双语键（airOpsDesktopUpdate* 3 条 + airOpsOpenReleases）：桌面版不再假装能在应用内
+    //   自更新 —— 服务端报 kind=desktop / DESKTOP_UPDATE_UNSUPPORTED，侧栏底部改为引导下载
+    //   新的桌面安装包。中英各 4 行 = +8 行，重跑生成器实测 9430/598640。
+    maxLines: 9430,
+    maxBytes: 598640,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

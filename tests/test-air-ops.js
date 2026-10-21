@@ -186,7 +186,7 @@ function createClock() {
   };
 }
 
-function buildContext({ fetchImpl, confirmResult = true, pushInfo = null, qrcode = null }) {
+function buildContext({ fetchImpl, confirmResult = true, pushInfo = null, qrcode = null, openExternal = null }) {
   const registry = registryFrom(AIR_HTML);
   const reloads = [];
   const clock = createClock();
@@ -225,6 +225,9 @@ function buildContext({ fetchImpl, confirmResult = true, pushInfo = null, qrcode
     getLocale,
   };
   context.window = context;
+  // The desktop dialog opens the release page through window.open (the shell
+  // routes it to the system browser); record the URL instead of navigating.
+  if (openExternal) context.open = url => { openExternal(url); return null; };
   vm.createContext(context);
   // air.html carries shared/format.js as a <script> ahead of air-ops.js (the
   // order tests/test-format-guard.js pins); a sandbox runs no script tags and
@@ -355,6 +358,64 @@ test('clicking the version row asks first, then updates and reloads once the ser
   await settle();
   assert.equal(reloads.length, 1, 'the page reloads exactly once after the server comes back');
   assert.match(registry['air-ver-hint'].textContent, /更新完成|重载/);
+});
+
+test('the desktop shell points at a new installer instead of updating in place', async () => {
+  const fetchImpl = scriptedFetch({
+    '/api/update/status': [{ json: { state: 'idle', running: false, kind: 'desktop' } }],
+    '/api/version-check': [{ json: { current: '2.4.3', channel: 'dev', latest: 'v2.8.2', latestVersion: '2.8.2', updateAvailable: true } }],
+    '/api/server-info': [{ json: { uptimeMs: 900 } }],
+  });
+  const opened = [];
+  const { registry } = buildContext({ fetchImpl, openExternal: url => opened.push(url) });
+  await settle();
+
+  registry['air-ver-row'].onclick();
+  await settle();
+
+  // The desktop app's program is the .app bundle; nothing here may start an
+  // in-place update (the server would refuse it, and older builds would run
+  // install.sh against the folder holding the app).
+  assert.equal(fetchImpl.calls.some(call => call.url === '/api/update'), false,
+    'the desktop shell must never POST /api/update');
+  assert.match(dialogText(registry), /当前版本：v2\.4\.3/);
+  assert.match(dialogText(registry), /桌面安装包/);
+  assert.equal(findButton(registry, '立即更新'), null, 'no in-app update button in the desktop shell');
+  assert.equal(registry['ops-extra'].children.length, 0, 'no force checkbox either');
+
+  const releases = findButton(registry, '打开发布页');
+  assert.ok(releases, 'the dialog offers the release page');
+  releases.onclick();
+  assert.deepEqual(opened, ['https://github.com/lsjwzh/MultiCC/releases/latest']);
+});
+
+test('a 409 refusal is reported instead of being mistaken for a running update', async () => {
+  const fetchImpl = scriptedFetch({
+    '/api/update/status': [{ json: { state: 'idle', running: false } }],
+    '/api/version-check': [{ json: { current: '2.4.3', channel: 'dev', latest: 'v2.8.2', updateAvailable: true } }],
+    '/api/update': [{
+      status: 409,
+      json: { error: 'this MultiCC runs inside the desktop app; install a new desktop release to update', code: 'DESKTOP_UPDATE_UNSUPPORTED' },
+    }],
+    '/api/server-info': [{ json: { uptimeMs: 900 } }],
+  });
+  const { registry, reloads, advance } = buildContext({ fetchImpl });
+  await settle();
+
+  registry['air-ver-row'].onclick();
+  await settle();
+  const confirm = findButton(registry, '立即更新');
+  assert.ok(confirm);
+  confirm.onclick();
+  await settle();
+
+  // A refusal carries no run status: the dialog must say so immediately rather
+  // than polling a run that does not exist until the 20-minute timeout.
+  assert.match(dialogText(registry), /桌面版不能在这里更新/);
+  assert.equal(reloads.length, 0);
+  await advance(POLL_MS_UNDER_TEST * 2);
+  await settle();
+  assert.match(dialogText(registry), /桌面版不能在这里更新/, 'the dialog must not drift into a fake "updating" state');
 });
 
 test('a running update shows each step, where it is stuck, and a failed step', async () => {

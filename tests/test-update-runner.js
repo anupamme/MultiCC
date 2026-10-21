@@ -248,6 +248,10 @@ test('a standalone install is recognised, and its log lives outside the bundle i
 
   // The Electron desktop app and a plain checkout are not standalone installs.
   assert.equal(detectStandaloneUpdate({ rootDir: fixture.rootDir, env: { ...fixture.env, ELECTRON_RUN_AS_NODE: '1' } }), null);
+  // A packaged desktop app carries the very same launcher/runtime tree, so the
+  // layout check alone would call it standalone and point install.sh at the
+  // directory that holds MultiCC.app. Its backend says which it is.
+  assert.equal(detectStandaloneUpdate({ rootDir: fixture.rootDir, env: { ...fixture.env, MULTICC_DESKTOP_SHELL: '1' } }), null);
   assert.equal(detectStandaloneUpdate({ rootDir: fixture.rootDir, env: { MULTICC_DATA_DIR: fixture.dataDir } }), null);
   assert.equal(detectStandaloneUpdate({ rootDir: createFixture(), env: fixture.env }), null);
 });

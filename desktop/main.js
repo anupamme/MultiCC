@@ -207,6 +207,10 @@ async function startBackend() {
         baseEnv: sanitizedBaseEnv(),
         dotenv: readEnvValues(desktopEnv.envFile),
         runtimeNode: desktopEnv.runtimeNode,
+        // Tells the server it is hosted by this shell (not a standalone
+        // install), so the web UI's update entry refuses instead of running
+        // install.sh against the folder that holds MultiCC.app.
+        desktopShell: true,
       }),
       logsDir: desktopEnv.logsDir,
       runtimeInfoFile: desktopEnv.runtimeInfoFile,
