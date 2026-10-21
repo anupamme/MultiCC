@@ -23,6 +23,7 @@
 #
 # Options:
 #   --dir <path>        Install into this directory (default: ~/MultiCC)
+#   --target <kind>     standalone or desktop (desktop uses its own installer)
 #   --version <v>       Release to install: v2.8.2 (default) or "latest"
 #   --token <xxx>       Pre-set ACCESS_TOKEN (default: auto-generate)
 #   --port <port>       Server port (default: 3000)
@@ -96,6 +97,7 @@ INSTALLER_VERSION="2.8.2"
 
 # ── Parse flags ──────────────────────────────────────────────────────────
 INSTALL_DIR=""
+INSTALL_TARGET=""
 ACCESS_TOKEN=""
 PORT="3000"
 PORT_GIVEN=false
@@ -116,6 +118,7 @@ need_val() { [ "$2" -ge 2 ] || { err "Option $1 requires a value (use --help)"; 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)       need_val "$1" "$#"; INSTALL_DIR="$2"; shift 2 ;;
+    --target)    need_val "$1" "$#"; INSTALL_TARGET="$2"; shift 2 ;;
     --token)     need_val "$1" "$#"; ACCESS_TOKEN="$2"; shift 2 ;;
     --port)      need_val "$1" "$#"; PORT="$2"; PORT_GIVEN=true; shift 2 ;;
     --version|-V) need_val "$1" "$#"; VERSION="$2"; shift 2 ;;
@@ -152,6 +155,7 @@ the installer checks and tells you how to get it.
 
 Options:
   --dir <path>        Install into this directory (default: ~/MultiCC)
+  --target <kind>     standalone or desktop; desktop opens download instructions
   --version <v>       Release to install: v${INSTALLER_VERSION} (default) or "latest"
   --token <xxx>       Pre-set ACCESS_TOKEN (default: auto-generate)
   --port <port>       Server port (default: 3000)
@@ -187,6 +191,15 @@ HELP
     *) err "Unknown option: $1 (use --help)"; exit 1 ;;
   esac
 done
+
+case "$INSTALL_TARGET" in
+  ''|standalone|desktop) ;;
+  *) err "--target must be standalone or desktop"; exit 1 ;;
+esac
+if [ "$INSTALL_TARGET" = desktop ] && { [ -n "$INSTALL_DIR" ] || [ -n "$FROM" ]; }; then
+  err "--target desktop cannot be combined with --dir or --from; use the desktop installer."
+  exit 1
+fi
 
 RELEASES_URL="https://github.com/lsjwzh/MultiCC/releases"
 API_LATEST="https://api.github.com/repos/lsjwzh/MultiCC/releases/latest"
@@ -287,6 +300,135 @@ case "$MACHINE" in
 esac
 ok "Architecture: ${ARCH}"
 
+# ── Installation identity (before downloads or any mutations) ─────────────
+# The standalone .app is a shell launcher; the Electron .app is a different
+# product with a different signing identity and data root. Never infer its
+# kind from the name MultiCC.app or from the shared Resources layout.
+app_identifier() {
+  [ "$PLATFORM" = darwin ] && [ -f "$1/Contents/Info.plist" ] || return 0
+  plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null || true
+}
+desktop_release_url() {
+  case "$VERSION" in
+    ''|latest) echo "$RELEASES_URL/latest" ;;
+    *) echo "$RELEASES_URL/tag/v${VERSION#v}" ;;
+  esac
+}
+
+CHOICE_PATHS=()
+CHOICE_KINDS=()
+add_install_choice() {
+  local candidate="$1" kind="$2" existing
+  [ -d "$candidate" ] || return 0
+  candidate="$(cd "$candidate" && pwd -P)"
+  for existing in ${CHOICE_PATHS[@]+"${CHOICE_PATHS[@]}"}; do
+    [ "$candidate" != "$existing" ] || return 0
+  done
+  CHOICE_PATHS+=("$candidate")
+  CHOICE_KINDS+=("$kind")
+}
+find_standalone_choice() {
+  local candidate="$1" resources
+  [ -n "$candidate" ] || return 0
+  if [ "$PLATFORM" = darwin ]; then resources="$candidate/MultiCC.app/Contents/Resources"
+  else resources="$candidate/Resources"; fi
+  [ -f "$candidate/multicc" ] && [ -f "$resources/bundle-manifest.json" ] || return 0
+  [ "$(app_identifier "$candidate/MultiCC.app")" != io.github.lsjwzh.multicc ] || return 0
+  add_install_choice "$candidate" standalone
+}
+
+if [ "$INSTALL_TARGET" = desktop ]; then
+  info "已选择桌面版。请下载对应系统和架构的 multicc-desktop 安装包，退出桌面 App 后替换安装。"
+  desktop_release_url
+  exit 0
+fi
+
+if [ -z "$INSTALL_DIR" ]; then
+  find_standalone_choice "${HOME:-$PWD}/MultiCC"
+  find_standalone_choice "$PWD"
+  find_standalone_choice "${MULTICC_STANDALONE_ROOT:-}"
+  if [ "$PLATFORM" = darwin ]; then
+    configured_runtime="$(plutil -extract ProgramArguments.0 raw -o - "${HOME}/Library/LaunchAgents/com.multicc.server.plist" 2>/dev/null || true)"
+    case "$configured_runtime" in
+      */MultiCC.app/Contents/Resources/runtime/bin/node)
+        find_standalone_choice "${configured_runtime%/MultiCC.app/Contents/Resources/runtime/bin/node}" ;;
+    esac
+    for desktop_app in "${MULTICC_INSTALLER_APPLICATIONS_DIR:-/Applications}/MultiCC.app" \
+      "${HOME}/Applications/MultiCC.app" "${HOME}/MultiCC/MultiCC.app"; do
+      if [ "$(app_identifier "$desktop_app")" = io.github.lsjwzh.multicc ]; then
+        if [ "$INSTALL_TARGET" != standalone ]; then add_install_choice "$desktop_app" desktop; fi
+      fi
+    done
+  fi
+  if [ "${#CHOICE_PATHS[@]}" -gt 0 ]; then
+    step "选择要升级的安装"
+    for ((choice_index=0; choice_index<${#CHOICE_PATHS[@]}; choice_index++)); do
+      echo "  $((choice_index + 1)). ${CHOICE_KINDS[$choice_index]} — ${CHOICE_PATHS[$choice_index]}"
+    done
+    # A single existing standalone is unambiguous. A desktop-only machine must
+    # explicitly choose desktop or adding a standalone, rather than being
+    # silently converted to the other distribution.
+    if [ "${#CHOICE_PATHS[@]}" = 1 ] && [ "${CHOICE_KINDS[0]}" = standalone ]; then
+      INSTALL_DIR="${CHOICE_PATHS[0]}"
+    else
+      default_install="${HOME:-$PWD}/MultiCC"
+      [ -d "$default_install" ] && default_install="$(cd "$default_install" && pwd -P)"
+      default_choice_index=0
+      for ((choice_index=0; choice_index<${#CHOICE_PATHS[@]}; choice_index++)); do
+        if [ "${CHOICE_PATHS[$choice_index]}" = "$default_install" ]; then
+          default_choice_index=$((choice_index + 1))
+        fi
+      done
+      # When ~/MultiCC is already one of the installs, option 0 must point at
+      # that entry instead of pretending to add a separate fresh install.
+      if [ "$default_choice_index" -gt 0 ]; then
+        echo "  0. 默认位置 ${default_install}（即上面的第 ${default_choice_index} 项）"
+      else
+        echo "  0. 在 ${default_install} 安装独立包（保留其他安装）"
+      fi
+      selected_choice=""
+      if ! { read -r -p '请输入编号（不默认选择）：' selected_choice </dev/tty; } 2>/dev/null; then
+        err "检测到需要选择的安装；非交互运行请明确传 --target standalone --dir <路径> 或 --target desktop。"
+        exit 1
+      fi
+      case "$selected_choice" in
+        ''|*[!0-9]*) err "未选择有效目标，未修改任何安装。"; exit 1 ;;
+      esac
+      if [ "$selected_choice" != 0 ]; then
+        [ "$selected_choice" -le "${#CHOICE_PATHS[@]}" ] || { err "编号超出范围。"; exit 1; }
+        choice_index=$((selected_choice - 1))
+        if [ "${CHOICE_KINDS[$choice_index]}" = desktop ]; then
+          info "已选择桌面版 ${CHOICE_PATHS[$choice_index]}；请下载桌面安装包更新，独立包保持不变。"
+          desktop_release_url
+          exit 0
+        fi
+        INSTALL_DIR="${CHOICE_PATHS[$choice_index]}"
+      elif [ "$default_choice_index" -gt 0 ]; then
+        INSTALL_DIR="${CHOICE_PATHS[$((default_choice_index - 1))]}"
+      fi
+    fi
+  fi
+fi
+
+# --dir is the web updater's explicit instance selection, not permission to
+# replace an Electron app (including one copied into ~/MultiCC).
+if [ -n "$INSTALL_DIR" ]; then
+  for target_app in "$INSTALL_DIR" "$INSTALL_DIR/MultiCC.app"; do
+    target_app_id="$(app_identifier "$target_app")"
+    if [ "$target_app_id" = io.github.lsjwzh.multicc ]; then
+      err "所选路径属于桌面版，不能用独立包覆盖：$target_app"
+      echo "请使用 --target desktop 查看桌面版更新方式。"
+      exit 1
+    fi
+    if [ "$PLATFORM" = darwin ] && [ -f "$target_app/Contents/Info.plist" ] \
+      && [ "$target_app_id" != io.github.lsjwzh.multicc.standalone ]; then
+      err "无法确认所选 App 是独立包，未修改安装：$target_app"
+      exit 1
+    fi
+  done
+fi
+info "升级目标：standalone — ${INSTALL_DIR:-${HOME:-$PWD}/MultiCC}"
+
 # ── Resolve which release to install ──────────────────────────────────────
 step "Resolving release"
 
@@ -352,11 +494,114 @@ START_CMD="$CMD_NAME start"
 # the previous installation. Never the install directory itself.
 STAGE_DIR=""
 OLD_DIR=""
+UPGRADE_SERVICE_PAUSED=false
+UPGRADE_SERVICE_RESTORED=false
+UPGRADE_COMMITTED=false
+UPGRADE_START_ATTEMPTED=false
+UPGRADE_PREVIOUS_RUNNING=false
+UPGRADE_NEW_INSTALLED=false
+INSTALL_LOCK_DIR=""
+UPGRADE_PLIST="${HOME}/Library/LaunchAgents/com.multicc.server.plist"
 cleanup() {
+  local result=$?
+  # Before first boot, restoring the previous program is safe. After first
+  # boot it may already have migrated user data: keep the backup for recovery
+  # rather than running an older server against an unknown database schema.
+  if [ "$UPGRADE_COMMITTED" = false ] && [ "$UPGRADE_START_ATTEMPTED" = false ]; then
+    if [ -n "$OLD_DIR" ] && [ -d "$OLD_DIR" ]; then
+      if [ "$UPGRADE_NEW_INSTALLED" = true ]; then
+        mv "$INSTALL_DIR" "$INSTALL_DIR.failed-$$" || return "$result"
+      fi
+      if [ ! -e "$INSTALL_DIR" ]; then
+        mv "$OLD_DIR" "$INSTALL_DIR" || return "$result"
+        warn "升级未完成，已恢复旧版本。"
+      fi
+    fi
+    if [ "$UPGRADE_SERVICE_PAUSED" = true ]; then
+      launchctl load "$UPGRADE_PLIST" >/dev/null 2>&1 \
+        || warn "旧版文件已保留，但后台服务恢复失败，请手动检查。"
+    elif [ "$UPGRADE_PREVIOUS_RUNNING" = true ] && [ "$UPGRADE_SERVICE_RESTORED" = false ]; then
+      "${MULTICC_CMD[@]}" start --no-open >/dev/null 2>&1 \
+        || warn "旧版启动失败，请手动检查。"
+    fi
+  elif [ "$UPGRADE_COMMITTED" = false ] && [ -n "$OLD_DIR" ] && [ -d "$OLD_DIR" ]; then
+    warn "新版启动未确认成功，旧版保留在 ${OLD_DIR}；请检查日志后恢复，避免旧版读取已迁移的数据。"
+  fi
   [ -n "$STAGE_DIR" ] && [ -d "$STAGE_DIR" ] && rm -rf "$STAGE_DIR" 2>/dev/null
-  return 0
+  if [ -n "$INSTALL_LOCK_DIR" ]; then rmdir "$INSTALL_LOCK_DIR" 2>/dev/null || true; fi
+  return "$result"
 }
 trap cleanup EXIT
+
+# Serialise both terminal installs and web updates of the same program tree.
+# Do not guess whether somebody else's lock is stale and remove it for them.
+installation_lock="$PARENT_DIR/.$(basename "$INSTALL_DIR").upgrade-lock"
+if ! mkdir "$installation_lock" 2>/dev/null; then
+  err "该安装已有升级锁：${installation_lock}。请确认其他升级已结束后再重试。"
+  exit 1
+fi
+INSTALL_LOCK_DIR="$installation_lock"
+
+# ── Selected instance's service handoff ───────────────────────────────────
+# Never unload the shared label just because it exists: it may belong to a
+# different standalone installation. Check the plist AND the loaded job.
+pause_selected_service() {
+  [ "$PLATFORM" = darwin ] && [ -f "$UPGRADE_PLIST" ] || return 0
+  local configured loaded
+  configured="$(plutil -extract ProgramArguments.0 raw -o - "$UPGRADE_PLIST" 2>/dev/null || true)"
+  if [ "$configured" != "$INSTALL_DIR/$RUNTIME_REL" ]; then
+    warn "开机服务属于另一个安装，本次保留其配置和运行状态。"
+    NO_SERVICE=true
+    return 0
+  fi
+  # list -x gives the actual registered arguments, not merely the plist a user
+  # may have edited after loading it. A loaded but unidentifiable job is unsafe.
+  if launchctl list -x com.multicc.server > "$STAGE_DIR/loaded-service.plist" 2>/dev/null; then
+    loaded="$(plutil -extract ProgramArguments.0 raw -o - "$STAGE_DIR/loaded-service.plist" 2>/dev/null || true)"
+    if [ "$loaded" != "$configured" ]; then
+      err "已加载的开机服务与目标安装不一致，已停止升级，未替换文件。"
+      exit 1
+    fi
+    launchctl unload "$UPGRADE_PLIST" || { err "无法暂停开机服务，未替换安装。"; exit 1; }
+    UPGRADE_SERVICE_PAUSED=true
+    ok "已暂停所选安装的开机服务，替换期间不会自动拉起旧进程"
+  fi
+  # Keep the existing registration, including a deliberately unloaded service.
+  NO_SERVICE=true
+}
+
+stop_selected_installation() {
+  local state pids pid attempt
+  state="$("${MULTICC_CMD[@]}" status --json)" || { err "无法核对旧实例状态，未替换安装。"; exit 1; }
+  # Use the bundled runtime, never require a host Node. Keep the snapshot
+  # outside the bundle: stopping can remove the pid files, even on failure.
+  pids="$("$INSTALL_DIR/$RUNTIME_REL" -e '
+    const fs = require("fs"), path = require("path");
+    const state = JSON.parse(process.argv[1]);
+    const ids = [state.pid];
+    if (!state.dataDir) process.exit(1);
+    try { ids.push(Number(fs.readFileSync(path.join(state.dataDir, "standalone-launcher.pid"), "utf8").trim())); }
+    catch (e) { if (e.code !== "ENOENT") throw e; }
+    console.log([...new Set(ids.filter(p => Number.isInteger(p) && p > 0))].join("\n"));
+  ' "$state")" || { err "无法读取旧实例进程信息，未替换安装。"; exit 1; }
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    if kill -0 "$pid" 2>/dev/null; then UPGRADE_PREVIOUS_RUNNING=true; fi
+  done <<< "$pids"
+  "${MULTICC_CMD[@]}" stop || { err "旧实例停止失败，未替换安装。"; exit 1; }
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    for ((attempt=0; attempt<20; attempt++)); do
+      if ! kill -0 "$pid" 2>/dev/null; then break; fi
+      sleep 0.25
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      err "旧进程 $pid 仍在运行，已停止升级，未替换文件。"
+      exit 1
+    fi
+  done <<< "$pids"
+  ok "旧实例已退出"
+}
 
 is_multicc_install() {
   # A source checkout also has a root `multicc` command. Treating that single
@@ -1084,20 +1329,16 @@ fi
 
 # ── Install (replace any previous version) ────────────────────────────────
 step "Installing to $INSTALL_DIR"
+pause_selected_service
 if [ "$LEGACY_PENDING" = true ]; then
   # Reached only after the new package has been downloaded and verified, so a
   # failed download never disturbs an installation that still works.
   prepare_legacy_upgrade "$INSTALL_DIR"
 elif [ -d "$INSTALL_DIR" ] && is_multicc_install "$INSTALL_DIR"; then
   info "Existing installation found — replacing it (your data is kept)"
-  # A running server would keep serving from the directory we are about to
-  # replace, so ask it to stop first. Failure to stop is not fatal: the new
-  # files still land, the old process just has to be restarted by hand.
-  if [ -x "$MULTICC_BIN" ] || [ "$PLATFORM" = "win32" ]; then
-    "${MULTICC_CMD[@]}" stop >/dev/null 2>&1 && ok "Stopped the running instance" || true
-  fi
+  stop_selected_installation
   OLD_DIR="$INSTALL_DIR.old-$$"
-  rm -rf "$OLD_DIR"
+  if [ -e "$OLD_DIR" ]; then err "备份路径已存在，未覆盖：$OLD_DIR"; exit 1; fi
   mv "$INSTALL_DIR" "$OLD_DIR"
 elif [ -d "$INSTALL_DIR" ]; then
   # An existing empty directory: `mv src dst` would nest the package inside it.
@@ -1121,7 +1362,7 @@ if ! mv "$UNPACK_DIR" "$INSTALL_DIR"; then
   fi
   exit 1
 fi
-[ -n "$OLD_DIR" ] && rm -rf "$OLD_DIR"
+UPGRADE_NEW_INSTALLED=true
 chmod +x "$INSTALL_DIR/multicc" 2>/dev/null || true
 ok "Installed MultiCC ${VERSION_NUMBER}"
 
@@ -1217,20 +1458,30 @@ if [ -z "$ACCESS_TOKEN" ] && [ -n "$LEGACY_TOKEN" ]; then
 fi
 if [ "$PORT_GIVEN" = false ] && [ -n "$LEGACY_PORT" ]; then
   PORT="$LEGACY_PORT"
+elif [ "$PORT_GIVEN" = false ] && [ "$TARGET_HAD_INSTALL" = true ]; then
+  existing_port="$("${MULTICC_CMD[@]}" config get PORT 2>/dev/null || true)"
+  case "$existing_port" in
+    ''|*[!0-9]*) ;;
+    *) PORT="$existing_port" ;;
+  esac
 fi
 
 if [ -n "$ACCESS_TOKEN" ]; then
   "${MULTICC_CMD[@]}" config set ACCESS_TOKEN "$ACCESS_TOKEN" >/dev/null \
-    && ok "ACCESS_TOKEN saved${LEGACY_TOKEN:+ (kept from the previous installation)}"
+    || { err "无法保存 ACCESS_TOKEN。"; exit 1; }
+  ok "ACCESS_TOKEN saved${LEGACY_TOKEN:+ (kept from the previous installation)}"
 elif EXISTING_TOKEN="$("${MULTICC_CMD[@]}" config get ACCESS_TOKEN 2>/dev/null)" && [ -n "$EXISTING_TOKEN" ]; then
   ACCESS_TOKEN="$EXISTING_TOKEN"
   info "Keeping the existing ACCESS_TOKEN"
 else
   ACCESS_TOKEN="$(gen_token)"
   [ -n "$ACCESS_TOKEN" ] || ACCESS_TOKEN="multicc-$(date +%s)"
-  "${MULTICC_CMD[@]}" config set ACCESS_TOKEN "$ACCESS_TOKEN" >/dev/null && ok "ACCESS_TOKEN generated"
+  "${MULTICC_CMD[@]}" config set ACCESS_TOKEN "$ACCESS_TOKEN" >/dev/null \
+    || { err "无法生成 ACCESS_TOKEN 配置。"; exit 1; }
+  ok "ACCESS_TOKEN generated"
 fi
-"${MULTICC_CMD[@]}" config set PORT "$PORT" >/dev/null && ok "PORT set to $PORT"
+"${MULTICC_CMD[@]}" config set PORT "$PORT" >/dev/null || { err "无法保存端口配置。"; exit 1; }
+ok "PORT set to $PORT"
 
 # ── Bring an older installation's data across ─────────────────────────────
 # Runs before the server has ever started: the destination has to be empty for
@@ -1363,6 +1614,26 @@ START_OK=false
 ACTUAL_URL=""
 if [ "$NO_START" = false ]; then
   step "Starting MultiCC"
+  UPGRADE_START_ATTEMPTED=true
+  if [ "$UPGRADE_SERVICE_PAUSED" = true ]; then
+    launchctl load "$UPGRADE_PLIST" || { err "无法恢复开机服务。"; exit 1; }
+    UPGRADE_SERVICE_PAUSED=false
+    UPGRADE_SERVICE_RESTORED=true
+    # Loading is asynchronous. Wait for the service before invoking start,
+    # which would otherwise race launchd and start a second launcher.
+    service_ready=false
+    for ((ready_attempt=0; ready_attempt<60; ready_attempt++)); do
+      if "${MULTICC_CMD[@]}" status --json 2>/dev/null | grep -q '"running"[[:space:]]*:[[:space:]]*true'; then
+        service_ready=true
+        break
+      fi
+      sleep 1
+    done
+    if [ "$service_ready" = false ]; then
+      err "开机服务未在时限内就绪，请检查服务日志。"
+      exit 1
+    fi
+  fi
   START_ARGS=(start)
   [ "$NO_OPEN" = true ] && START_ARGS+=(--no-open)
   if "${MULTICC_CMD[@]}" "${START_ARGS[@]}"; then
@@ -1376,10 +1647,16 @@ if [ "$NO_START" = false ]; then
   else
     warn "MultiCC was installed, but it did not become ready."
     echo "       Run '$CMD_NAME log -f' in $INSTALL_DIR to see the startup error."
+    exit 1
   fi
 else
   info "Installed without starting (--no-start)"
 fi
+
+# Keep the previous program until configuration and (unless --no-start) the
+# readiness gate pass. --no-start intentionally leaves a paused job unloaded.
+UPGRADE_COMMITTED=true
+[ -n "$OLD_DIR" ] && rm -rf "$OLD_DIR"
 
 # ── Done ──────────────────────────────────────────────────────────────────
 echo ""

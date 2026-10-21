@@ -399,6 +399,73 @@ function assetUrl(version, asset) {
   return `${RELEASES_URL}/download/v${version}/${asset}`;
 }
 
+// ── Update through install.sh ───────────────────────────────────────────────
+// Replacing an installed tree is where the dangerous failures live: a loaded
+// launchd/systemd unit (KeepAlive / Restart=always) brings the launcher back
+// the moment `stop` ends it, so a plain swap races a fresh copy of the OLD
+// server and then deletes the directory it runs from; a half-moved tree has to
+// be put back; the login service must end the run exactly as it was. install.sh
+// already implements all of that — it is what the web updater and a first-time
+// user run — so the terminal updater delegates instead of keeping a second copy
+// of those rules. The script is fetched from the release being installed, never
+// from this bundle: an old install must not apply its own old rules.
+// Returns null when nothing was replaced (script unavailable → caller falls
+// back to the in-bundle swap); any number means install.sh ran and its exit
+// code is the verdict.
+const INSTALL_SCRIPT_BASE = 'https://raw.githubusercontent.com/lsjwzh/MultiCC';
+
+function installerScriptUrl(tag) {
+  return `${INSTALL_SCRIPT_BASE}/v${String(tag).replace(/^v/, '')}/install.sh`;
+}
+
+function installerDelegateArgs({ bundleRoot, tag }) {
+  return ['--dir', bundleRoot, '--version', `v${String(tag).replace(/^v/, '')}`, '--no-open'];
+}
+
+async function runInstallerScript({ layout, release, env, workDir, logger: log }) {
+  // Windows has no bash and no launchd; the in-bundle swap is its native path.
+  if (layout.platform === 'win32') return null;
+  // install.sh installs released versions (`v<major>.<minor>.<patch>`); a
+  // prerelease tag is compared here but would be rejected there, so keep the
+  // in-bundle path for it instead of spending a download to find out.
+  if (!/^\d+\.\d+\.\d+$/.test(String(release.tag).replace(/^v/, ''))) {
+    log.log(`install.sh handles released versions only (${release.tag}); using the in-bundle updater`);
+    return null;
+  }
+  // install.sh downloads the package with curl/wget (this CLI uses fetch), so
+  // a host without either keeps the in-bundle path instead of failing there.
+  if (spawnSync('sh', ['-c', 'command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1']).status !== 0) {
+    log.log('no curl or wget for install.sh; using the in-bundle updater');
+    return null;
+  }
+  const script = path.join(workDir, 'install.sh');
+  try {
+    await downloadTo(installerScriptUrl(release.tag), script, { logger: log });
+  } catch (error) {
+    log.log(`install.sh unavailable (${error.message}); using the in-bundle updater`);
+    return null;
+  }
+  process.stdout.write(`Updating with install.sh → ${release.tag}...\n`);
+  const res = spawnSync('bash', [script, ...installerDelegateArgs({
+    bundleRoot: layout.bundleRoot, tag: release.tag,
+  })], { stdio: 'inherit', env });
+  // Only the script goes: the caller still owns workDir for the fallback path.
+  fs.rmSync(script, { force: true });
+  if (res.error) {
+    log.error(`could not run install.sh (${res.error.message}); nothing was replaced`);
+    return null;
+  }
+  if (res.status === 0) {
+    fs.rmSync(workDir, { recursive: true, force: true });
+    process.stdout.write(`MultiCC ${release.tag} is installed and running.\n`);
+    return 0;
+  }
+  // Never stack the in-bundle swap on a run that stopped in the middle: it may
+  // have paused the service or moved directories already.
+  process.stderr.write(`install.sh failed (exit ${res.status}); it keeps or restores the previous installation. See above.\n`);
+  return res.status || 1;
+}
+
 async function latestRelease({ fetchImpl = fetch, logger: log } = {}) {
   try {
     const res = await fetchImpl(API_LATEST, {
@@ -699,8 +766,10 @@ async function cmdUpdate(layout, env, args) {
     return 0;
   }
   updateStep(env, 'check', 'done', `v${release.tag}`);
-  const asset = archiveName(release.tag, layout.platform, layout.arch);
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-update-'));
+  const delegated = await runInstallerScript({ layout, release, env, workDir, logger: log });
+  if (delegated !== null) return delegated;
+  const asset = archiveName(release.tag, layout.platform, layout.arch);
   const archive = path.join(workDir, asset);
   process.stdout.write(`Updating ${current} → ${release.tag}...\n`);
   // Web: one progress marker per second. Terminal: one self-rewriting line.
@@ -981,6 +1050,8 @@ module.exports = {
   configSet,
   envFilePath,
   extractArchive,
+  installerDelegateArgs,
+  installerScriptUrl,
   latestRelease,
   main,
   parseArgs,

@@ -91,6 +91,7 @@ function archiveFixture({ scratch, name, root }, { corrupt = false } = {}) {
 // exactly the no-terminal path a `curl … | bash` install takes.
 function runInstaller(args, { cwd, env = {} } = {}) {
   const standaloneHome = env.MULTICC_STANDALONE_HOME || tmpdir('multicc-installer-data-');
+  const userHome = env.HOME || tmpdir('multicc-installer-user-');
   return spawnSync('bash', [INSTALLER, ...args], {
     encoding: 'utf8',
     cwd: cwd || ROOT,
@@ -98,6 +99,8 @@ function runInstaller(args, { cwd, env = {} } = {}) {
     env: {
       ...process.env,
       ...env,
+      HOME: userHome,
+      MULTICC_INSTALLER_APPLICATIONS_DIR: env.MULTICC_INSTALLER_APPLICATIONS_DIR || path.join(userHome, 'Applications'),
       MULTICC_STANDALONE_HOME: standaloneHome,
       MULTICC_DESKTOP_DIR: env.MULTICC_DESKTOP_DIR || path.join(standaloneHome, 'Desktop'),
     },
@@ -587,6 +590,32 @@ test('install.sh rejects a package that is missing its runtime', () => {
   assert.equal(fs.existsSync(installDir), false);
 });
 
+// `$VAR` is a name that bash (and PowerShell) keep reading past the ASCII
+// boundary: "$PROFILE_ENTRY（" is one variable called PROFILE_ENTRY（. Under
+// `set -u` the whole installer dies the moment such a message is built — the
+// upgrade-lock error killed the run before it could refuse, so the lock test
+// above saw exit 0 and no message. Braces are the fix; scan every shell script
+// this repo ships so the next Chinese sentence cannot hide the same defect.
+test('shell scripts never glue $VAR to a non-ASCII character', () => {
+  const files = [
+    INSTALLER,
+    WINDOWS_INSTALLER,
+    path.join(ROOT, 'multicc'),
+    ...fs.readdirSync(path.join(ROOT, 'scripts')).filter(name => name.endsWith('.sh'))
+      .map(name => path.join(ROOT, 'scripts', name)),
+  ];
+  const glued = /\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7F])/g;
+  const offenders = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    for (const match of source.matchAll(glued)) {
+      const line = source.slice(0, match.index).split('\n').length;
+      offenders.push(`${path.relative(ROOT, file)}:${line} ${JSON.stringify(source.slice(match.index, match.index + 24))}`);
+    }
+  }
+  assert.deepEqual(offenders, [], 'write ${VAR} instead of $VAR when the next character is non-ASCII');
+});
+
 test('install.sh is dependency-free: no git, npm or node on the target machine', () => {
   const source = fs.readFileSync(INSTALLER, 'utf8');
   assert.doesNotMatch(source, /\bgit clone\b/, 'the installer must not clone the repository');
@@ -704,4 +733,226 @@ test('install.sh really installs at HOME/MultiCC when --dir is omitted', () => {
   assert.equal(res.status, 0, `installer failed:\n${res.stdout}\n${res.stderr}`);
   assert.equal(fs.existsSync(path.join(home, 'MultiCC', 'multicc')), true,
     'default install must be stable under HOME, not whichever directory invoked curl');
+});
+
+function writeDesktopApp(app) {
+  write(path.join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>io.github.lsjwzh.multicc</string></dict></plist>`);
+  write(path.join(app, 'Contents', 'MacOS', 'MultiCC'), 'desktop sentinel\n');
+}
+
+test('coexisting desktop and standalone require a target; --yes cannot guess it', { skip: PLATFORM !== 'darwin' }, () => {
+  const fixture = buildFixtureBundle();
+  const archive = archiveFixture(fixture);
+  const home = tmpdir('multicc-coexist-');
+  const target = path.join(home, 'MultiCC');
+  fs.cpSync(fixture.root, target, { recursive: true });
+  const desktop = path.join(home, 'Applications', 'MultiCC.app');
+  writeDesktopApp(desktop);
+  write(path.join(target, 'old-marker'), 'keep');
+  const res = runInstaller(['--from', archive, '--yes', '--no-start'], { env: { HOME: home } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /standalone.*MultiCC/);
+  assert.match(res.stdout, /desktop.*MultiCC\.app/);
+  assert.match(res.stdout, /--target standalone/);
+  assert.equal(fs.readFileSync(path.join(target, 'old-marker'), 'utf8'), 'keep');
+  assert.equal(fs.readFileSync(path.join(desktop, 'Contents', 'MacOS', 'MultiCC'), 'utf8'), 'desktop sentinel\n');
+
+  const selected = runInstaller(['--target', 'standalone', '--from', archive, '--no-start'], { env: { HOME: home } });
+  assert.equal(selected.status, 0, `${selected.stdout}\n${selected.stderr}`);
+  assert.equal(fs.existsSync(path.join(target, 'old-marker')), false);
+  assert.equal(fs.readFileSync(path.join(desktop, 'Contents', 'MacOS', 'MultiCC'), 'utf8'), 'desktop sentinel\n');
+});
+
+test('an explicit desktop target gives the desktop release and cannot take a standalone archive', () => {
+  const selected = runInstaller(['--target', 'desktop', '--version', 'v9.9.9']);
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.match(selected.stdout, /releases\/tag\/v9\.9\.9/);
+  const latest = runInstaller(['--target', 'desktop', '--version', 'latest']);
+  assert.equal(latest.status, 0);
+  assert.match(latest.stdout, /releases\/latest/);
+  const incompatible = runInstaller(['--target', 'desktop', '--from', '/unused']);
+  assert.notEqual(incompatible.status, 0);
+  assert.match(incompatible.stdout, /cannot be combined/);
+});
+
+test('even --dir and --yes cannot replace an Electron app with a standalone', { skip: PLATFORM !== 'darwin' }, () => {
+  const parent = tmpdir('multicc-desktop-target-');
+  const app = path.join(parent, 'MultiCC.app');
+  writeDesktopApp(app);
+  for (const target of [parent, app]) {
+    const res = runInstaller(['--dir', target, '--yes', '--no-start']);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stdout, /不能用独立包覆盖/);
+    assert.equal(fs.readFileSync(path.join(app, 'Contents', 'MacOS', 'MultiCC'), 'utf8'), 'desktop sentinel\n');
+  }
+});
+
+test('multiple standalone locations need --dir even with --target standalone', () => {
+  const fixture = buildFixtureBundle();
+  const home = tmpdir('multicc-multiple-');
+  fs.cpSync(fixture.root, path.join(home, 'MultiCC'), { recursive: true });
+  const res = runInstaller(['--target', 'standalone', '--no-start'], { cwd: fixture.root, env: { HOME: home } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /--dir/);
+  assert.equal(fs.existsSync(path.join(fixture.root, 'multicc')), true);
+});
+
+// A launchctl substitute with a real plist and real standalone bundle. It
+// starts only the fixture server; no real login job is ever touched.
+function serviceFixture() {
+  const fixture = buildFixtureBundle();
+  const archive = archiveFixture(fixture);
+  const home = tmpdir('multicc-service-user-');
+  const target = path.join(home, 'MultiCC');
+  fs.cpSync(fixture.root, target, { recursive: true });
+  write(path.join(target, 'old-marker'), 'previous version');
+  const plist = path.join(home, 'Library', 'LaunchAgents', 'com.multicc.server.plist');
+  write(plist, `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+<key>ProgramArguments</key><array><string>${target}/${resourcesRel()}/runtime/bin/node</string></array>
+</dict></plist>`);
+  const bin = path.join(home, 'test-tools');
+  const events = path.join(home, 'events');
+  const loaded = path.join(home, 'loaded');
+  write(loaded, 'yes');
+  const original = fs.readFileSync(path.join(target, 'multicc'), 'utf8');
+  write(path.join(target, 'multicc'), original.replace('#!/bin/sh', '#!/bin/sh\necho "old:$1" >> "$TEST_EVENTS"'), 0o755);
+  write(path.join(bin, 'launchctl'), `#!/bin/sh
+case "$1" in
+  list) [ -f "$TEST_LOADED" ] || exit 1; cat "$TEST_PLIST" ;;
+  unload)
+    echo unload >> "$TEST_EVENTS"
+    [ "$TEST_FAIL_UNLOAD" != 1 ] || exit 1
+    rm -f "$TEST_LOADED" ;;
+  load)
+    echo load >> "$TEST_EVENTS"
+    touch "$TEST_LOADED"
+    MULTICC_SERVICE=1 "$TEST_TARGET/multicc" start --no-open > /dev/null 2>&1 ;;
+  *) exit 1 ;;
+esac
+`, 0o755);
+  const env = { HOME: home, PATH: `${bin}:${process.env.PATH}`,
+    MULTICC_STANDALONE_HOME: path.join(home, 'state'),
+    TEST_EVENTS: events, TEST_LOADED: loaded, TEST_PLIST: plist, TEST_TARGET: target };
+  return { archive, home, target, plist, bin, events, loaded, env };
+}
+
+test('upgrading a loaded service unloads before stop and reloads only after swap, retaining its port', { skip: PLATFORM !== 'darwin' }, t => {
+  const f = serviceFixture();
+  t.after(() => spawnSync(path.join(f.target, 'multicc'), ['stop'], { env: { ...process.env, ...f.env } }));
+  spawnSync(path.join(f.target, 'multicc'), ['config', 'set', 'PORT', '3421'], { env: { ...process.env, ...f.env } });
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-service', '--no-open'], { env: f.env });
+  assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+  const events = fs.readFileSync(f.events, 'utf8').trim().split('\n');
+  assert.ok(events.indexOf('unload') < events.indexOf('old:stop'), events.join('\n'));
+  assert.ok(events.indexOf('old:stop') < events.indexOf('load'), events.join('\n'));
+  assert.equal(fs.existsSync(path.join(f.target, 'old-marker')), false);
+  assert.equal(fs.existsSync(f.loaded), true);
+  assert.match(res.stdout, /PORT set to 3421/);
+  assert.equal(fs.readdirSync(f.home).some(name => name.startsWith('MultiCC.old-')), false);
+});
+
+test('--no-start pauses a loaded service and leaves it registered without relaunching', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: f.env });
+  assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+  const events = fs.readFileSync(f.events, 'utf8');
+  assert.match(events, /unload[\s\S]*old:stop/);
+  assert.doesNotMatch(events, /^load$/m);
+  assert.equal(fs.existsSync(f.plist), true);
+  assert.equal(fs.existsSync(f.loaded), false);
+});
+
+test('a service that cannot be paused blocks the swap', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: { ...f.env, TEST_FAIL_UNLOAD: '1' } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /无法暂停/);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  assert.doesNotMatch(fs.readFileSync(f.events, 'utf8'), /old:stop/);
+});
+
+test('a failed replacement restores the previous files and reloads its service', { skip: PLATFORM !== 'darwin' }, t => {
+  const f = serviceFixture();
+  t.after(() => spawnSync(path.join(f.target, 'multicc'), ['stop'], { env: { ...process.env, ...f.env } }));
+  write(path.join(f.bin, 'mv'), `#!/bin/sh
+case "$1" in */unpacked) exit 1 ;; esac
+exec /bin/mv "$@"
+`, 0o755);
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: f.env });
+  assert.notEqual(res.status, 0);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  assert.equal(fs.existsSync(f.loaded), true);
+  assert.match(fs.readFileSync(f.events, 'utf8'), /unload[\s\S]*old:stop[\s\S]*load/);
+});
+
+test('a service owned by another install is never unloaded or reconfigured', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const other = path.join(f.home, 'other-install');
+  fs.writeFileSync(f.plist, fs.readFileSync(f.plist, 'utf8').replace(f.target, other));
+  const originalPlist = fs.readFileSync(f.plist, 'utf8');
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: f.env });
+  assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+  assert.equal(fs.readFileSync(f.plist, 'utf8'), originalPlist);
+  assert.doesNotMatch(fs.readFileSync(f.events, 'utf8'), /^(unload|load)$/m);
+  assert.equal(fs.existsSync(f.loaded), true);
+});
+
+test('a loaded job with different arguments blocks the upgrade without unloading it', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const loadedPlist = path.join(f.home, 'loaded-job.plist');
+  fs.writeFileSync(loadedPlist, fs.readFileSync(f.plist, 'utf8').replace(f.target, path.join(f.home, 'other')));
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: { ...f.env, TEST_PLIST: loadedPlist } });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /已加载的开机服务与目标安装不一致/);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  assert.equal(fs.existsSync(f.events), false);
+});
+
+test('a stop that reports success while its recorded pid remains alive cannot swap files', { skip: PLATFORM !== 'darwin' }, () => {
+  const f = serviceFixture();
+  const state = JSON.stringify({ pid: process.pid, dataDir: path.join(f.home, 'state') });
+  // A false-success stop; the test runner is only probed with kill -0. No
+  // command in this fixture signals it, and start is also intercepted.
+  write(path.join(f.target, 'multicc'), `#!/bin/sh
+case "$1" in
+  status) echo '${state}' ;;
+  stop|start) exit 0 ;;
+  *) exit 1 ;;
+esac
+`, 0o755);
+  const res = runInstaller(['--from', f.archive, '--dir', f.target, '--no-start'], { env: f.env });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /仍在运行/);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  assert.equal(fs.existsSync(f.loaded), true, 'the old service is restored on refusal');
+});
+
+test('configuration failure rolls back the program before boot and restores the service', { skip: PLATFORM !== 'darwin' }, t => {
+  const f = serviceFixture();
+  t.after(() => spawnSync(path.join(f.target, 'multicc'), ['stop'], { env: { ...process.env, ...f.env } }));
+  const broken = buildFixtureBundle();
+  const wrapper = path.join(broken.root, 'multicc');
+  write(wrapper, fs.readFileSync(wrapper, 'utf8').replace('#!/bin/sh', '#!/bin/sh\n[ "$1:$2:$3" != "config:set:PORT" ] || exit 1'), 0o755);
+  const archive = archiveFixture(broken);
+  const res = runInstaller(['--from', archive, '--dir', f.target, '--no-start'], { env: f.env });
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /无法保存端口配置/);
+  assert.equal(fs.readFileSync(path.join(f.target, 'old-marker'), 'utf8'), 'previous version');
+  assert.equal(fs.existsSync(f.loaded), true);
+  assert.equal(fs.readdirSync(f.home).some(name => name.startsWith('MultiCC.failed-')), true);
+});
+
+test('an existing upgrade lock prevents concurrent replacement', () => {
+  const fixture = buildFixtureBundle();
+  const parent = tmpdir('multicc-locked-');
+  const target = path.join(parent, 'MultiCC');
+  fs.cpSync(fixture.root, target, { recursive: true });
+  const lock = path.join(parent, '.MultiCC.upgrade-lock');
+  fs.mkdirSync(lock);
+  const res = runInstaller(['--dir', target, '--no-start']);
+  assert.notEqual(res.status, 0);
+  assert.match(res.stdout, /已有升级锁/);
+  assert.equal(fs.existsSync(lock), true, 'do not remove somebody else\'s lock');
+  assert.equal(fs.existsSync(path.join(target, 'multicc')), true);
 });

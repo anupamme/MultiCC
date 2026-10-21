@@ -114,6 +114,23 @@ test('standalone updater compares SemVer and never mistakes an older release for
   assert.equal(cliScript.compareVersions('not-a-version', '2.0.4'), null);
 });
 
+test('standalone updater hands the replacement to install.sh of the target release', () => {
+  // The rules for replacing a running install (pause the login service, prove
+  // the old process is gone, roll back) live in install.sh only. The terminal
+  // updater must fetch that script from the release being installed — never
+  // from the bundle it is about to replace — and point it at its own tree.
+  assert.equal(cliScript.installerScriptUrl('2.0.4'),
+    'https://raw.githubusercontent.com/lsjwzh/MultiCC/v2.0.4/install.sh');
+  assert.equal(cliScript.installerScriptUrl('v2.0.4'), cliScript.installerScriptUrl('2.0.4'));
+  assert.deepEqual(cliScript.installerDelegateArgs({ bundleRoot: '/opt/MultiCC', tag: '2.0.4' }),
+    ['--dir', '/opt/MultiCC', '--version', 'v2.0.4', '--no-open']);
+  const source = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'standalone-cli.js'), 'utf8');
+  assert.match(source, /runInstallerScript\(\{ layout, release, env, workDir, logger: log \}\)/,
+    'cmdUpdate must try install.sh first');
+  assert.match(source, /if \(delegated !== null\) return delegated;/,
+    'a failed install.sh run must not be followed by the in-bundle swap');
+});
+
 test('macOS shell: app layout, plist floor and wrapper indirection', () => {
   const plist = bundleScript.macosInfoPlist({ version: '2.0.2', resourcesName: 'Resources' });
   assert.match(plist, /<key>CFBundleExecutable<\/key>\s*<string>MultiCC<\/string>/);
