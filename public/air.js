@@ -1972,6 +1972,7 @@
     title_too_long: t('airErrTitleTooLong'),
     task_workspace_dirty: t('airErrWorkspaceDirty'),
     task_workspace_unmerged: t('airErrWorkspaceUnmerged'),
+    task_workspace_unverifiable: t('airErrWorkspaceUnverifiable'),
     task_session_shared: t('airErrSessionShared'),
     shell_workspace_referenced: t('airErrShellWorkspaceReferenced'),
     task_shell_shared: t('airErrShellShared'),

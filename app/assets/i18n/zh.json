@@ -1810,6 +1810,7 @@
   "airErrUnmergedMove": "还有未合并到基分支的提交：请先在任务详情里合并，再移动。",
   "airErrWorkspaceDirty": "工作区还有未提交改动，需要再次确认后才能删除。",
   "airErrWorkspaceUnmerged": "工作区还有未合并到基分支的提交，需要再次确认后才能删除。",
+  "airErrWorkspaceUnverifiable": "无法确认工作区是否可安全删除。请检查仓库、任务分支和工作区状态后重试。",
   "airExpand": "展开",
   "airExpandLayer": "展开浮层",
   "airFilterDirectoryTaskStatus": "按状态筛选当前目录任务",

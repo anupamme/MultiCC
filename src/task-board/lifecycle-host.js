@@ -20,20 +20,28 @@ function createTaskLifecycleHost({ records, getBoard, getShell, getHistory, getS
     if (!dir) throw Object.assign(new Error('directory_not_found'), { code: 'directory_not_found' });
     const safety = await gitWorktreeMergeState(dir, record);
     const reasons = [];
-    if (!record.worktreePath || !record.branch || safety.reason || safety.conflict) {
+    if (!record.worktreePath || !record.branch || (safety.reason && !safety.worktreeMissing) || safety.conflict) {
       reasons.push('task_workspace_unverifiable');
     }
-    if (safety.worktreeMissing && !safety.conflict) {
-      // A missing checkout with a surviving branch ref stays unverifiable
-      // (hibernated or manually wiped — the ref may still hold unmerged work).
-      // But a branch that was never created (planned workspace, never
-      // delivered) means there is literally no work to lose: deleting the
-      // task is safe, and refusing would wedge it forever — the checkout is
-      // only materialized by running a turn.
-      const branchExists = record.branch
-        ? await gitRun(dir.path, ['rev-parse', '--verify', '--quiet', `refs/heads/${record.branch}`]).then(() => true, () => false)
-        : false;
-      if (!branchExists) reasons.length = 0;
+    if (safety.worktreeMissing && !reasons.length) {
+      // Reclaimed checkouts retain their branch. Prove that it is merged
+      // from the base repo; merge-state's placeholder ahead=0 is not evidence.
+      try {
+        const ref = `refs/heads/${record.branch}`;
+        const refs = await gitRun(dir.path, ['for-each-ref', '--format=%(refname)', ref]);
+        // A never-materialized planned workspace has no branch. A Git IO
+        // failure must still refuse deletion rather than masquerade as absence.
+        if (!refs.split('\n').includes(ref)) return;
+        const checkouts = await gitRun(dir.path, ['worktree', 'list', '--porcelain']);
+        if (checkouts.split('\n').includes(`branch ${ref}`)) throw new Error('branch still checked out');
+        const baseBranch = dir.baseBranch || safety.baseBranch;
+        if (!baseBranch) throw new Error('base branch unavailable');
+        const baseRef = `refs/heads/${baseBranch}`;
+        const ahead = Number(await gitRun(dir.path, ['rev-list', '--count', `${baseRef}..${ref}`]));
+        if (!Number.isInteger(ahead) || ahead < 0) throw new Error('invalid commit count');
+        if (ahead > 0) reasons.push('task_workspace_unmerged');
+        else await gitRun(dir.path, ['merge-base', '--is-ancestor', ref, baseRef]);
+      } catch (_) { reasons.push('task_workspace_unverifiable'); }
     }
     if (reasons.length) throw Object.assign(new Error(reasons[0]), { code: reasons[0], reasons });
     if (safety.worktreeMissing) return;
