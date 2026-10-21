@@ -406,7 +406,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('本机目录只有「分享工作区」，不给远端那三项', (tester) async {
+    testWidgets('本机目录有「分享工作区」和「删除工作区」，不给远端那三项', (tester) async {
       final picked = <AirDirectoryAction>[];
       await pumpLibrary(tester, _directory, picked);
 
@@ -417,12 +417,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('↗ 分享工作区'), findsOneWidget);
+      expect(find.text('删除工作区'), findsOneWidget);
       expect(find.text('↻ 刷新远端状态'), findsNothing);
       expect(find.text('移除共享工作区'), findsNothing);
 
-      await tester.tap(find.text('↗ 分享工作区'));
+      await tester.tap(find.text('删除工作区'));
       await tester.pumpAndSettle();
-      expect(picked, [AirDirectoryAction.share]);
+      expect(picked, [AirDirectoryAction.delete]);
     });
 
     testWidgets('远端工作区：授权失效时先请人重新导入', (tester) async {

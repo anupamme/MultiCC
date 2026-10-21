@@ -223,15 +223,51 @@ test('the directory home scheduled-task entry is a modal module reusing the one 
   // 设计决定：air.js 里没有这颗入口，一个字节都没动。
   assert.doesNotMatch(js, /dir-schedule|directory-schedules/);
   // 排版：桌面居中一层，手机上从底部升起来 —— 滚的是清单那一段，头脚钉住不动
-  // （拇指不用先滚到底才够得着「新建 / 全部」）；三颗入口在 ≤560 平分第二行。
+  // （拇指不用先滚到底才够得着「新建 / 全部」）；四颗入口在 ≤560 平分第二行。
   assert.match(css, /#directory-schedules \{ flex-shrink: 0; \}/);
-  assert.match(css, /\.directory-toolbar > #directory-schedules \{ flex: 1 1 0; min-width: 0; margin-left: 0;/);
+  assert.match(css, /\.directory-toolbar > #directory-schedules[^{]*\{ flex: 1 1 0; min-width: 0; margin-left: 0;/);
   assert.match(css, /\.dir-schedule-dialog \{ display: flex; flex-direction: column; overflow: hidden;/);
   assert.match(css, /margin: auto auto 0; border-radius: 22px 22px 0 0/);
   assert.match(css, /\.dir-schedule-list \{ flex: 1 1 auto; min-height: 0; max-height: none;/);
   // 文案只在词典里：模块按 key 取那句带目录名的话。
   assertLocalized(module, 'public/air-dir-schedules.js', 'airDirSchedulesTitle', '{dir} 的定时任务');
   assertLocalized(module, 'public/air-dir-schedules.js', 'airDirSchedulesEmpty', '这个目录还没有定时任务');
+});
+
+// 目录首页「删除工作区」入口（public/air-directory-delete.js）：目录过去只能加不能删，
+// 设置页和目录页都没有出口。和「本目录产物 / 定时任务」同一套自接线方式 —— air.js 已
+// 到行数棘轮的上限，入口从外面插、显隐跟「备忘」走，删完回工作区列表。
+test('the directory home exposes a guarded delete-workspace entry', () => {
+  const html = read('public/air.html');
+  const js = read('public/air.js');
+  const css = read('public/air.css');
+  const module = read('public/air-directory-delete.js');
+  assert.match(html, /src="air-directory-delete\.js"/);
+  assert.ok(html.indexOf('src="air-directory-delete.js"') < html.indexOf('src="air.js"'), '模块要先于 air.js');
+  // 入口形状：id / 图标 + 内层标签（data-i18n 挂内层），接在定时任务入口后面。
+  assert.match(module, /toggle\.id = 'directory-delete'/);
+  assert.match(module, /node\('span', '🗑'\)/);
+  assert.match(module, /label\.setAttribute\('data-i18n', 'airDirDelete'\)/);
+  assert.match(module, /getElementById\('directory-schedules'\)[\s\S]*?\.after\(toggle\)/);
+  // 显隐跟「备忘」一致，不轮询。
+  assert.match(module, /observer\.observe\(memo, \{ attributes: true, attributeFilter: \['hidden'\] \}\)/);
+  // 删的是登记记录：没会话一次确认；有会话先问、第二次才带 force。
+  assert.match(module, /`\/api\/directories\/\$\{encodeURIComponent\(directory\.id\)\}`/);
+  assert.match(module, /Array\.isArray\(error\.sessions\)/);
+  assert.match(module, /`\$\{path\}\?force=1`/);
+  // 删完回工作区列表：写地址 + 派 popstate，不整页重载。
+  assert.match(module, /root\.history\.pushState\(\{\}, '', url\)/);
+  assert.match(module, /new root\.PopStateEvent\('popstate'\)/);
+  // 设计决定：air.js 里没有这颗入口，一个字节都没动。
+  assert.doesNotMatch(js, /directory-delete|airDirDelete/);
+  // 文案全在词典里。
+  assertLocalized(module, 'public/air-directory-delete.js', 'airDirDelete', '删除工作区');
+  assert.match(module, /t\('airDirDeleteConfirm', \{ name \}\)/);
+  assert.match(module, /t\('airDirDeleteSessionsConfirm', \{ name, n: count \}\)/);
+  assertLocalized(module, 'public/air-directory-delete.js', 'airDirDeleteFailed', '删除失败：{message}');
+  // 排版：窄屏和另外三颗入口平分第二行。
+  assert.match(css, /#directory-delete \{ flex-shrink: 0; color: var\(--danger\); \}/);
+  assert.match(css, /\.directory-toolbar > #directory-delete \{ flex: 1 1 0;/);
 });
 
 // 那一页自己的骨架与数据：public/artifacts.html + artifacts.css + air-artifacts-page.js。

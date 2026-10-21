@@ -854,6 +854,8 @@ class _AirTasksViewState extends State<AirTasksView>
         await _refreshExternal(directory);
       case AirDirectoryAction.remove:
         await _removeExternal(directory);
+      case AirDirectoryAction.delete:
+        await _deleteDirectory(directory);
     }
   }
 
@@ -1033,6 +1035,51 @@ class _AirTasksViewState extends State<AirTasksView>
       _snack('已刷新「${directory.name}」的远端状态');
     } catch (e) {
       if (mounted) _snack('刷新失败：$e', danger: true);
+    }
+  }
+
+  /// 「删除工作区」：`DELETE /api/directories/:id`。删的是登记记录，磁盘上的项目
+  /// 文件夹本身不动；它名下的会话与 worktree 会被级联销毁，所以先把这件事说清，
+  /// 用户点头之后才带 force 发出去。
+  Future<void> _deleteDirectory(AirDirectory directory) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: Text('删除工作区「${directory.name}」？'),
+        content: const Text(
+          '工作区会从列表移除，它名下的会话与 worktree 也会一起删除；磁盘上的项目文件夹本身不会被删除。此操作不可撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            key: const ValueKey('air-directory-delete-confirm'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _service.deleteDirectory(directory.id, force: true);
+      if (!mounted) return;
+      if (_directoryId == directory.id) {
+        // 删掉的正是当前打开的那个：把选中挪到下一条，避免页面指着一个不存在的
+        // 目录。真的一个都不剩时就留空，宿主会回到「还没有工作区」的空态。
+        _directoryId = _data?.directories
+            .where((item) => item.id != directory.id)
+            .firstOrNull
+            ?.id;
+      }
+      await _refresh();
+      if (!mounted) return;
+      _snack('已删除「${directory.name}」');
+    } catch (e) {
+      if (mounted) _snack('删除失败：$e', danger: true);
     }
   }
 

@@ -31,6 +31,10 @@ enum AirDirectoryAction {
 
   /// 「移除共享工作区」——只从本机列表里摘掉，远端那份不动。
   remove,
+
+  /// 「删除工作区」——本机目录才有。删的是登记记录，磁盘上的项目文件夹不动；
+  /// 名下会话与 worktree 会级联删除，所以 handler 里要先确认一次。
+  delete,
 }
 
 class AirDirectoryLibrary extends StatefulWidget {
@@ -301,10 +305,18 @@ class _DirectoryCard extends StatelessWidget {
                             child: Text('移除共享工作区'),
                           ),
                         ]
-                      : const [
-                          PopupMenuItem(
+                      : [
+                          const PopupMenuItem(
                             value: AirDirectoryAction.share,
                             child: Text('↗ 分享工作区'),
+                          ),
+                          const PopupMenuDivider(),
+                          PopupMenuItem(
+                            value: AirDirectoryAction.delete,
+                            child: const Text(
+                              '删除工作区',
+                              style: TextStyle(color: AppColors.danger),
+                            ),
                           ),
                         ],
                 ),

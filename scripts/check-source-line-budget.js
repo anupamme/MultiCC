@@ -426,8 +426,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +1 双语键（airLoadMore）：控制台任务清单不再截条数，滚到底接页的「加载更多」。
     //   中英各 1 行 = +2 行，重跑生成器实测 9432/598707。
     // 外网访问提示与订阅日期展示：新增 18 个双语键。
-    maxLines: 9478,
-    maxBytes: 602616,
+    // +5 双语键（airDirDelete*）：目录页「删除工作区」入口与两步确认文案，实测
+    //   9488/603741，按真实高水位抬一格。
+    maxLines: 9488,
+    maxBytes: 603741,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

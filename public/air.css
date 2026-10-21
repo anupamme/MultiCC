@@ -832,9 +832,15 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
    侧栏那颗「定时任务」是**全局**中心（这台机器上排了哪些活），这颗只看当前这个
    目录。点开是一层页内弹层，卡片复用上面 .schedule-* 那一族（跟中心里长一样），
    这里只管弹层这件壳：抬头、一行摘要、列表的滚动区、底下两颗出口。
-   换行那条见下面 ≤560px：切换器 + 三颗入口在手机上排不下，切换器独占一行、
-   三颗平分第二行（这就是「移动端按移动的布局区分展示」那件事）。 */
+   换行那条见下面 ≤560px：切换器 + 四颗入口在手机上排不下，切换器独占一行、
+   四颗平分第二行（这就是「移动端按移动的布局区分展示」那件事）。 */
 #directory-schedules { flex-shrink: 0; }
+/* ── 目录首页「删除工作区」入口（public/air-directory-delete.js）────────────────
+   删的是登记表里那一条，不是磁盘上的项目文件夹 —— 确认文案由模块负责。入口跟着
+   「备忘」显隐（同样是目录页、同样没打开任务时才出现），颜色用危险色，跟其余
+   三颗中性入口区分开。 */
+#directory-delete { flex-shrink: 0; color: var(--danger); }
+#directory-delete:hover { border-color: var(--danger); }
 .dir-schedule-dialog { width: calc(100% - 32px); max-width: 720px; padding: 0; background: #fbfdff; }
 .dir-schedule-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 21px 24px 15px; border-bottom: 1px solid #e1eaf3; background: rgba(251, 253, 255, .96); }
 .dir-schedule-head h2 { margin-top: 3px; color: #294760; font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
@@ -858,7 +864,7 @@ main { min-width: 0; flex: 1; display: flex; flex-direction: column; background:
 @media (max-width: 560px) {
   .directory-toolbar { flex-wrap: wrap; row-gap: 8px; }
   .directory-toolbar .directory-mode { flex: 1 1 100%; }
-  .directory-toolbar > #directory-memo, .directory-toolbar > #directory-artifacts, .directory-toolbar > #directory-schedules { flex: 1 1 0; min-width: 0; margin-left: 0; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .directory-toolbar > #directory-memo, .directory-toolbar > #directory-artifacts, .directory-toolbar > #directory-schedules, .directory-toolbar > #directory-delete { flex: 1 1 0; min-width: 0; margin-left: 0; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 }
 .worktree-reclaim { min-height: 30px; margin-left: auto; padding: 0 14px; border: 1px solid #bcd8f2; border-radius: 9px; background: var(--blue-soft); color: var(--accent-strong); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .worktree-reclaim:disabled { opacity: .5; cursor: default; }

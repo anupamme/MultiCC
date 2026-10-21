@@ -1376,6 +1376,12 @@ class AirService {
   }) =>
       _post('/api/directories', {'name': name, 'path': path, 'create': create});
 
+  /// 删除一个本机工作目录（`DELETE /api/directories/:id`）。删的是登记记录，
+  /// 磁盘上的项目文件夹不动；[force] 会连同它名下的会话与 worktree 一起移除。
+  Future<void> deleteDirectory(String id, {bool force = true}) => _delete(
+    '/api/directories/${Uri.encodeComponent(id)}${force ? '?force=1' : ''}',
+  );
+
   // ── 工作区分享 / 外部舰队（`src/routes/fleet-sharing.js`）─────────────────
   //
   // Web 那边是 `public/manage-fleet-sharing.js`：目录菜单里「↗ 分享工作区」开

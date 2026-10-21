@@ -820,6 +820,11 @@
        不改 air.js 一个字节，理由写在 public/air-dir-schedules.js 里。排在 air.js 前面：
        DOMContentLoaded 挂载时 #directory-memo / #directory-artifacts 已在静态 HTML 里。 -->
   <script src="air-dir-schedules.js"></script>
+  <!-- 目录首页「删除工作区」：入口接在「本目录定时任务」后面（可见性跟着「备忘」走），
+       删的是 directories.json 里那条登记，磁盘上的项目文件夹不动；名下会话与 worktree
+       会级联删除，所以先确认、有会话再确认一次。同样自持 DOM、不改 air.js 一个字节，
+       理由写在 public/air-directory-delete.js 里。 -->
+  <script src="air-directory-delete.js"></script>
   <!-- 定时任务中心（列表 + 唯一那张表单 + 四个动作）本体。排在 air.js 前面：air.js
        启动时调 MultiCCAirSchedules.bind() 把「通知/跳转/刷新/目录快照」递进去。 -->
   <script src="air-schedule-center.js"></script>
