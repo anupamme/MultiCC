@@ -2,6 +2,26 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.1 — The v2.8.0 changes, cut again with a gate that stops exiting early (2026-10-21)
+
+`v2.8.0` published its tag but never produced release assets: the shared core
+gate failed on the same assertion twice, so there was nothing to install behind
+the tag. `v2.8.1` carries exactly the v2.8.0 changes below, plus the two gate
+fixes that made it fail — both are about waiting on the wrong thing:
+
+- **A timeout the caller is awaiting no longer lets the process walk away** —
+  the delegated-refresh wait in `src/claude-auth/account-credentials.js` created
+  its 8s `setTimeout` with `unref()`. An unref'd timer is not event-loop work, so
+  when that wait was the only thing pending the process exited before the timer
+  could fire and the read never settled; `node --test` reports it as "Promise
+  resolution is still pending but the event loop has already resolved". It now
+  stays referenced — a read that is genuinely in flight may keep the process
+  alive for at most `refreshWaitMs`, which is what the caller asked for.
+- **A stderr assertion waits for the line instead of reading once** — the
+  resident-bridge test awaited `turn/completed` on stdout and then read stderr
+  immediately; the two pipes have no ordering between them, so a fast runner
+  could see an empty string. It now gives the warning a bounded window.
+
 ## v2.8.0 — A quota gate that refuses first, a refresh ladder that stops, and the dsh lane back (2026-10-21)
 
 ### Highlights

@@ -131,6 +131,12 @@ test('resident bridge refuses a non-JSON stdin line instead of starting a turn',
   bridge.child.stdin.write('not json\n');
   bridge.send('still works');
   await bridge.nextTurn();
+  // stdout and stderr are separate pipes: the warning can land after the
+  // turn boundary we just awaited, so give it a bounded window instead of
+  // reading stderr exactly once (a race that reddened CI on a fast runner).
+  for (let attempt = 0; attempt < 100 && !/dropped a non-JSON stdin line/.test(bridge.stderr()); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   assert.match(bridge.stderr(), /dropped a non-JSON stdin line/);
   assert.deepEqual(
     bridge.requests().filter((item) => item.method === 'turn/start').map((item) => item.params.input[0].text),
