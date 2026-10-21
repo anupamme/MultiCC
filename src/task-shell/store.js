@@ -29,6 +29,15 @@ function createTaskShellStore(file) {
   const all = db.prepare('SELECT body FROM shell_records WHERE kind = ? ORDER BY rowid');
   const allWithIds = db.prepare('SELECT id, body FROM shell_records WHERE kind = ? ORDER BY rowid');
   const allWithRowids = db.prepare('SELECT rowid AS rid, id, body FROM shell_records WHERE kind = ? ORDER BY rowid');
+  // 删除只需要关联字段。让 SQLite 投影，避免把整批收据里的上下文和消息正文
+  // 搬到 JS 再解析；多路径 json_extract 同时保留字符串、布尔值等原始类型。
+  const deletionEntriesStmt = db.prepare(`SELECT id,
+    json_extract(body, '$.id', '$.taskId', '$.receiptId') AS refs,
+    json_type(body, '$.id') IS NOT NULL AS hasId,
+    json_type(body, '$.taskId') IS NOT NULL AS hasTaskId,
+    json_type(body, '$.receiptId') IS NOT NULL AS hasReceiptId
+    FROM shell_records WHERE kind = ? ORDER BY rowid`);
+  const receiptShellStmt = db.prepare("SELECT json_extract(body, '$.shellId') AS shellId FROM shell_records WHERE kind = 'receipt' AND id = ?");
   const rowidOf = db.prepare('SELECT rowid AS rid FROM shell_records WHERE kind = ? AND id = ?');
   const receiptWatermarkStmt = db.prepare("SELECT max(rowid) AS mx FROM shell_records WHERE kind = 'receipt'");
   // 写入口只有这两个语句：set/remove、派生索引维护、收据桶重建用的都是它们，
@@ -159,7 +168,7 @@ function createTaskShellStore(file) {
       const row = select.get('task', id);
       dropTaskIndex(id, row ? JSON.parse(row.body)?.sessionId : null);
     } else if (kind === 'link') dropLinkIndex(id);
-    else if (kind === 'receipt') dropReceiptIndex(select.get('receipt', id) ? JSON.parse(select.get('receipt', id).body)?.shellId : null, id);
+    else if (kind === 'receipt') dropReceiptIndex(receiptShellStmt.get(id)?.shellId, id);
     return remove.run(kind, id);
   });
   const list = kind => all.all(kind).map(row => JSON.parse(row.body));
@@ -207,6 +216,14 @@ function createTaskShellStore(file) {
     get,
     list,
     entries,
+    deletionEntries: kind => deletionEntriesStmt.all(kind).map(row => {
+      const [id, taskId, receiptId] = JSON.parse(row.refs);
+      return [row.id, {
+        ...(row.hasId ? { id } : {}),
+        ...(row.hasTaskId ? { taskId } : {}),
+        ...(row.hasReceiptId ? { receiptId } : {}),
+      }];
+    }),
     // 缓存版 list/entries：内容没变时复用上次解析的行，省掉整表读与几 MB 的
     // JSON.parse。返回的**数组是副本**（调用方 sort/push 不会污染缓存），但**行
     // 对象是共享的、只读的** —— 调用方不得就地改写（今天这些调用点都只读：

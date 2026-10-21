@@ -251,15 +251,18 @@ function createTaskShellRuntime(ports) {
     const removed = new Set(ids);
     store.transaction(() => {
       const snapshots = new Set(store.list('task').filter(t => removed.has(t.id)).flatMap(t => t.snapshotIds || []));
-      const receipts = new Set(store.list('receipt').filter(r => removed.has(r.taskId)).map(r => r.id));
+      const receiptEntries = store.deletionEntries('receipt');
+      const receipts = new Set(receiptEntries.filter(([, r]) => removed.has(r.taskId)).map(([, r]) => r.id));
       for (const kind of ['task', 'link', 'claim', 'receipt', 'answer', 'fork', 'task-separation']) {
-        for (const [id, value] of store.entries(kind)) {
+        for (const [id, value] of kind === 'receipt' ? receiptEntries : store.deletionEntries(kind)) {
           if (removed.has(id) || removed.has(value.taskId) || receipts.has(value.receiptId)) store.remove(kind, id);
         }
       }
+      const remainingTasks = store.list('task');
+      const occupiedShells = new Set(remainingTasks.map(t => t.ownerShellId));
       for (const s of store.list('shell')) {
         if (s.standalone && removed.has(s.defaultTaskId)
-          && !store.list('task').some(t => t.ownerShellId === s.id)) {
+          && !occupiedShells.has(s.id)) {
           store.remove('shell', s.id);
           continue;
         }
@@ -270,7 +273,7 @@ function createTaskShellRuntime(ports) {
           saveShell(s.id, s);
         }
       }
-      const used = new Set(store.list('task').flatMap(t => t.snapshotIds || []));
+      const used = new Set(remainingTasks.flatMap(t => t.snapshotIds || []));
       for (const id of snapshots) if (!used.has(id)) store.remove('snapshot', id);
     });
   }

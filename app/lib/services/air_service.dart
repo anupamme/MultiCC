@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -89,6 +90,7 @@ const Map<String, String> airTaskActionErrors = {
   'task_busy': '任务正在执行或排队中，等它空闲下来再操作。',
   'task_archived': '任务已归档。',
   'task_deleting': '任务正在删除中，请稍等。',
+  'task_delete_timeout': '等待删除结果超时，结果尚未确认，后台可能仍在处理。请稍后刷新列表确认。',
   'title_required': '任务标题不能为空。',
   'title_too_long': '任务标题最多 40 个字符。',
   'task_workspace_dirty': '工作区还有未提交改动，需要再次确认后才能删除。',
@@ -105,7 +107,11 @@ const Map<String, String> airTaskActionErrors = {
 /// 归档 / 恢复 / 移动 / 删除失败。带上服务端的 `error` code，界面才能按
 /// [airTaskActionErrors] 说话（Web 的 `taskActionError(error)` 读的也是它）。
 class AirTaskActionException implements Exception {
-  const AirTaskActionException(this.code, {this.reasons = const []});
+  const AirTaskActionException(
+    this.code, {
+    this.reasons = const [],
+    this.message,
+  });
 
   /// 服务端错误码（`task_busy` 这类），不是 HTTP 状态码。
   final String code;
@@ -113,8 +119,15 @@ class AirTaskActionException implements Exception {
   /// 同一个工作区可以同时既 dirty、又有未合入提交；删除确认要一次说全。
   final List<String> reasons;
 
+  /// 服务端补充的可读原因；已知错误仍优先使用统一文案。
+  final String? message;
+
   @override
-  String toString() => airTaskActionErrors[code] ?? '操作失败（$code）。';
+  String toString() =>
+      airTaskActionErrors[code] ??
+      (message?.trim().isNotEmpty == true
+          ? '${message!.trim()}（$code）'
+          : '操作失败（$code）。');
 }
 
 class AirTaskCapacityException implements Exception {
@@ -896,7 +909,7 @@ class AirService {
     String method,
     String path, [
     Map<String, dynamic>? body,
-  ]) async => _checked(await _request(method, path, body));
+  ]) async => _checked(await _request(method, path, body: body));
 
   WsTicketClient airTickets() => WsTicketClient(
     post: (endpoint, {required headers, required body}) =>
@@ -932,9 +945,11 @@ class AirService {
   Future<Map<String, dynamic>> _getSnapshot() async {
     final etag = _snapshotEtag;
     final cached = _snapshotBody;
-    final response = await _request('GET', '/api/air', null, {
-      if (etag != null && cached != null) 'If-None-Match': etag,
-    });
+    final response = await _request(
+      'GET',
+      '/api/air',
+      extraHeaders: {if (etag != null && cached != null) 'If-None-Match': etag},
+    );
     if (response.statusCode == 304 && cached != null) return cached;
     final result = _checked(response);
     final fresh = response.headers['etag'];
@@ -959,10 +974,11 @@ class AirService {
 
   Future<http.Response> _request(
     String method,
-    String path, [
+    String path, {
     Map<String, dynamic>? body,
     Map<String, String> extraHeaders = const {},
-  ]) {
+    bool taskDeletion = false,
+  }) async {
     final uri = Uri.parse(settings.buildHttpUrl(path));
     final headers = {
       'Content-Type': 'application/json',
@@ -977,7 +993,18 @@ class AirService {
             : _http.delete(uri, headers: headers, body: jsonEncode(body)),
       _ => _http.post(uri, headers: headers, body: jsonEncode(body ?? {})),
     };
-    return request.timeout(const Duration(seconds: 30));
+    // 删除还要清理执行记录和工作区，可能超过普通请求的 30 秒。
+    // 客户端等待结束不代表服务端停止，不能据此判断删除失败或自动重试。
+    try {
+      return await request.timeout(
+        taskDeletion ? const Duration(minutes: 2) : const Duration(seconds: 30),
+      );
+    } on TimeoutException {
+      if (taskDeletion) {
+        throw const AirTaskActionException('task_delete_timeout');
+      }
+      rethrow;
+    }
   }
 
   Map<String, dynamic> _decode(http.Response response) {
@@ -1006,7 +1033,12 @@ class AirService {
     String path, [
     Map<String, dynamic>? body,
   ]) async {
-    final response = await _request(method, path, body);
+    final response = await _request(
+      method,
+      path,
+      body: body,
+      taskDeletion: method == 'DELETE',
+    );
     final result = _decode(response);
     if (response.statusCode >= 400 || result['ok'] == false) {
       final reasons = result['reasons'];
@@ -1015,6 +1047,9 @@ class AirService {
         reasons: reasons is List
             ? reasons.map((reason) => '$reason').toList(growable: false)
             : const [],
+        message: result['message'] is String
+            ? result['message'] as String
+            : null,
       );
     }
     return result;
@@ -1197,9 +1232,13 @@ class AirService {
   Future<Map<String, dynamic>> deleteTaskRetention(
     String dirId,
     List<String> taskIds,
-  ) => _post(
-    '/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention',
-    {'taskIds': taskIds},
+  ) async => _checked(
+    await _request(
+      'POST',
+      '/api/task-board/directories/${Uri.encodeComponent(dirId)}/retention',
+      body: {'taskIds': taskIds},
+      taskDeletion: true,
+    ),
   );
 
   /// 钉住 / 取消钉住一个任务，返回钉住之后的整份清单（顺序就是显示顺序）。
