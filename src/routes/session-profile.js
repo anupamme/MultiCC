@@ -584,6 +584,11 @@ function createSessionProfileRoutes(rawDeps) {
       }
 
       appendEvent(src.dirId, 'session_forked', `${src.label || src.id} → ${newSid}`, newSid);
+      // 任务卡是懒挂板的：新会话要等下一次全量构建的挂板迁移才拿到卡，而 fork 之后
+      // 收到的会话级事件（task_state/status…）解析不出任何任务卡，只会走元数据档 ——
+      // 卡就要等 30s 兜底核对才出现，任务板与派发发现会空半分钟。会话集合本身变了，
+      // 这里要求台账做一次全量；fork 是低频动作，不值得为它引入逐卡增量。
+      try { deps.workspaceBroadcast?.(src.dirId, { type: 'workspace_state' }); } catch (_) {}
       res.json({
         ok: true,
         sessionId: newSid,
