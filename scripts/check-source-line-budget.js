@@ -398,6 +398,8 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +20 键（doctor*）：会话医生按钮、异常处一键诊断与诊断进度/报告文案，生成器实测 8990/570883。
     // +7 键（doctorIssue*）：医生无法解决时「提交到 GitHub issue」的按钮与预览确认，实测 9004/572451。
     // +5 键（airCliUpdatePinned/Unpin*）：*_CMD 钉住派生路径时的升级前提示与「改用新版」，实测 9014/573401。
+    // +5 双语键（hookOnce*）：钩子改为可选「一次性/常驻」——一次性钩子首次成功执行后
+    // 自动关闭并在列表里留下「已触发」记录，实测 9442/599565。
     // +62 键（hook*）：钩子/触发器 UI（会话页头 🪝、触发器任务 tab、共用规则表单），实测 9138/579516。
     // +10 键（hookInject*/hookNew*/hookTarget*/hookSessionSearch）：触发器注入目标可选「指定会话 / 新建会话」并可搜索，实测 9158/580724。
     // +10 键（tokenRate*）：聊天页输入框下方的实时 token 速度胶囊（chat-token-rate.js），实测 9178/581887。
@@ -423,8 +425,8 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     //   新的桌面安装包。中英各 4 行 = +8 行，重跑生成器实测 9430/598640。
     // +1 双语键（airLoadMore）：控制台任务清单不再截条数，滚到底接页的「加载更多」。
     //   中英各 1 行 = +2 行，重跑生成器实测 9432/598707。
-    maxLines: 9432,
-    maxBytes: 598707,
+    maxLines: 9442,
+    maxBytes: 599565,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

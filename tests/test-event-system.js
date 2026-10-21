@@ -706,3 +706,72 @@ test('events host: a streaming or missing target reports why instead of a bare f
   assert.deepEqual(host.engine.recentResults().map((r) => r.error).sort(), ['target_busy', 'target_missing']);
   require('fs').rmSync(rulesFile, { force: true });
 });
+
+// ── one-shot hooks: fire once, then disable themselves ──────────────────────
+test('rules: once is normalized and defaults to persistent', () => {
+  const opts = { idFactory: () => 'r', nowIso: () => 'n' };
+  assert.equal(validateEventRule({ on: ['task.failed'], action: { kind: 'notify' } }, opts).rule.once, false);
+  assert.equal(validateEventRule({ on: ['task.failed'], action: { kind: 'notify' }, once: true }, opts).rule.once, true);
+  assert.equal(validateEventRule({ on: ['task.failed'], action: { kind: 'notify' }, once: 'yes' }, opts).rule.once, false);
+});
+
+test('engine: a one-shot global rule fires once, then disables itself with a firedAt stamp', async () => {
+  const h = engineHarness();
+  const rule = h.engine.addGlobal({ on: ['task.failed'], once: true, cooldownMs: 0, action: { kind: 'notify', message: '一次' } }).rule;
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.notify.length, 1, '动作照常执行');
+  const live = h.engine.listGlobal().find((item) => item.id === rule.id);
+  assert.equal(live.enabled, false, '触发成功后自动关闭');
+  assert.equal(live.firedAt, 1000000, '留下已触发时间给 UI');
+  assert.equal(h.stored.rules.find((item) => item.id === rule.id).enabled, false, '关闭状态落盘，重启后不会复活');
+
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.notify.length, 1, '第二次事件不再触发');
+});
+
+test('engine: a one-shot session rule consumes the persisted trigger', async () => {
+  const saved = [];
+  const h = engineHarness({ saveBestEffort: (reason) => saved.push(reason) });
+  const rule = validateEventRule({ on: ['task.failed'], once: true, action: { kind: 'notify' } },
+    { idFactory: () => 'trig', nowIso: () => 'n', scope: 'session' }).rule;
+  h.persistedSessions.get('s1').triggers.push(rule);
+  h.bus.emit('task:state-changed', 's1', base, { ...base, classifyState: 'E' });
+  await h.settle();
+  const live = h.persistedSessions.get('s1').triggers.find((item) => item.id === 'trig');
+  assert.equal(live.enabled, false);
+  assert.equal(live.firedAt, 1000000);
+  assert.equal(saved.at(-1), 'runtime.event-rule-consumed', '会话触发器要立刻落盘');
+});
+
+test('engine: a manual test never burns a one-shot rule', async () => {
+  const h = engineHarness();
+  h.engine.addGlobal({ on: ['task.failed'], once: true, action: { kind: 'notify' } });
+  h.hub.emit('task.failed', 's1', { goal: 'g' }, { origin: 'manual-test' });
+  await h.settle();
+  assert.equal(h.calls.notify.length, 1);
+  assert.equal(h.engine.listGlobal()[0].enabled, true, '空跑只验证，不消耗');
+});
+
+test('engine: a one-shot chain stays armed until its last step, then consumes', async () => {
+  const h = chainHarness();
+  h.engine.addGlobal({ on: ['task.finished'], once: true, action: { kind: 'inject-prompt', prompt: 'a' },
+    then: [{ kind: 'inject-prompt', prompt: 'b' }] });
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.engine.pendingChains().length, 1);
+  assert.equal(h.engine.listGlobal()[0].enabled, true, '链还没走完，不能提前关闭');
+  h.hub.emit('task.finished', 's1', { goal: 'g' });
+  await h.settle();
+  assert.equal(h.calls.inject.length, 2);
+  assert.equal(h.engine.listGlobal()[0].enabled, false, '最后一步完成后才消耗');
+});
+
+test('engine: a failed action leaves a one-shot rule armed', async () => {
+  const h = engineHarness({ injectPrompt: async () => ({ ok: false, code: 'target_busy' }) });
+  h.engine.addGlobal({ on: ['task.failed'], once: true, action: { kind: 'inject-prompt', prompt: 'p' } });
+  h.hub.emit('task.failed', 's1', { goal: 'g' });
+  await h.settle(); await h.settle();
+  assert.equal(h.engine.listGlobal()[0].enabled, true, '没跑成就还有下一次机会');
+});

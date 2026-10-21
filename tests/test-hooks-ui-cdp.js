@@ -84,7 +84,7 @@ test('Air schedule center: tabs, trigger list, create / edit / test / delete', a
   const items = [
     { scope: 'global', sessionId: null, sessionLabel: null, rule: rule({}), lastRun: { ts: 1791950323952, ok: true, error: null } },
     { scope: 'session', sessionId: 's1', sessionLabel: '发布会话',
-      rule: rule({ id: 't1', name: '', on: ['task.achieved'], action: { kind: 'inject-prompt', prompt: '继续部署' } }),
+      rule: rule({ id: 't1', name: '', once: true, on: ['task.achieved'], action: { kind: 'inject-prompt', prompt: '继续部署' } }),
       lastRun: { ts: 1791950323952, ok: false, error: 'target busy or missing' } },
   ];
   await withCdpHarness({ routes: airRoutes(items), screenshotDir: path.join(os.tmpdir(), 'multicc-hooks-ui') }, async page => {
@@ -108,6 +108,7 @@ test('Air schedule center: tabs, trigger list, create / edit / test / delete', a
     const cards = await page.evaluate(`[...document.querySelectorAll('#hook-list .schedule-card')].map(c => ({
       title: c.querySelector('h3').textContent, flow: c.querySelector('.hook-flow').textContent,
       owner: c.querySelector('.schedule-state span').textContent, last: c.querySelector('.schedule-state small').textContent,
+      badges: [...c.querySelectorAll('.schedule-card-head .schedule-badge')].map(b => b.textContent),
       buttons: [...c.querySelectorAll('.schedule-actions button')].map(b => b.textContent) }))`);
     assert.equal(cards[0].title, '失败通知');
     assert.match(cards[0].flow, /需要我介入.*→.*通知我/);
@@ -116,6 +117,8 @@ test('Air schedule center: tabs, trigger list, create / edit / test / delete', a
     assert.equal(cards[1].title, '达成目标', '没起名时用事件名当标题');
     assert.equal(cards[1].owner, '会话：发布会话');
     assert.match(cards[1].last, /失败 target busy/);
+    assert.deepEqual(cards[1].badges, ['一次性', '已启用'], '一次性钩子在列表里必须一眼可见');
+    assert.deepEqual(cards[0].badges, ['已启用'], '常驻钩子不加多余徽标');
     assert.deepEqual(cards[0].buttons, ['测试', '暂停', '编辑规则', '删除规则']);
     await page.screenshot('triggers-tab.png');
 
@@ -138,7 +141,7 @@ test('Air schedule center: tabs, trigger list, create / edit / test / delete', a
     assert.deepEqual(JSON.parse(created[0].body), {
       type: 'event', name: '发布完成', on: ['task.achieved'], filter: {},
       action: { kind: 'webhook', url: 'https://hooks.example.com/x', secretName: 'HOOK_SECRET', includeConclusion: true }, then: [],
-      enabled: true, cooldownMs: 30000,
+      enabled: true, once: false, cooldownMs: 30000,
     });
     assert.ok(await page.waitFor(`document.querySelectorAll('#hook-list .schedule-card').length === 3`), '保存后列表自己刷新');
 
@@ -219,7 +222,8 @@ test('chat header hook button: count badge and the shared form scoped to this se
     // 「注入到」三选一：触发事件的会话 / 新建会话 / 指定会话（会话页头入口也能选其它会话）。
     await page.evaluate(`(() => { const f = document.querySelector('.hook-dialog form');
       f.querySelectorAll('input[name=ev]').forEach(b => { b.checked = b.value === 'task.done'; });
-      f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); f.elements.prompt.value = '整理发布说明'; })()`);
+      f.elements.kind.value = 'inject-prompt'; f.elements.kind.onchange(); f.elements.prompt.value = '整理发布说明';
+      f.elements.once.checked = true; })()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelector('.hook-dialog form').elements.target.options].map(o => [o.value, o.textContent])`), [
       ['', '触发事件的会话'], ['__new__', '新建会话（每次触发新建一个）'], ['s1', '发布会话（主仓）'], ['s2', '测试会话（营销仓）']]);
     assert.ok(!(await page.evaluate(`document.querySelector('.hook-dialog form').elements.target.textContent`)).match(/metaads|登录|已归档|观察记录/), '终端/归档/无会话的不出现');
@@ -238,7 +242,8 @@ test('chat header hook button: count badge and the shared form scoped to this se
     assert.deepEqual(JSON.parse(posted[0].body), {
       type: 'event', name: '', on: ['task.done'], filter: {},
       action: { kind: 'inject-prompt', prompt: '整理发布说明', newSession: { dirId: 'd2', cli: 'codex', title: '发布说明' } }, then: [], enabled: true,
-    });
+      once: true,
+    }, '一次性开关随表单一起提交');
     assert.ok(await page.waitFor(`document.getElementById('hook-btn').textContent === '钩子 2'`), '保存后角标自己刷新');
   });
 });

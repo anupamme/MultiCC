@@ -112,6 +112,10 @@ function validateEventRule(body = {}, { idFactory, nowIso, scope = 'global' } = 
     scope,
     name: textField(body.name, 80),
     enabled: body.enabled !== false,
+    // One-shot hook: the engine disables it after the first successful firing
+    // (the whole `then` chain, when there is one) and stamps `firedAt`, so a
+    // forgotten hook cannot keep spawning work. Persistent is the default.
+    once: body.once === true,
     on,
     filter,
     action: validated.action,

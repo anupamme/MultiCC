@@ -94,6 +94,44 @@ function createEventRuleEngine(deps) {
     if (results.length > 100) results.shift();
   }
 
+  function ruleLabel(rule) {
+    const name = String(rule.name || '').trim();
+    if (name) return name;
+    return `${(rule.on || []).join(', ')} → ${(rule.action && rule.action.kind) || 'action'}`;
+  }
+
+  // A one-shot rule consumes itself: `enabled` goes false and `firedAt` is
+  // stamped, so the UI can show "fired · closed" instead of the rule silently
+  // vanishing. It stays in the list and can be re-armed by enabling it again.
+  // The user also gets one push, because a hook they forgot existed is exactly
+  // the case this flag is for.
+  function consume(rule, owner, event) {
+    const at = now();
+    if (!owner) {
+      const live = globalRules.find((candidate) => candidate.id === rule.id);
+      if (!live || !live.enabled) return false;
+      live.enabled = false;
+      live.firedAt = at;
+      persist();
+    } else {
+      const persisted = persistedSessions.get(owner);
+      const live = persisted && Array.isArray(persisted.triggers)
+        ? persisted.triggers.find((candidate) => candidate.id === rule.id) : null;
+      if (!live || !live.enabled) return false;
+      live.enabled = false;
+      live.firedAt = at;
+      if (saveBestEffort) saveBestEffort('runtime.event-rule-consumed');
+    }
+    // A notify action already told the user; don't push the same news twice.
+    if (!rule.action || rule.action.kind !== 'notify') {
+      try {
+        actionCtx.notify((event && event.sessionId) || owner || 'events', 'succeeded',
+          `一次性钩子已触发并自动关闭：${ruleLabel(rule)}`);
+      } catch (_) { /* a failed push must never undo the consumption */ }
+    }
+    return true;
+  }
+
   function rulesFor(event) {
     const out = globalRules.filter((rule) => rule.enabled).map((rule) => ({ rule, owner: null }));
     const persisted = event.sessionId ? persistedSessions.get(event.sessionId) : null;
@@ -120,13 +158,13 @@ function createEventRuleEngine(deps) {
 
   // awaiting: 'turn' = the injected step is running; 'inject' = the next step
   // could not be injected yet (session busy) and retries on the next finish.
-  function park(sessionId, rule, owner, index, awaiting = 'turn') {
+  function park(sessionId, rule, owner, index, awaiting = 'turn', dryRun = false) {
     const previous = chains.get(sessionId);
     if (previous && (previous.ruleId !== rule.id || previous.index !== index)) {
       record({ ruleId: previous.ruleId, step: previous.index + 1, ok: false, error: 'chain superseded' });
     }
     chains.delete(sessionId);
-    chains.set(sessionId, { ruleId: rule.id, owner, index, since: now(), awaiting, sawTrigger: false, sawOther: false });
+    chains.set(sessionId, { ruleId: rule.id, owner, index, since: now(), awaiting, sawTrigger: false, sawOther: false, dryRun: dryRun === true });
     while (chains.size > MAX_PENDING_CHAINS) {
       const [oldest, chain] = chains.entries().next().value;
       chains.delete(oldest);
@@ -143,12 +181,17 @@ function createEventRuleEngine(deps) {
       chains.delete(sessionId);
       changed = true;
       record({ ruleId: chain.ruleId, step: chain.index + 1, ok: false, error: 'chain timed out' });
+      const timedOut = liveRule(chain.ruleId, chain.owner);
+      if (timedOut && timedOut.once && chain.dryRun !== true) consume(timedOut, chain.owner, null);
     }
     if (changed) persistChains();
   }
 
   // step 0 = rule.action, step n = rule.then[n - 1].
-  async function execute(event, rule, owner, step = 0) {
+  // dryRun follows the firing that started the chain: a manual test (`/api/events/test`)
+  // must never burn a one-shot rule.
+  async function execute(event, rule, owner, step = 0, dryRun = false) {
+    const dry = dryRun === true || event.origin === 'manual-test';
     const then = Array.isArray(rule.then) ? rule.then : [];
     const action = step === 0 ? rule.action : then[step - 1];
     const total = 1 + then.length;
@@ -178,8 +221,12 @@ function createEventRuleEngine(deps) {
     if (outcome.ok && step + 1 < total) {
       // An injected prompt is still running: wait for its turn to end. Any other
       // action is already done, so the next step runs on the same event.
-      if (action.kind === 'inject-prompt') park(outcome.target, rule, owner, step + 1);
-      else await execute(event, rule, owner, step + 1);
+      if (action.kind === 'inject-prompt') park(outcome.target, rule, owner, step + 1, 'turn', dry);
+      else await execute(event, rule, owner, step + 1, dry);
+    } else if (outcome.ok && rule.once && !dry) {
+      // Last step succeeded: a one-shot rule is spent. A failed action stays
+      // armed on purpose — the user asked for it to run, not to half-run.
+      consume(rule, owner, event);
     }
     return outcome;
   }
@@ -204,13 +251,20 @@ function createEventRuleEngine(deps) {
     chains.delete(event.sessionId);
     persistChains();
     const stopped = { ruleId: chain.ruleId, eventType: event.type, step: chain.index + 1, ok: false };
-    if (CHAIN_STOP.has(event.type)) { record({ ...stopped, error: `chain stopped: ${event.type}` }); return true; }
     const rule = liveRule(chain.ruleId, chain.owner);
+    if (CHAIN_STOP.has(event.type)) {
+      record({ ...stopped, error: `chain stopped: ${event.type}` });
+      // The first step did run: a one-shot chain is spent even when a later
+      // step stops on a failure or on the user. Leaving it armed would re-fire
+      // the whole chain on the next event.
+      if (rule && rule.once && chain.dryRun !== true) consume(rule, chain.owner, event);
+      return true;
+    }
     if (!rule || !rule.enabled || !Array.isArray(rule.then) || chain.index > rule.then.length) {
       record({ ...stopped, error: 'chain cancelled (rule changed)' });
       return true;
     }
-    execute(event, rule, chain.owner, chain.index);
+    execute(event, rule, chain.owner, chain.index, chain.dryRun === true);
     return true;
   }
 
@@ -275,6 +329,9 @@ function createEventRuleEngine(deps) {
     });
     if (validation.error) return validation;
     validation.rule.lastFiredAt = globalRules[index].lastFiredAt;
+    // firedAt records that a one-shot rule was already spent; an edit must not
+    // erase that history (re-enabling is what re-arms the rule).
+    if (globalRules[index].firedAt) validation.rule.firedAt = globalRules[index].firedAt;
     globalRules[index] = validation.rule;
     persist();
     return validation;

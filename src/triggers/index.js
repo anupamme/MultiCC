@@ -434,6 +434,9 @@ function createSessionTriggers(rawDeps) {
       if (validation.error) return res.status(400).json({ error: validation.error });
       deps.sessionPersistence.mutate('http.update-session-trigger', () => {
         validation.trigger.lastFiredAt = session.triggers[index].lastFiredAt;
+        // Keep the one-shot consumption stamp across edits; only an explicit
+        // re-enable re-arms the rule.
+        if (session.triggers[index].firedAt) validation.trigger.firedAt = session.triggers[index].firedAt;
         session.triggers[index] = validation.trigger;
       });
       reconcileSession(session.id);
