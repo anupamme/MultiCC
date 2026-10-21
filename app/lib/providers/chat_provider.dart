@@ -481,7 +481,8 @@ class ChatProvider extends ChangeNotifier {
     String? state,
   }) {
     if (data != null) {
-      final v = vendorViewFromBar(_barOf(data), state: state);
+      // loading 也作用于已有数据的 bar（旧逻辑只在 idle 占位条画，点击像没反应）。
+      final v = vendorViewFromBar(_barOf(data), state: state ?? (loading ? 'loading' : null));
       if (v != null) return v;
     }
     final idle = _idleBar(idleKey);
@@ -2115,7 +2116,7 @@ class ChatProvider extends ChangeNotifier {
       _arkInFlightUrl = null;
       _arkLoading = false;
     }
-    if (requestBaseUrl != _providerBaseUrl || _providerLimitSnapshot?['kind'] == 'ark') { notifyListeners(); return; }
+    if (requestBaseUrl != _providerBaseUrl || _providerSnapshotOwnsKind('ark', force: force, data: data)) { notifyListeners(); return; }
     if (data == null) {
       _arkErrorAt = _nowMs();
     } else {
@@ -2144,7 +2145,7 @@ class ChatProvider extends ChangeNotifier {
       _kimiInFlightUrl = null;
       _kimiLoading = false;
     }
-    if (requestBaseUrl != _providerBaseUrl || _providerLimitSnapshot?['kind'] == 'kimi') { notifyListeners(); return; }
+    if (requestBaseUrl != _providerBaseUrl || _providerSnapshotOwnsKind('kimi', force: force, data: data)) { notifyListeners(); return; }
     if (data == null) {
       _kimiErrorAt = _nowMs();
     } else {
@@ -2153,6 +2154,16 @@ class ChatProvider extends ChangeNotifier {
       if (data['status'] == 'ok') _persistRuntimeCache();
     }
     notifyListeners();
+  }
+
+  /// provider 快照是否压制本槽取数（镜像 web 守卫）：自动刷新让位；用户点击
+  /// (force) 的结果必须落槽，除非快照更新（WS 竞态）。
+  bool _providerSnapshotOwnsKind(String kind, {required bool force, required Map<String, dynamic>? data}) {
+    final s = _providerLimitSnapshot;
+    if (s?['kind'] != kind) return false;
+    if (!force) return true;
+    final at = (s?['updatedAt'] as num?) ?? (s?['fetchedAt'] as num?) ?? 0;
+    return data?['status'] == 'ok' && at > ((data?['fetchedAt'] as num?) ?? 0);
   }
 
   /// Fetch the OpenCode Go subscription usage (5h / weekly / monthly) from

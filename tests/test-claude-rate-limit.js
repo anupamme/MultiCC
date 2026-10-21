@@ -958,3 +958,51 @@ test('a live 5h window older than its own TTL is forgotten too', async () => {
     Queue.resetClaudeUsageQueue();
   }
 });
+
+// Regression (2026-10-21 user report): a claude-lane session whose provider
+// points at Kimi gets a kind=kimi provider snapshot, which owns the kimi slot.
+// Clicking that bar did NOTHING: the slot's refresh answer was dropped whenever
+// a same-kind provider snapshot existed (so no update ever landed), and the
+// provider bar carried no 'loading' state (so not even a fetch-in-flight render
+// gave the tap feedback). The forced refresh must paint 'loading' and its own
+// answer must land; only automatic refreshes still yield to the snapshot.
+test('a provider-snapshot kimi bar answers the user click: loading render, then the fresh result', async () => {
+  const f = freshClient();
+  try {
+    f.C.setCli('claude-exp');
+    f.C.setProviderBaseUrl('https://api.kimi.com/coding/', 'kimi-prov', { appType: 'claude' });
+    await flushClient();
+    const providerBar = Renderer.providerLimitBar({
+      kind: 'kimi', fetchedAt: NOW,
+      summary: { windows: [{ window: '5h', usedPercent: 18, resetMs: NOW + 3_600_000 }] },
+    });
+    f.C.consumeProviderLimitSnapshot({
+      providerId: 'kimi-prov', appType: 'claude', kind: 'kimi',
+      fetchedAt: NOW, updatedAt: NOW, bar: providerBar, dto: { kind: 'window' },
+    });
+    const el = f.element('kimi-quota-bar');
+    assert.match(el.textContent, /^5h 82%/, 'the provider snapshot owns the slot before the click');
+    assert.ok(providerBar.states && providerBar.states.loading, 'the renderer ships a loading state');
+
+    global.fetch = async (url) => ({
+      json: async () => String(url).startsWith('/api/quota/bars/refresh')
+        ? { status: 'ok', fetchedAt: NOW + 1000, bar: { text: '5h 41% · 点击刷新', color: '#58a6ff', title: 'fresh' } }
+        : { status: 'ok', bars: IDLE_BARS },
+    });
+    el.onclick();
+    assert.equal(el.textContent, providerBar.states.loading.text,
+      'the in-flight click repaints the bar with its loading state');
+    await flushClient();
+    assert.equal(el.textContent, '5h 41% · 点击刷新', 'the click\'s own answer lands');
+
+    // The automatic (non-forced) path still yields to the snapshot: its answer
+    // must not clobber what is on screen.
+    global.fetch = async (url) => ({
+      json: async () => String(url).startsWith('/api/quota/bars/refresh')
+        ? { status: 'ok', fetchedAt: NOW + 2000, bar: { text: 'auto 不应落槽', color: '#8b949e', title: '' } }
+        : { status: 'ok', bars: IDLE_BARS },
+    });
+    await f.C.refreshKimiQuota();
+    assert.notEqual(el.textContent, 'auto 不应落槽', 'an automatic refresh still yields to the snapshot');
+  } finally { f.cleanup(); }
+});
