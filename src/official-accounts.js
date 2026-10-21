@@ -22,6 +22,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { codexAuthSubscription } = require('./quota/subscription');
 
 const { atomicWriteJson, ensurePrivateDir, secureFile } = require('./runtime-security');
 
@@ -167,6 +168,7 @@ function createOfficialAccountStore(options = {}) {
       loggedIn: true,
       email,
       accountExternalId: typeof tokens.account_id === 'string' ? tokens.account_id : '',
+      subscription: codexAuthSubscription(auth),
       expiresAt,
       expired: expiresAt != null ? expiresAt <= Date.now() : false,
     };

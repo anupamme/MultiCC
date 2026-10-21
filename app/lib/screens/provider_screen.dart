@@ -11,6 +11,7 @@ import '../services/settings_service.dart';
 import '../theme.dart';
 import '../widgets/provider_option.dart';
 import '../widgets/provider_reassign_dialog.dart';
+import '../widgets/provider_subscription.dart';
 
 /// Provider 配置。镜像网页管理台的「Provider」页：从 cc-switch 导入/同步，
 /// 在 multicc 自己的存储里增删改，设全局默认（claude / codex 各一个）。
@@ -877,6 +878,8 @@ class _ProviderCardState extends State<_ProviderCard> {
               overflow: TextOverflow.ellipsis,
             ),
           ],
+          if (account || terminal) ProviderSubscription(
+            key: ValueKey('subscription-${p['appType']}-${p['id']}'), provider: p, manage: widget.manage),
           const Divider(height: 18, color: AppColors.line),
           Row(
             mainAxisAlignment: MainAxisAlignment.end,

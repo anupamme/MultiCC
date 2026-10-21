@@ -20,10 +20,11 @@
   function scopeOf(origin) {
     let host = '';
     try { host = new URL(origin).hostname.replace(/^\[|\]$/g, '').toLowerCase(); } catch (_) { return 'local'; }
-    if (!host || host === 'localhost' || host.endsWith('.localhost') || host === '::1' || /^127\./.test(host)) return 'local';
+    if (!host || host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '::' || host === '0.0.0.0' || /^127\./.test(host)) return 'local';
     if (/^192\.168\./.test(host) || /^10\./.test(host) || /^169\.254\./.test(host)) return 'lan';
     if (/^172\.(?:1[6-9]|2\d|3[01])\./.test(host)) return 'lan';
-    if (/\.(?:local|lan|internal|home|localdomain)$/.test(host)) return 'lan';
+    if (/^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) || /^(?:fc|fd)[\da-f]{2}:|^fe[89ab][\da-f]:/i.test(host)) return 'lan';
+    if (/\.(?:local|lan|internal|home|localdomain)$/.test(host) || (!host.includes('.') && !host.includes(':'))) return 'lan';
     return 'public';
   }
 
@@ -106,6 +107,24 @@
     return best;
   }
 
+  function multiccMountExternalAccessHint(host, url) {
+    if (!host) return;
+    const scope = url ? scopeOf(url) : null;
+    const key = scope === 'local' ? 'externalAccessLocal' : scope === 'lan' ? 'externalAccessLan' : 'externalAccessHint';
+    const fallback = {
+      externalAccessLocal: '当前地址只有本机能打开。分享给外网用户前，请先设置外网访问并选择外网地址。',
+      externalAccessLan: '当前地址仅适用于同一内网或已连接的专用网络。分享给外网用户前，请先设置外网访问并选择外网地址。',
+      externalAccessHint: '需要从外网打开分享链接或连接本机时，请先配置可访问的外网地址，并确认接收方能打开。',
+      externalAccessSetup: '设置外网访问',
+    };
+    const tr = name => typeof root.t === 'function' ? root.t(name) : fallback[name];
+    host.replaceChildren(document.createTextNode(tr(key) + ' '));
+    const link = document.createElement('a');
+    link.href = '/air?view=tunnel'; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.textContent = tr('externalAccessSetup'); link.style.color = 'inherit';
+    host.appendChild(link);
+  }
+
   // 把候选地址填进一个 <select> 并预选该预选的那一个 —— 分享对话框要的就是这个，
   // 而它同样是「一份实现」：整个会话的分享和选中消息的分享用的是同一个下拉。
   //
@@ -128,9 +147,9 @@
     }
     select.disabled = false;
     const hint = select.dataset.hintId ? document.getElementById(select.dataset.hintId) : null;
-    if (hint && preferred && preferred.scope === 'local') {
-      hint.textContent = '没有配置外网穿透地址，这条链接只有本机能打开。';
-    }
+    const updateHint = () => multiccMountExternalAccessHint(hint, select.value);
+    updateHint();
+    select.addEventListener('change', updateHint);
     return shown;
   }
 
@@ -138,4 +157,5 @@
   root.multiccBaseUrlChoices = multiccBaseUrlChoices;
   root.multiccPreferredBaseUrl = multiccPreferredBaseUrl;
   root.multiccMountBaseUrlSelect = multiccMountBaseUrlSelect;
+  root.multiccMountExternalAccessHint = multiccMountExternalAccessHint;
 })(typeof window !== 'undefined' ? window : globalThis);

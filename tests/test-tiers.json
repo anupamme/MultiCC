@@ -625,6 +625,11 @@
       "lane": "flutter"
     },
     {
+      "path": "app/test/provider_subscription_test.dart",
+      "tier": "other",
+      "lane": "flutter"
+    },
+    {
       "path": "app/test/provider_switch_limit_bar_test.dart",
       "tier": "flow",
       "lane": "flutter"
@@ -863,6 +868,11 @@
       "path": "tests/smoke-core.js",
       "tier": "flow",
       "lane": "smoke"
+    },
+    {
+      "path": "tests/test-account-subscription.js",
+      "tier": "flow",
+      "lane": "deterministic"
     },
     {
       "path": "tests/test-acp-adapter.js",

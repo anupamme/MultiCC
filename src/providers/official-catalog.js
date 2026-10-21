@@ -87,6 +87,7 @@ function createOfficialCatalog({ readRecords, readSelection, writeSelection, lis
       source: 'builtin', apiFormat: type === 'codex' ? 'openai_responses' : 'anthropic',
       builtinOfficial: true, activeAccountId: accountId, needsLogin,
       accountEmail: account && account.email ? String(account.email) : null,
+      subscription: account?.subscription || null,
       settingsConfig: {
         ...(type === 'codex' ? { auth: { auth_mode: 'chatgpt' }, config: '' } : { env: {} }),
         ...(accountId === 'global' ? {} : { officialAccount: { id: accountId } }),

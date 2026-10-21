@@ -277,6 +277,12 @@
       card.append(limit);
     }
     const actions = make('div', null, 'air-provider-card-actions');
+    if (account || terminal) {
+      const subscription = make('div', null, 'air-provider-subscription');
+      card.append(subscription);
+      root.MultiCCProviderSubscription?.mount(subscription, { vendor: provider.appType,
+        accountId: provider.officialAccountId, subscription: provider.subscription, api: path => context.api(path) });
+    }
     const speed = button(latency.has(provider.id) ? latency.get(provider.id) : t('airProviderSpeedTest'), () => speedTest(provider, speed));
     actions.append(speed);
     // 批量迁移：把「主线路绑在这条线路上的所有会话」一次搬到另一条兼容线路上。

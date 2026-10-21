@@ -19,6 +19,7 @@ const { withCdpHarness, findChromeBinary } = require('./helpers/cdp-harness');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', 'public');
 const MODULE_SOURCE = fs.readFileSync(path.join(PUBLIC_DIR, 'base-url-options.js'), 'utf8');
+const RELAY_SOURCE = fs.readFileSync(path.join(PUBLIC_DIR, 'manage-provider-relay.js'), 'utf8');
 
 // 分享对话框里那一段的最小形态：一个 disabled 的下拉 + 一行提示。
 const FIXTURE = `<!DOCTYPE html>
@@ -102,7 +103,13 @@ test('the share-link root select preselects a reachable address in a real browse
     // 默认值不是第一项：第一项是本机地址，发出去对方打不开。
     assert.equal(shown.value, 'https://mac.example-host.ts.net');
     assert.deepEqual(shown.options.map(option => option.selected), [false, false, true, false]);
-    assert.equal(shown.hint, '', '有公网地址时不该提示「只有本机能打开」');
+    assert.match(shown.hint, /设置外网访问/);
+    assert.doesNotMatch(shown.hint, /只有本机能打开/);
+    assert.equal(await page.evaluate(`document.querySelector('#base-hint a').getAttribute('href')`), '/air?view=tunnel');
+    await page.evaluate(`document.getElementById('base').value = location.origin; document.getElementById('base').dispatchEvent(new Event('change'))`);
+    assert.match((await page.evaluate(READ_SELECT)).hint, /只有本机能打开/);
+    await page.evaluate(`document.getElementById('base').value = 'http://192.168.1.10:3000'; document.getElementById('base').dispatchEvent(new Event('change'))`);
+    assert.match((await page.evaluate(READ_SELECT)).hint, /同一内网/);
     // 每一项都要说清这个地址是怎么来的：同一台机器可能既配了穿透工具、又手填过
     // 地址，只显示 URL 的话人分不出该信哪个。
     assert.match(shown.options[2].text, /\(tailscale\)/);
@@ -153,5 +160,29 @@ test('the select still fills when every probe endpoint is down', async t => {
     assert.equal(shown.disabled, false, '探活全挂时下拉也必须可用');
     assert.deepEqual(shown.options.map(option => option.value), [origin]);
     await page.screenshot('03-share-base-url-probes-down');
+  });
+});
+
+test('借道分享默认选择外网地址，切换自定义内网地址时提示同步更新', async t => {
+  if (!findChromeBinary()) return t.skip('Chrome required');
+  const pageHtml = `<!doctype html><meta charset="utf-8"><script src="/base-url-options.js"></script>
+    <script>window._providerData={};window.providerCatalog={findProvider:()=>({name:'测试线路'})};
+    window.providerApi={json:async url=>(await fetch(url)).json()};window.escapeHtml=String;</script>
+    <script src="/manage-provider-relay.js"></script><body></body>`;
+  await withCdpHarness({ routes: {
+    '/': { body: pageHtml, headers: { 'content-type': 'text/html' } },
+    '/base-url-options.js': MODULE_ROUTE,
+    '/manage-provider-relay.js': { body: RELAY_SOURCE, headers: { 'content-type': 'text/javascript' } },
+    '/api/server-info': jsonRoute({ lanUrls: ['http://192.168.1.10:3000'] }),
+    '/api/settings/tunnel': jsonRoute({ providers: { cpolar: { publicUrl: 'https://example.test' } } }),
+  } }, async page => {
+    await page.navigate('/');
+    await page.evaluate(`shareRelayProvider('claude','test')`);
+    assert.ok(await page.waitFor(`document.querySelector('[data-k="basesel"]').value === 'https://example.test'`));
+    assert.equal(await page.evaluate(`document.querySelector('[data-k="network-hint"] a').getAttribute('href')`), '/air?view=tunnel');
+    await page.evaluate(`const select=document.querySelector('[data-k="basesel"]'); select.value='__custom'; select.dispatchEvent(new Event('change'));
+      const input=document.querySelector('[data-k="basecustom"]'); input.value='http://100.100.1.2:3000'; input.dispatchEvent(new Event('input'));`);
+    assert.match(await page.evaluate(`document.querySelector('[data-k="network-hint"]').textContent`), /同一内网/);
+    assert.equal(await page.evaluate(`document.querySelector('[data-act="gen"]').disabled`), false);
   });
 });

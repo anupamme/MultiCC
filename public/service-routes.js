@@ -1,5 +1,6 @@
 'use strict';
 (() => {
+  window.multiccMountExternalAccessHint?.(document.getElementById('external-access-hint'), location.origin);
   const form = document.getElementById('route-form');
   const fields = form.elements;
   const routesList = document.getElementById('routes');

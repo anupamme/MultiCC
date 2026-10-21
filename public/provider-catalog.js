@@ -610,6 +610,7 @@
       needsLogin: value.needsLogin === true,
       // 账号库条目 id：面板据此判断「账号线路」并给出重新登录入口。
       officialAccountId: text(value.officialAccountId, 80) || null,
+      subscription: value.subscription && typeof value.subscription === 'object' ? value.subscription : null,
       limit: normalizeProviderLimit(value.limit),
     });
   }

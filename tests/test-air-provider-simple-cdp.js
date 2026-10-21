@@ -38,6 +38,13 @@ test('Provider 更多连接方式以任务入口逐项展开，手机端保持�
   routes['/api/air'] = () => json({ ok: true, directories: [directory], clis: ['claude', 'codex'], migration: { errors: [] }, tasks: [], sessions: [] });
   routes['/api/cron'] = () => json([]);
   routes['/api/docs-registry'] = () => json([]);
+  let subscriptionUnavailable = false;
+  routes['/api/claude/subscription'] = ({ url }) => json(subscriptionUnavailable ? { status: 'unavailable' } : {
+    status: 'ok', subscription: url.searchParams.has('account')
+      ? { nextBillingAt: Date.parse('2030-05-12T12:00:00Z'), source: 'profile' }
+      : { currentPeriodEnd: Date.parse('2030-06-12T12:00:00Z'), autoRenew: false, source: 'profile' },
+  });
+  routes['/api/codex/subscription'] = () => json({ status: 'ok', subscription: null });
   routes['/api/providers'] = () => json({
     available: true,
     ccSwitchAvailable: false,
@@ -86,6 +93,12 @@ test('Provider 更多连接方式以任务入口逐项展开，手机端保持�
     await page.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
     await page.navigate('/air?view=provider&dir=d1');
     assert.ok(await page.waitFor(`document.querySelectorAll('.air-provider-card').length===4`));
+    assert.ok(await page.waitFor(`document.querySelector('[data-provider-id="claude-official-aaaaaaaaaaaaaaaa"] .air-provider-subscription').textContent.includes('下次续费：')`));
+    const subscriptionText = await page.evaluate(`[...document.querySelectorAll('.air-provider-subscription')].map(node=>node.textContent)`);
+    assert.match(subscriptionText[0], /已关闭自动续费/);
+    assert.match(subscriptionText[1], /上游未提供日期/);
+    assert.match(subscriptionText[2], /2030/);
+    assert.equal(await page.evaluate(`document.querySelector('[data-provider-id="p1"] .air-provider-subscription') === null`), true);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.air-provider-card-head strong')].map(node=>node.textContent)`),
       ['同 Claude 终端', '同 Codex 终端', 'Claude 账号 · work', '智谱 GLM']);
     assert.equal(await page.evaluate(`[...document.querySelectorAll('.air-provider-card')].filter(card=>/同 (Claude|Codex) 终端/.test(card.innerText)).every(card=>![...card.querySelectorAll('button')].some(button=>button.textContent.trim()==='删除'))`), true);
@@ -99,6 +112,10 @@ test('Provider 更多连接方式以任务入口逐项展开，手机端保持�
     assert.equal(quotaCards[2].text, '5h 21% 30m · 更新于 1 分钟前');
     assert.match(quotaCards[0].title, /2h 后重置/);
     assert.equal(quotaCards[2].color, 'rgb(210, 153, 34)');
+    subscriptionUnavailable = true;
+    await page.evaluate(`document.querySelector('[data-provider-id="claude-official-aaaaaaaaaaaaaaaa"] .air-provider-subscription button').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('[data-provider-id="claude-official-aaaaaaaaaaaaaaaa"] .air-provider-subscription').textContent.includes('暂时无法更新')`));
+    assert.equal(await page.evaluate(`document.querySelector('[data-provider-id="claude-official-aaaaaaaaaaaaaaaa"] .air-provider-limit').textContent`), quotaCards[2].text);
     await page.evaluate(`document.querySelector('#air-provider-cards').scrollIntoView({block:'start'})`);
     t.diagnostic(await page.screenshot('air-provider-quota-desktop'));
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
