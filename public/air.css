@@ -1642,8 +1642,6 @@ dialog [role="alert"] { margin: 10px 0; color: #b34128; line-height: 1.6; white-
 .console-filter-panel[hidden] { display: none; }
 .console-filter-panel .admin-task-controls[hidden] { display: none; }
 .console-filter-close { padding: 2px 8px; color: var(--muted); border: 0; background: none; font-size: 10.5px; cursor: pointer; }
-#console-task-list { max-height: min(350px, 44dvh); overflow-y: auto; overscroll-behavior: contain; padding-right: 3px; }
-#console-filter-panel[data-view="all"] #console-task-list { max-height: none; overflow: visible; padding-right: 0; }
 .console-task-sort[hidden], .console-task-pager[hidden] { display: none; }
 .console-task-pager { margin: 10px -17px -17px; border-radius: 0 0 22px 22px; }
 #console-task-page { color: #6d8094; font-size: 11px; white-space: nowrap; }

@@ -1399,6 +1399,7 @@
   "airAdminNExecuting": "{n} 执行中",
   "airAdminNInProgress": "{n} 进行中",
   "airAdminNItems": "{n} 条",
+  "airLoadMore": "加载更多",
   "airAdminNTaskCount": "{n} 个任务",
   "airAdminNeedsAttention": "等待处理",
   "airAdminNewTask": "新建任务",

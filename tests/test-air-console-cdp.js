@@ -257,43 +257,35 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     assert.equal(await page.evaluate(`document.getElementById('console-panel')===null && document.getElementById('console-scrim')===null`), true,
       '控制台不再是从左边滑出来的那一层');
     assert.equal(await page.evaluate(`document.body.classList.contains('console-open')`), false);
-    // 顶上四格是过滤项；默认一张清单都不展开。
-    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.console-filter-tabs .admin-stat > span')].map(el=>el.textContent)`),
-      ['进行中', '等我处理', '异常', '今日完成', '全部']);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '默认展示完整任务列表');
-    // 点「等我处理」：清单在过滤项和工作目录之间长出来。
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="needs"]').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false);
-    // 任务清单收在「更多」details 里，默认不渲染 —— innerText 会回空串，读 textContent。
-    assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row').textContent.includes('结算页')`), '等待回答的排在最前');
-    assert.ok(await page.evaluate(`document.querySelector('#console-filter-panel .admin-recent-row .mc-status-label').textContent==='等待回答'`), '等我处理的行自报状态');
-    assert.equal(await page.evaluate(`document.getElementById('console-task-search').closest('.admin-task-controls').hidden`), true, '只有「全部」才带搜索筛选');
-    // 控制台现在是一张目录首页：顶栏、待办流、目录网格、底部「更多」。
+    // 任务看法：顶栏、「等我处理」、一份不截条数的清单（筛选格在清单顶上）。原来的
+    // 「正在运行 / 最近使用」与底部「更多」都并进了这份清单。
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-filters button')].map(el=>el.firstChild.textContent)`),
+      ['最近任务', '等我处理', '待办', '今日完成', '进行中', '异常', '全部记录']);
+    assert.equal(await page.evaluate(`document.getElementById('console-task-panel').hidden`), false, '默认展示任务清单');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-list .admin-recent-row')?.textContent.includes('结算页')`), '等待回答的排在最前');
+    assert.ok(await page.evaluate(`document.querySelector('#console-task-list .admin-recent-row .mc-status-label').textContent==='等待回答'`), '等我处理的行自报状态');
     assert.deepEqual(await page.evaluate(`[...document.getElementById('console-content').children].map(el => el.className)`),
       ['console-home']);
     assert.deepEqual(await page.evaluate(`[...document.querySelector('.console-home').children].map(el => el.className)`),
-      ['console-home-top', 'console-flow', 'console-mobile-slot', 'admin-panel console-directories', 'console-more']);
+      ['console-home-top', 'console-flow', 'admin-panel console-directories', 'console-mobile-slot']);
     assert.equal(await page.evaluate(`document.querySelector('.console-home-top #console-home-search') !== null`), true,
       '顶栏带全局搜索');
-    assert.equal(await page.evaluate(`document.getElementById('console-more').contains(document.querySelector('.console-filter-tabs'))`), true,
-      '统计格和任务清单收在「更多」里，功能没丢');
-    assert.equal(await page.evaluate(`document.getElementById('console-more').open`), false, '「更多」默认收着，不占首屏');
-    assert.equal(await page.evaluate(`document.querySelectorAll('#console-more .admin-stat').length`), 5, '五格读数仍在（含「今日完成」）');
+    for (const gone of ['#console-more', '.console-running', '.console-recent', '.admin-stats']) {
+      assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(gone)})`), null, `${gone} 已并进清单`);
+    }
+    // 目录网格只在「按目录」看法里铺开（任务看法里它让位）。
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('.console-directories')).display`), 'none', '任务看法不铺目录卡');
+    await page.evaluate(`document.getElementById('console-view-dirs').click()`);
     // 下半区：全部目录平铺成网格，卡片形状与目录库一致，且可拖排序。
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card strong')].map(el=>el.textContent)`),
       ['▣ MultiCC 主仓', '▣ North · 商城', '▣ Gapasea'], '二三十个目录直接平铺，不分页');
     assert.equal(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card')].every(card => card.draggable)`), true,
       '目录卡默认可拖');
-    // 顶栏搜索同时过滤任务与目录：目录名命中的任务留在待办流里，别的目录隐去。
+    // 目录看法里顶栏搜目录名与路径。
     await page.evaluate(`(() => { const input = document.getElementById('console-home-search'); input.value = 'Gapasea'; input.dispatchEvent(new Event('input')); })()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card strong')].map(el=>el.textContent)`),
       ['▣ Gapasea'], '搜索目录名只留命中的目录卡');
-    assert.equal(await page.evaluate(`document.querySelectorAll('.console-priority-grid .console-priority-card').length`), 0,
-      '没命中的待办卡不留在上面');
-    assert.ok(await page.evaluate(`[...document.querySelectorAll('.console-running-list .admin-recent-row')].some(row => row.textContent.includes('登录页空状态文案'))`),
-      '按目录名也能搜到在跑的任务');
-    assert.ok(await page.evaluate(`document.querySelector('.console-recent-list').textContent.includes('导出失败重试')`),
-      '最近使用也按目录名过滤');
     await page.evaluate(`(() => { const input = document.getElementById('console-home-search'); input.value = ''; input.dispatchEvent(new Event('input')); })()`);
     assert.equal(await page.evaluate(`document.querySelectorAll('#console-directory-grid .directory-card').length`), 3, '清空搜索恢复全部目录');
     // 拖排：第三张（Gapasea）拖到第一张上半截 → d3,d1,d2，落盘走 ui-layout（App
@@ -328,6 +320,8 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
       '保存失败回滚到服务端顺序');
     rejectLayoutPut = false;
     await page.screenshot('01-console-open');
+    // 切回任务看法（看法记在本机，后面再进控制台都是这一种）。
+    await page.evaluate(`document.getElementById('console-view-tasks').click()`);
 
     // Escape 关不掉一页：它本来就没有「关掉」这回事，页面的退路是地址（后退 / 侧栏
     // 另一行 / 从清单里点走一条任务）。快捷键链路里也没有它的那一档了。
@@ -376,28 +370,26 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     // ── 控制台：「全部任务」跨所有目录，筛选和搜索在这里 ─────────────────
     await page.evaluate(`document.getElementById('overview').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="all"]').click()`);
     const allTitles = `[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`;
-    // 默认只看「进行中与待处理」：done 的那条不在里面，但另外三个目录的三条都在
-    // —— 控制台不按当前目录收窄，这是它跟侧栏那条带子的分工。
-    assert.deepEqual((await page.evaluate(allTitles)).sort(), ['收口 Air 的控制台', '登录页空状态文案', '结算页金额四舍五入错误']);
-    assert.equal(await page.evaluate(`document.getElementById('console-task-note').textContent`), '3 条');
-    await page.evaluate(`(() => { const s=document.getElementById('console-task-status'); s.value='all'; s.dispatchEvent(new Event('change')); })()`);
-    assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '收口 Air 的控制台', '登录页空状态文案', '结算页金额四舍五入错误'], '全部记录把已完成也算上');
+    // 默认「最近任务」= 未归档：已完成的那条也在，另外三个目录的都在 —— 控制台不按
+    // 当前目录收窄，这是它跟侧栏那条带子的分工。
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length===4`));
+    assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '收口 Air 的控制台', '登录页空状态文案', '结算页金额四舍五入错误']);
+    assert.equal(await page.evaluate(`document.getElementById('console-task-note').textContent`), '4 条');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="all"]').click()`);
+    assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '收口 Air 的控制台', '登录页空状态文案', '结算页金额四舍五入错误'], '全部记录');
     await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='d3'; s.dispatchEvent(new Event('change')); })()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length===2`));
     assert.deepEqual((await page.evaluate(allTitles)).sort(), ['导出失败重试', '登录页空状态文案'], '按目录收窄');
-    // 任务抽屉现在收在「更多」里：先展开，里面的搜索框才是可聚焦的（闭合的
-    // details 不渲染后代，focus() 不生效）。
-    await page.evaluate(`document.getElementById('console-more').open = true`);
-    // 先聚焦再打字：这样后面那条断言才是在问「打字会不会把焦点打掉」，而不是
-    // 「一个从没被聚焦过的输入框有没有焦点」。
-    await page.evaluate(`(() => { const i=document.getElementById('console-task-search'); i.focus(); i.value='空状态'; i.dispatchEvent(new Event('input')); })()`);
+    // 搜索走顶栏那一个输入框。先聚焦再打字：这样后面那条断言才是在问「打字会不会
+    // 把焦点打掉」，而不是「一个从没被聚焦过的输入框有没有焦点」。
+    await page.evaluate(`(() => { const i=document.getElementById('console-home-search'); i.focus(); i.value='空状态'; i.dispatchEvent(new Event('input')); })()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length===1`));
     assert.deepEqual(await page.evaluate(allTitles), ['登录页空状态文案'], '按标题搜索');
     // 只重画列表才留得住焦点：整块 replaceChildren 的话，第一个字打进去输入框就没了。
-    assert.equal(await page.evaluate(`document.activeElement===document.getElementById('console-task-search')`), true, '重画列表不夺走搜索框焦点');
-    assert.equal(await page.evaluate(`document.querySelectorAll('#console-task-list .admin-recent-row').length`), 1);
+    assert.equal(await page.evaluate(`document.activeElement===document.getElementById('console-home-search')`), true, '重画列表不夺走搜索框焦点');
     assert.deepEqual(await page.evaluate(`(() => { const s=getComputedStyle(document.getElementById('console-task-list')); return [s.overflowY,s.maxHeight]; })()`),
-      ['visible', 'none'], '全部任务列表不创建第二层滚动');
+      ['visible', 'none'], '任务清单不创建第二层滚动');
 
     // ── 彩虹圈：运行中的任务，和任务对应的目录 ───────────────────────────
     // 圈只有一份定义（status-presentation.js 只给 running 设了 spinner），所以它
@@ -406,22 +398,23 @@ test('Air console is a cross-directory overlay, the task band shows recents, and
     assert.equal(ringed.length, 1, JSON.stringify(ringed));
     assert.ok(ringed[0].includes('登录页空状态文案'), '在跑的那条任务带圈');
     await page.screenshot('02-console-all-tasks');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="needs"]').click()`);
+    await page.evaluate(`(() => { const i=document.getElementById('console-home-search'); i.value=''; i.dispatchEvent(new Event('input'));
+      const s=document.getElementById('console-task-dir'); s.value='all'; s.dispatchEvent(new Event('change')); })()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').click()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`),
       ['结算页金额四舍五入错误'], '「等我处理」只留要我动手的那条，在跑的不进来');
     assert.equal(await page.evaluate(`document.querySelector('#console-task-list .admin-recent-row.ring-running')!==null`), false,
       '「等我处理」里不该出现正在执行的任务');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="running"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="running"]').click()`);
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`),
       ['登录页空状态文案'], '「进行中」只列在跑的');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="all"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="all"]').click()`);
 
     // 从清单里点走一条在跑的任务：对话在当前目录上打开，不切到任务所属的目录 ——
     // 在哪打开就回哪去，关掉对话回到控制台那一页（地址保持当前目录 + 那条任务）。
     // 圈照旧在页头状态行和侧栏的任务行上；当前目录卡片只在当前目录有在跑的活时
     // 才带圈，不跟着任务跳目录。
     await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='all'; s.dispatchEvent(new Event('change')); })()`);
-    await page.evaluate(`(() => { const i=document.getElementById('console-task-search'); i.value=''; i.dispatchEvent(new Event('input')); })()`);
     await page.evaluate(`[...document.querySelectorAll('#console-task-list .admin-recent-row')].find(r=>r.textContent.includes('登录页空状态文案')).click()`);
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='登录页空状态文案'`));
     assert.ok(await consoleHidden(page), '点走一条就离开控制台那一页');
@@ -662,20 +655,17 @@ test('the directory task list keeps its filters, shares page scrolling, paginate
       status: 'active', runState: 'idle', updatedAt: 1000 + i, lastMessageAt: 3000 - i,
       resource: { residency: 'planned', lease: 'idle' } }));
     await page.navigate('/air?view=overview');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="all"]').click()`);
-    assert.equal(await page.evaluate(`document.querySelectorAll('#console-task-list .admin-recent-row').length`), 20);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="all"]').click()`);
+    // 不截条数：45 条一页（50）就放得下，全在，没有「加载更多」。
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length===45`), '45 条全在');
     assert.equal(await page.evaluate(`document.querySelector('#console-task-list strong').textContent`), '控制台任务 0', '按消息而非元数据更新时间排');
-    assert.equal(await page.evaluate(`document.getElementById('console-task-page').textContent`), '第 1 / 3 页');
-    await page.evaluate(`document.getElementById('console-task-next').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#console-task-list strong').textContent`), '控制台任务 20');
-    assert.equal(await page.evaluate(`document.getElementById('console-task-page').textContent`), '第 2 / 3 页');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-more').hidden`), true, '一页放得下就没有加载更多');
     await page.evaluate(`document.querySelector('#console-task-sort [data-sort="visit"]').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#console-task-list strong').textContent`), '控制台任务 0', '无访问记录时退回消息时间');
-    assert.equal(await page.evaluate(`document.getElementById('console-task-page').textContent`), '第 1 / 3 页', '换排序回第一页');
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-list strong')?.textContent === '控制台任务 0'`), '无访问记录时退回消息时间');
     await page.evaluate(`localStorage.setItem('air:task-visited-at', JSON.stringify({c30:9000,c8:8000}));document.querySelector('#console-task-sort [data-sort="message"]').click();document.querySelector('#console-task-sort [data-sort="visit"]').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#console-task-list strong').textContent`), '控制台任务 30', '有访问记录按本机访问时间排');
-    await page.evaluate(`(() => { const i=document.getElementById('console-task-search');i.value='任务 4';i.dispatchEvent(new Event('input')); })()`);
-    assert.equal(await page.evaluate(`document.getElementById('console-task-pager').hidden`), true, '筛成一页就藏分页条');
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-list strong')?.textContent === '控制台任务 30'`), '有访问记录按本机访问时间排');
+    await page.evaluate(`(() => { const i=document.getElementById('console-home-search');i.value='任务 4';i.dispatchEvent(new Event('input')); })()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length===6`), '搜索收窄清单');
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     assert.deepEqual(await page.evaluate(`(() => { const s=getComputedStyle(document.getElementById('console-task-list'));return [s.overflowY,s.maxHeight,document.documentElement.scrollWidth<=innerWidth]; })()`),
       ['visible', 'none', true], '手机任务行随控制台整页滚动、不产生第二滚动层或横向溢出');
@@ -759,44 +749,39 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     await page.navigate('/air?dir=d1&task=w1');
     assert.ok(await page.waitFor(`document.getElementById('task-title').textContent==='等回答：发布口径'`));
 
-    // ── ① 四格过滤项：数字放大，但整条带仍是读数带的高度 ────────────────
+    // ── ① 筛选格：控制台唯一那份清单顶上的一排，每格带数 ────────────────
     await page.evaluate(`document.getElementById('overview').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    assert.ok(await page.waitFor(`document.querySelectorAll('.admin-stats .admin-stat').length===5`));
-    const stats = await page.evaluate(`(() => {
-      const card = document.querySelector('.admin-stat');
-      return { height: Math.round(card.getBoundingClientRect().height),
-        fontSize: parseFloat(getComputedStyle(card.querySelector('strong')).fontSize),
-        values: [...document.querySelectorAll('.admin-stats .admin-stat strong')].map(el=>el.textContent) };
-    })()`);
-    assert.ok(stats.height <= 84, `统计卡仍压在 84px 以内（实测 ${stats.height}）`);
-    assert.ok(stats.fontSize >= 14, `过滤项的数字要大字（实测 ${stats.fontSize}）`);
-    assert.deepEqual(stats.values, ['2', '6', '3', '1', '9'], '进行中 2 · 等我处理 6 · 异常 3 · 今日完成 1 · 全部（未归档）9');
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '默认展示全部任务');
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-filters button').length===7`));
+    const stats = await page.evaluate(`Object.fromEntries([...document.querySelectorAll('#console-task-filters button')].map(el=>[el.dataset.filter, el.querySelector('b')?.textContent ?? '']))`);
+    assert.deepEqual({ running: stats.running, needs: stats.needs, error: stats.error, today: stats.today },
+      { running: '2', needs: '6', error: '3', today: '1' }, '进行中 2 · 等我处理 6 · 异常 3 · 今日完成 1');
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [aria-pressed="true"]').dataset.filter`), 'recent', '默认是最近任务');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-panel').hidden`), false, '清单常驻，不用先点开');
 
     // ── ② 每格展开自己的清单，口径与数字同源，等我处理按最早消息在前 ─────────
     const listed = `[...document.querySelectorAll('#console-task-list .admin-recent-row strong')].map(el=>el.textContent)`;
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="needs"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['等回答：目录巡检', '出错：图谱回填', '等回答：结算页文案', '出错：兼容矩阵', '等回答：发布口径', '出错：导出失败重试'],
       '「等我处理」列全六条，最早的消息时间在前；在跑的不进来');
     assert.equal(await page.evaluate(`document.getElementById('console-task-note').textContent`), '6 条');
-    assert.deepEqual(await page.evaluate(`(() => { const s=getComputedStyle(document.getElementById('console-task-list')); return [s.overflowY,s.maxHeight]; })()`),
-      ['auto', '350px'], '清单有最大高度，内部滚动');
+    // 清单不再是内嵌滚动的一小格：它随整页滚，滚到底接下一页。
+    assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('console-task-list')).maxHeight`), 'none', '清单不设最大高度');
     // 侧栏徽标数的是同一份等我处理：等回答 + 出错。
     assert.equal(await page.evaluate(`document.getElementById('console-badge').textContent`), '6', '徽标 = 等我处理总数');
     await page.screenshot('06-console-waiting');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="error"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['出错：图谱回填', '出错：兼容矩阵', '出错：导出失败重试'], '「异常」单独一格，只列出错的，最早的在前');
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-list .mc-status-label')].map(el=>el.textContent)`),
       ['执行异常', '执行异常', '执行异常']);
     await page.screenshot('06a-console-error');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="running"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="running"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['在跑：登录页空状态', '在跑：投放日报']);
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="today"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="today"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['今天跑完：图标换新'], '很久以前完成的不算今日完成');
     await page.screenshot('06b-console-today');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="today"]').click()`);
-    assert.equal(await page.evaluate(`document.getElementById('console-filter-panel').hidden`), false, '当前筛选保持可见');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="today"]').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [aria-pressed="true"]').dataset.filter`), 'today', '再点一次同一格，筛选保持');
 
     // ── ③ 「等我处理」是自己的一页：换页而不是换层，地址留住，清单给全 ────
     await page.navigate('/air?view=attention');
@@ -838,9 +823,9 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
       tasks: airTasks.filter(entry => ['w1', 'e1', 'r1'].includes(entry.id)), sessions: [], taskTodoIgnored: ignores });
     await page.navigate('/air?view=overview');
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    assert.ok(await page.waitFor(`document.querySelector('.admin-stat[data-view="needs"] strong')?.textContent==='2'`));
-    assert.equal(await page.evaluate(`document.querySelector('.admin-stat[data-view="error"] strong').textContent`), '1');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="needs"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-filters [data-filter="needs"] b')?.textContent==='2'`));
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"] b').textContent`), '1');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['等回答：发布口径', '出错：导出失败重试'], '等我处理只剩等回答与出错两条');
     assert.equal(await page.evaluate(`document.getElementById('console-badge').textContent`), '2');
     await page.screenshot('08-console-waiting-short');
@@ -852,9 +837,9 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     assert.equal(await page.evaluate(`document.getElementById('console-badge').textContent`), '1', '徽标同样不算被忽略的');
     assert.deepEqual(ignoreCalls, ['w1']);
     assert.ok(await page.waitFor(`document.getElementById('notice').textContent.includes('已忽略')`), '提示在刷新之后仍可见');
-    assert.deepEqual(await page.evaluate(`document.querySelector('.admin-stat[data-view="needs"] strong').textContent`), '1');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="all"]').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#console-task-status option[value="ignored"]')`), null,
+    assert.deepEqual(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"] b').textContent`), '1');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="all"]').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="ignored"]')`), null,
       '「已忽略」不再单独一档');
     const rowAction = title => page.evaluate(`(() => {
       const row = [...document.querySelectorAll('#console-task-list .admin-recent-row')]
@@ -873,14 +858,14 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     assert.deepEqual(await rowAction('等回答：发布口径'), ['忽略等待', 'false'], '取消忽略后按钮回到状态动作');
 
     // ── ⑦ 忽略的出错任务：退出等我处理，但「异常」计数与列表不受影响 ─────────
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="error"]').click()`);
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"]').click()`);
     assert.deepEqual(await page.evaluate(listed), ['出错：导出失败重试']);
-    assert.equal(await page.evaluate(`document.querySelector('.admin-stat[data-view="error"] strong').textContent`), '1');
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"] b').textContent`), '1');
     // 就在异常清单里忽略它：等我处理减一，异常仍是 1；行上留下「取消忽略」。
     await page.evaluate(`document.querySelector('#console-task-list .task-todo').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-badge').textContent==='1'`), '忽略后等我处理只剩等回答那条');
-    assert.equal(await page.evaluate(`document.querySelector('.admin-stat[data-view="needs"] strong').textContent`), '1');
-    assert.equal(await page.evaluate(`document.querySelector('.admin-stat[data-view="error"] strong').textContent`), '1',
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"] b').textContent`), '1');
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"] b').textContent`), '1',
       '被忽略的出错任务仍算在异常计数里');
     assert.deepEqual(await page.evaluate(listed), ['出错：导出失败重试'], '被忽略的出错任务仍留在异常筛选列表里');
     assert.deepEqual(await rowAction('出错：导出失败重试'), ['取消忽略', 'true'], '异常列表里仍能取消忽略');
@@ -889,7 +874,7 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     await page.evaluate(`document.querySelector('#console-task-list .task-todo').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-badge').textContent==='2'`));
     assert.deepEqual(ignoreCalls.slice(-2), ['e1', 'e1']);
-    assert.equal(await page.evaluate(`document.querySelector('.admin-stat[data-view="error"] strong').textContent`), '1');
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"] b').textContent`), '1');
 
     // ── 窄屏：压扁后的读数带和整页都不能横向溢出 ───────────────────────────
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
@@ -899,11 +884,11 @@ test('console prioritizes pending tasks and keeps filters and a complete attenti
     await page.screenshot('09-attention-mobile');
     await page.evaluate(`document.getElementById('overview').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    const mobile = await page.evaluate(`(() => { const card = document.querySelector('.admin-stat');
+    const mobile = await page.evaluate(`(() => { const card = document.querySelector('#console-task-filters button');
       return { height: Math.round(card.getBoundingClientRect().height),
         overflow: document.documentElement.scrollWidth <= innerWidth }; })()`);
     assert.equal(mobile.overflow, true, '窄屏下控制台也不横向溢出');
-    assert.ok(mobile.height <= 80, `窄屏下统计卡同样矮（实测 ${mobile.height}）`);
+    assert.ok(mobile.height <= 44, `窄屏下筛选格是一行小格（实测 ${mobile.height}）`);
     await page.screenshot('10-mobile-console-stats');
   });
 
@@ -970,15 +955,15 @@ test('a task waiting on background work never renders as waiting for you', async
     assert.equal(await page.evaluate(`document.getElementById('console-badge').textContent`), '1', '等后台任务不该在侧栏催我');
     await page.evaluate(`document.getElementById('overview').click()`);
     assert.ok(await page.waitFor(`document.getElementById('console-center').hidden===false`));
-    assert.ok(await page.waitFor(`document.querySelectorAll('.admin-stats .admin-stat').length===5`));
-    const stats = await page.evaluate(`[...document.querySelectorAll('.admin-stats .admin-stat strong')].map(el=>el.textContent)`);
-    assert.equal(stats[0], '1', '进行中只数在跑的那条');
-    assert.equal(stats[1], '1', '「等我处理」只数那条等回答的');
-    assert.equal(stats[2], '0', '没有出错的');
-    assert.equal(stats[4], '3', '三条任务都还没结束');
-    await page.evaluate(`document.querySelector('.console-filter-tabs .admin-stat[data-view="needs"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-filters button').length===7`));
+    const stats = await page.evaluate(`Object.fromEntries([...document.querySelectorAll('#console-task-filters button')].map(el=>[el.dataset.filter, el.querySelector('b')?.textContent ?? '']))`);
+    assert.equal(stats.running, '1', '进行中只数在跑的那条');
+    assert.equal(stats.needs, '1', '「等我处理」只数那条等回答的');
+    assert.equal(stats.error, '0', '没有出错的');
+    assert.equal(stats.all, '3', '三条任务');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').click()`);
     // 浮层是后挂上去的容器，innerText 对这种没进布局的节点会回空串 —— 读 textContent。
-    const attention = await page.evaluate(`document.getElementById('console-filter-panel').textContent.replace(/\\s+/g,' ')`);
+    const attention = await page.evaluate(`document.getElementById('console-task-list').textContent.replace(/\\s+/g,' ')`);
     assert.ok(attention.includes('等回答：发布口径'), '等回答的进清单');
     assert.equal(attention.includes('等回调：索引重建'), false, '等后台任务的不进「等我处理」');
     assert.equal(attention.includes('等待后台任务'), false, '这份清单里没有一条该说「等后台任务」');

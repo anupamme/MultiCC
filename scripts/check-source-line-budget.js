@@ -421,8 +421,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // +4 双语键（airOpsDesktopUpdate* 3 条 + airOpsOpenReleases）：桌面版不再假装能在应用内
     //   自更新 —— 服务端报 kind=desktop / DESKTOP_UPDATE_UNSUPPORTED，侧栏底部改为引导下载
     //   新的桌面安装包。中英各 4 行 = +8 行，重跑生成器实测 9430/598640。
-    maxLines: 9430,
-    maxBytes: 598640,
+    // +1 双语键（airLoadMore）：控制台任务清单不再截条数，滚到底接页的「加载更多」。
+    //   中英各 1 行 = +2 行，重跑生成器实测 9432/598707。
+    maxLines: 9432,
+    maxBytes: 598707,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
