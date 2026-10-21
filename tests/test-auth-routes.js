@@ -217,10 +217,12 @@ test('a provider-scoped relay credential is independently authorized and account
   } finally { await h.close(); }
 });
 
-test('provider relay credentials also unlock the relay quota endpoints on both protocols', async () => {
+test('provider relay credentials also unlock scoped quota/model endpoints on both protocols', async () => {
   const allowed = new Set([
     '/claude-proxy/p1/remote/quota',
     '/codex-proxy/p1/quota',
+    '/claude-proxy/p1/remote/models',
+    '/codex-proxy/p1/models',
   ]);
   const h = await buildHarness({
     accessToken: 'sekret',
@@ -240,6 +242,14 @@ test('provider relay credentials also unlock the relay quota endpoints on both p
     assert.equal(res.status, 200);
     res = await raw(h.base, '/codex-proxy/p1/quota', {
       method: 'POST', headers: { authorization: 'Bearer mcr1.abcdefghijklmnop.manual-secret' },
+    });
+    assert.equal(res.status, 200);
+    res = await raw(h.base, '/claude-proxy/p1/remote/models', {
+      method: 'GET', headers: { authorization: 'Bearer mcr1.abcdefghijklmnop.manual-secret' },
+    });
+    assert.equal(res.status, 200);
+    res = await raw(h.base, '/codex-proxy/p1/models', {
+      method: 'GET', headers: { 'x-api-key': 'mcr1.abcdefghijklmnop.manual-secret' },
     });
     assert.equal(res.status, 200);
     assert.ok(h.state.metrics.includes('multicc_auth_provider_relay_share_total'));

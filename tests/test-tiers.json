@@ -4014,6 +4014,15 @@
       ]
     },
     {
+      "path": "tests/test-provider-relay-model-catalog.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:provider-router",
+      "entrypoints": [
+        "npm:test:provider-router"
+      ]
+    },
+    {
       "path": "tests/test-provider-relay-quota.js",
       "tier": "other",
       "lane": "deterministic",

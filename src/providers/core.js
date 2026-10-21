@@ -977,6 +977,87 @@ function updateProvider(appType, id, { name, baseUrl, authToken, model, models, 
   return { id, appType };
 }
 
+// Apply a lender's authenticated live model catalog to an imported relay.
+// This is intentionally narrower than updateProvider(): it cannot change the
+// endpoint, credential, protocol, name, aliases, or egress policy.  The current
+// local default remains pinned while the lender still serves it; if the lender
+// removes it, the lender's preferred model becomes the new safe default.
+function applyProviderRelayModelCatalog(provider, input = {}, nowMs = Date.now()) {
+  if (!provider || !APP_TYPES.includes(provider.appType)) throw new Error('provider not found');
+  const models = uniqueModels(Array.isArray(input.models) ? input.models : [])
+    .filter(model => model.length <= 160)
+    .slice(0, 100);
+  if (!models.length) throw new Error('relay model catalog is empty');
+  const requestedPreferred = String(input.preferredModel || '').trim();
+  const preferredModel = models.includes(requestedPreferred) ? requestedPreferred : models[0];
+  const cfg = JSON.parse(JSON.stringify(parseConfig(provider.settingsConfig) || {}));
+  const previousCatalog = JSON.stringify({
+    model: provider.appType === 'claude'
+      ? String(cfg.env && cfg.env.ANTHROPIC_MODEL || '').trim()
+      : tomlValue(cfg.config, 'model'),
+    models: cfg.modelCatalog && Array.isArray(cfg.modelCatalog.models)
+      ? cfg.modelCatalog.models.map(item => item && item.model).filter(Boolean)
+      : [],
+    preferredModel: provider.relayModelCatalog && provider.relayModelCatalog.preferredModel || null,
+    revision: provider.relayModelCatalog && provider.relayModelCatalog.revision || null,
+  });
+
+  let currentModel = '';
+  if (provider.appType === 'claude') {
+    cfg.env = cfg.env || {};
+    currentModel = String(cfg.env.ANTHROPIC_MODEL || '').trim();
+    cfg.env.ANTHROPIC_MODEL = models.includes(currentModel) ? currentModel : preferredModel;
+  } else {
+    currentModel = tomlValue(cfg.config, 'model');
+    cfg.config = replaceTomlString(
+      cfg.config,
+      'model',
+      models.includes(currentModel) ? currentModel : preferredModel,
+    );
+  }
+  cfg.modelCatalog = { models: models.map(model => ({ model })) };
+  provider.settingsConfig = cfg;
+  provider.relayModelCatalog = {
+    version: 1,
+    preferredModel,
+    models,
+    revision: String(input.revision || '').slice(0, 128) || null,
+    syncedAt: Number(nowMs),
+    sourceGeneratedAt: Number(input.sourceGeneratedAt) || null,
+    sourceCatalogFetchedAt: Number(input.sourceCatalogFetchedAt) || null,
+  };
+  const model = provider.appType === 'claude'
+    ? cfg.env.ANTHROPIC_MODEL : tomlValue(cfg.config, 'model');
+  return {
+    changed: previousCatalog !== JSON.stringify({
+      model,
+      models,
+      preferredModel,
+      revision: provider.relayModelCatalog.revision,
+    }),
+    model,
+    models,
+    preferredModel,
+    syncedAt: provider.relayModelCatalog.syncedAt,
+  };
+}
+
+function updateProviderRelayModelCatalog(appType, id, input = {}) {
+  const list = loadStore();
+  const provider = list.find(item => item.appType === appType && item.id === id);
+  if (!provider) throw new Error('provider not found');
+  const summary = summarize(provider);
+  const relay = relayRouteFromBaseUrl(summary.baseUrl);
+  if (!relay || relay.appType !== appType) throw new Error('provider is not a remote relay');
+  const result = applyProviderRelayModelCatalog(provider, input);
+  // Unlike legacy CRUD helpers, a background catalog sync must not report
+  // success when its durable write failed: the caller would otherwise cache a
+  // catalog that disappears on the next read/restart. Fail closed so the
+  // runtime retries while the last-known-good file remains untouched.
+  atomicWriteJson(STORE_FILE, list);
+  return result;
+}
+
 function deleteProvider(appType, id) {
   if (officialCatalog && id === `${appType}-official`) throw new Error(`“同 ${appType === 'codex' ? 'Codex' : 'Claude'} 终端”为内置线路，不能删除`);
   if (officialCatalog && isOfficialProviderId(appType, id)) {
@@ -2440,6 +2521,8 @@ module.exports = {
   resolveCodexDirectHttp,
   createProvider,
   updateProvider,
+  applyProviderRelayModelCatalog,
+  updateProviderRelayModelCatalog,
   deleteProvider,
   importFromCcSwitch,
   migrateLegacyProviderProtocols,
