@@ -471,7 +471,7 @@ test('a refused directory names its reason, its fix and whether retrying can hel
     { reason: 'unsuitable: 该目录体积过大（超过 2GB），不适合作为 session 目录，请选择具体的项目目录',
       says: '体积过大', fix: null, permanent: true },
     { reason: 'permission-denied: /Users/someone/Downloads/working',
-      says: '无权访问', fix: 'open-disk-access', permanent: true },
+      says: '访问或写入该目录时被拒绝', fix: 'open-disk-access', permanent: true },
     { reason: 'home-or-above',
       says: '$HOME', fix: null, permanent: true },
     { reason: 'git-error: fatal: not a git repository',
