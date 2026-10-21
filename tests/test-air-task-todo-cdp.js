@@ -260,11 +260,11 @@ test('needs-me and manual-to-do stay separate, and one state-driven action repla
     await noErrors();
     await page.navigate('/air');
     await watchErrors();
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters [data-filter="needs"]')`));
-    assert.equal(await page.evaluate(`(() => { const b=document.querySelector('.mobile-console-filters [data-filter="needs"]').getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth; })()`), true);
-    assert.ok((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="needs"]').textContent`)).endsWith(' 4'));
-    assert.ok((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="todo"]').textContent`)).endsWith(' 2'));
-    assert.equal(await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="ignored"]')`), null);
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-filters [data-filter="needs"]')`));
+    assert.equal(await page.evaluate(`(() => { const b=document.querySelector('#console-task-filters [data-filter="needs"]').getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth; })()`), true);
+    assert.ok((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').textContent`)).endsWith('4'));
+    assert.ok((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="todo"]').textContent`)).endsWith('2'));
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="ignored"]')`), null);
     await page.screenshot('mobile-needs-todo.png');
 
     await noErrors();
@@ -361,13 +361,13 @@ test('the directory needs-me card matches needsMe and ignored errors stay in the
     assert.ok(await page.waitFor(`document.querySelectorAll('#directory-stats .directory-stat').length===5`));
     await page.screenshot('mobile-directory-overview.png');
     await page.navigate('/air');
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters [data-filter="error"]')`));
-    assert.equal((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="needs"]').textContent`)).endsWith(' 3'), true);
-    assert.equal((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="todo"]').textContent`)).endsWith(' 1'), true,
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-filters [data-filter="error"]')`));
+    assert.equal((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="needs"]').textContent`)).endsWith('3'), true);
+    assert.equal((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="todo"]').textContent`)).endsWith('1'), true,
       '手机端待办只数手动标记的');
-    assert.equal((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="error"]').textContent`)).endsWith(' 2'), true,
+    assert.equal((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"]').textContent`)).endsWith('2'), true,
       '手机端异常计数也含被忽略的出错任务');
-    assert.equal(await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="waiting"]')`), null,
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [data-filter="waiting"]')`), null,
       '手机端不再有单独的「等待回复」格');
     await page.screenshot('mobile-overview-filters.png');
 

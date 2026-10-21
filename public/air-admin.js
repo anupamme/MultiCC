@@ -73,12 +73,32 @@
   // 的词走不到任务板语料。注意它换的不是上面那条状态口径 —— 列表默认仍是「进行中与
   // 待处理」，搜索另有一份 searchFilter()（见下）。
   // view 是顶上展开了哪一格过滤项（running/waiting/error/today/all），null = 都收着。
-  const consoleFilter = { query: '', status: 'open', dir: 'all', fullText: true, view: 'all', page: 1, sort: 'message' };
+  const consoleFilter = { query: '', status: 'recent', dir: 'all', fullText: true, sort: 'message' };
   // 目录首页（控制台）自己的全局搜索词与「更多」展开态。和 consoleFilter 一样
   // 存在模块上：外壳每次快照都会整块重画这一页，输入框不能跟着丢字、丢焦点，
   // 底部「更多」也不该每次快照刷新都自己合上。
   let consoleHomeQuery = '';
-  let consoleMoreOpen = false;
+  // 控制台清单的筛选格（同手机原来那排）：最近 = 未归档，其余口径同 filterTasks。
+  const CONSOLE_FILTERS = [['recent', 'airRecentTasks'], ['needs', 'airNeedsMeFilter'], ['todo', 'airTodoFilter'],
+    ['today', 'airAdminTileToday'], ['running', 'airAdminTileRunning'], ['error', 'airAdminTileError'], ['all', 'airAdminFilterAll']];
+  // 控制台清单一页的条数（服务端 /api/air/page 的单页上限也是 50），以及已经接上
+  // 的后续页：第 1 页跟着快照实时走，2..n 页攒在这里。整页每次快照都会重建，所以
+  // 攒下的放在模块上；口径一变（signature 不同、serial 加一）就清零。
+  const CONSOLE_PAGE_SIZE = 50;
+  const consoleList = { signature: '', extra: [], loaded: 1, local: CONSOLE_PAGE_SIZE, loading: false, serial: 0 };
+  let consoleListObserver = null;
+  // 当前这一份清单的重画函数。分页结果是异步回来的，那时整页可能已经随快照重建过
+  // （旧闭包里的列表已经不在文档上）：回调一律找「现在这一份」，不找发请求那一份。
+  let repaintConsoleList = null;
+  // 手机原来那一页「最近任务」（?view=recent）并进了控制台的清单。旧书签、旧通知链接
+  // 落到这里时先改写成控制台 —— 本模块排在 air.js 前面，它读路由时看到的已经是新地址。
+  {
+    const params = new URLSearchParams(root.location.search);
+    if (params.get('view') === 'recent') {
+      params.set('view', 'overview');
+      root.history.replaceState(root.history.state, '', `${root.location.pathname}?${params}${root.location.hash}`);
+    }
+  }
   // 控制台两种看法，顶上一道 tab 直接切：tasks = 以任务为主（待办流 + 目录 + 更多，
   // 原样）；dirs = 只铺目录卡，点一张就在当前窗口开那个目录（盖在控制台上的一层，
   // 关掉回到这里 —— 见 air-navigation.js 的 is-console-layer）。选择记在本机：
@@ -285,6 +305,7 @@
     // 时代的少量记录，拿它当「跑成功了吗」会筛出一个几乎空、且越用越旧的清单。
     const rows = (tasks || [])
       .filter(task => status === 'all' ? true
+        : status === 'recent' ? task.status !== 'archived'
         : status === 'archived' ? task.status === 'archived'
           : status === 'today' ? doneToday(task)
             : status === 'succeeded' ? taskStatus(task) === 'succeeded'
@@ -336,6 +357,7 @@
   /** 一条任务行：徽标 + 标题 + 目录/阶段 + 时间；删除是独立按钮，避免按钮嵌套。 */
   function taskRow(task, context, options = {}) {
     const row = make('div', null, 'admin-recent-row');
+    row.dataset.taskId = task.id;
     const openTask = () => {
       options.onOpen?.();
       context.navigate(context.directoryId, task.id);
@@ -477,37 +499,35 @@
     const homeSearchFocus = document.activeElement?.id === 'console-home-search';
     const homeSearchCaret = homeSearchFocus ? document.activeElement.selectionStart : null;
     const controlFocus = document.activeElement?.id, controlCaret = document.activeElement?.selectionStart;
-    // Compact filters accompany the complete task list below the attention cards.
-    const stats = make('div', null, 'admin-stats console-filter-tabs');
-    const tiles = [
-      ['running', t('airAdminTileRunning'), (counts?.running ?? executing.length), running.size ? t('airAdminDirectoriesRunning', { n: running.size }) : t('airAdminTileRunningIdle'), 'green'],
-      ['needs', t('airNeedsMeFilter'), (counts?.needs ?? todos.length), (counts?.needs ?? todos.length) ? t('airAdminTileWaitingDetail') : t('airAdminNothingPending'), (counts?.needs ?? todos.length) ? 'amber' : ''],
-      ['error', t('airAdminTileError'), (counts?.error ?? failed.length), (counts?.error ?? failed.length) ? t('airAdminTileErrorDetail') : t('airAdminTileErrorNone'), (counts?.error ?? failed.length) ? 'red' : ''],
-      ['today', t('airAdminTileToday'), (counts?.today ?? finished.length), t('airAdminTileTodayDetail'), 'blue'],
-      ['all', t('airAdminTileAll'), (counts?.open ?? active.length), t('airAdminTileAllDetail', { n: (counts?.total ?? tasks.length) }), 'purple'],
-    ];
-    const tileButtons = new Map();
-    for (const [view, label, count, detail, tone] of tiles) {
-      const card = statCard(label, count, detail, tone, () => {
-        consoleFilter.view = view; consoleFilter.page = 1;
-        paintDrawer();
+    // ── 任务清单：控制台里唯一一份任务列表，不截条数 ───────────────────────
+    // 原来的「正在运行 5 条 / 最近使用 8 条」、手机那张 3 条小卡、「更多」里的统计格与
+    // 完整列表、以及手机单独那一页「最近任务」都是同一份数据的缩小版，现在合成这一份：
+    // 筛选格带数，搜索走顶栏那个输入框，服务端一页 50 条、滚到底自动接下一页。
+    // 只有上面「等我处理」那一段仍然限条（它要的是「现在先看哪几条」）。
+    const listPanel = make('section', null, 'admin-panel console-task-panel');
+    listPanel.id = 'console-task-panel';
+    const chips = make('div', null, 'console-task-filters');
+    chips.id = 'console-task-filters';
+    chips.setAttribute('role', 'group');
+    chips.setAttribute('aria-label', t('airAdminFilterByStatus'));
+    const chipCounts = {
+      needs: counts?.needs ?? todos.length,
+      todo: counts?.todo ?? filterTasks(tasks, { status: 'todo' }).length,
+      today: counts?.today ?? finished.length,
+      running: counts?.running ?? executing.length,
+      error: counts?.error ?? failed.length,
+      all: counts?.total ?? tasks.length,
+    };
+    for (const [status, key] of CONSOLE_FILTERS) {
+      const chip = action(t(key), () => {
+        if (consoleFilter.status === status) return;
+        consoleFilter.status = status;
+        paintTaskList();
       });
-      card.dataset.view = view;
-      tileButtons.set(view, card);
-      stats.append(card);
+      chip.dataset.filter = status;
+      if (status in chipCounts) chip.append(make('b', String(chipCounts[status])));
+      chips.append(chip);
     }
-    // 展开区：四格共用一个面板，换格只换标题和清单。「全部」多一排搜索与筛选 ——
-    // 它就是原来目录下面那张「全部任务」，搬上来之后底下不再重复一份。
-    const drawer = make('section', null, 'admin-panel console-filter-panel');
-    drawer.id = 'console-filter-panel';
-    const drawerHead = make('div', null, 'admin-panel-head');
-    drawerHead.append(make('div'));
-    const drawerTitle = make('h3');
-    drawerHead.firstChild.append(make('span', t('airAllProjects'), 'eyebrow'), drawerTitle);
-    const drawerNote = make('span', '', 'admin-panel-note');
-    drawerNote.id = 'console-task-note';
-    const drawerMeta = make('div', null, 'admin-panel-meta');
-    drawerMeta.append(drawerNote);
     const sortSwitch = make('div', null, 'task-sort-switch console-task-sort');
     sortSwitch.id = 'console-task-sort';
     sortSwitch.setAttribute('role', 'group');
@@ -516,30 +536,15 @@
       const button = action(t(key), () => {
         if (consoleFilter.sort === sort) return;
         consoleFilter.sort = sort;
-        consoleFilter.page = 1;
         paintTaskList();
       });
       button.dataset.sort = sort;
       sortSwitch.append(button);
     }
-    drawerHead.append(sortSwitch, drawerMeta);
+    const listNote = make('span', '', 'admin-panel-note');
+    listNote.id = 'console-task-note';
 
     const controls = make('div', null, 'admin-task-controls');
-    const search = make('input');
-    search.type = 'search';
-    search.id = 'console-task-search';
-    search.placeholder = t('airAdminSearchPlaceholder');
-    search.setAttribute('aria-label', t('airAdminSearchTasksLabel'));
-    search.value = consoleFilter.query;
-    const statusPick = make('select');
-    statusPick.id = 'console-task-status';
-    statusPick.setAttribute('aria-label', t('airAdminFilterByStatus'));
-    for (const [value, text] of [['needs', t('airNeedsMeFilter')], ['todo', t('airTodoFilter')], ['open', t('airAdminFilterOpen')], ['all', t('airAdminFilterAll')], ['archived', t('airAdminStatusArchived')]]) {
-      const option = make('option', text);
-      option.value = value;
-      statusPick.append(option);
-    }
-    statusPick.value = consoleFilter.status;
     const scopePick = make('select');
     scopePick.id = 'console-task-scope';
     scopePick.setAttribute('aria-label', t('airSearchScopeLabel'));
@@ -562,43 +567,23 @@
     }
     dirPick.value = directories.some(d => d.id === consoleFilter.dir) ? consoleFilter.dir : 'all';
     consoleFilter.dir = dirPick.value;
-    controls.append(search, statusPick, scopePick, dirPick);
+    controls.append(dirPick, scopePick, sortSwitch, listNote);
     const allList = make('div', null, 'admin-recent-list console-filter-list');
     allList.id = 'console-task-list';
-    const pager = make('nav', null, 'directory-task-pager console-task-pager');
-    pager.id = 'console-task-pager';
-    pager.setAttribute('aria-label', t('airTaskPagination'));
-    const prev = action(t('airTaskPagePrev'), () => goPage(-1));
-    prev.id = 'console-task-prev';
-    const pageLabel = make('span');
-    pageLabel.id = 'console-task-page';
-    const next = action(t('airTaskPageNext'), () => goPage(1));
-    next.id = 'console-task-next';
-    pager.append(prev, pageLabel, next);
-    drawer.append(drawerHead, controls, allList, pager);
+    // 「加载更多」既是滚到底自动接页的哨兵（IntersectionObserver 盯它），也是看不见
+    // 滚动事件时（键盘、读屏）的手动入口。
+    const loadMoreButton = action(t('airLoadMore'), () => loadMore(), 'console-task-more');
+    loadMoreButton.id = 'console-task-more';
+    loadMoreButton.hidden = true;
+    listPanel.append(chips, controls, allList, loadMoreButton);
 
-    // 点走一条只是 navigate —— 控制台从前是浮层，得先把那层收掉再跳；现在它自己
-    // 就是一页，navigate 会把模式切回 tasks，不需要谁再补一手。
     const openRow = (task, extra = {}) => taskRow(task, context, extra);
-    // 只重画列表，不重画面板：每敲一个字就 replaceChildren 的话，输入框会在第一次
-    // 按键后失去焦点。筛选状态存在模块里，所以重开面板还是同一份筛选。
     // 全文检索控制器。构造时就会跑一次 onChange，所以先声明成 null：那一刻
     // paintTaskList 只能走本地筛选，等控制器拿到结果再覆盖（见下面的赋值）。
     let fullText = null;
-    let pageCount = 1;
-    function goPage(delta) {
-      const target = consoleFilter.page + delta;
-      if (target < 1 || target > pageCount) return;
-      consoleFilter.page = target;
-      paintDrawer();
-      root.requestAnimationFrame(() => {
-        const scroller = el('console-center');
-        if (scroller) scroller.scrollTop += drawerHead.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      });
-    }
+    const readVisits = () => { try { return JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}') || {}; } catch (_) { return {}; } };
     function sortRows(rows) {
-      let visits = {};
-      try { visits = JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}') || {}; } catch (_) {}
+      const visits = readVisits();
       const messageAt = task => Number(task.lastMessageAt || task.updatedAt || 0);
       const sortAt = task => consoleFilter.sort === 'visit' ? Number(visits[task.id] || 0) : messageAt(task);
       // 等我处理 / 待办按「最早的消息时间在前」；其余清单仍是最近动过的在前。
@@ -607,96 +592,98 @@
         || direction * (messageAt(b.task) - messageAt(a.task))
         || String(a.task.id).localeCompare(String(b.task.id)));
     }
-    function paintTaskList() {
-      if (consoleFilter.view !== 'all') return;
-      // 有全文结果就按相关度排（标题没命中、正文命中的任务因此能被找到）；没有
-      // （还没回来 / 报错 / 查询为空）就退回原来的本地标题筛选，面板从不空着。
-      // 有查询时口径换成 searchFilter()：服务端那次和「还没回来/报错」的本地退路
-      // 必须同一份口径，否则同一句话在结果回来前后能搜出两种条数。
+    // 这一次清单的完整口径（也是「攒下来的后续页还算不算数」的签名）。有查询时口径换成
+    // searchFilter()：服务端那次和「还没回来/报错」的本地退路必须同一份口径。
+    function listQuery() {
       const querying = !!consoleFilter.query.trim();
       const filter = querying ? searchFilter(consoleFilter) : consoleFilter;
-      const ranked = querying
-        ? rankedRows(tasks, filter, context.directoryName, fullText?.results())
-        : null;
-      const rows = ranked || filterTasks(tasks, filter, context.directoryName).map(task => ({ task }));
-      // 正文命中时保留相关度；否则用与目录首页相同的消息/本机访问时钟。
-      if (!ranked) sortRows(rows);
       const results = querying ? fullText?.results() : null;
-      const live = root.MultiCCAirLive;
-      const remote = live?.page('console', {
+      return { querying, filter, results, options: {
         dirId: consoleFilter.dir === 'all' ? '' : consoleFilter.dir, status: filter.status,
         query: results ? '' : filter.query, ids: root.MultiCCAirSync?.searchIds(results),
-        page: consoleFilter.page, sort: consoleFilter.sort,
-        visits: (() => { try { return JSON.parse(root.localStorage.getItem('air:task-visited-at') || '{}'); } catch (_) { return {}; } })(),
-      });
-      pageCount = remote?.pages ?? Math.max(1, Math.ceil(rows.length / TASK_PAGE_SIZE));
-      consoleFilter.page = Math.min(Math.max(1, consoleFilter.page), pageCount);
-      const start = (consoleFilter.page - 1) * TASK_PAGE_SIZE;
-      const shown = remote && !remote.loading ? remote.tasks.map(task => ({ task })) : rows.slice(start, start + TASK_PAGE_SIZE);
+        sort: filter.status === 'error' ? 'oldest' : consoleFilter.sort, limit: CONSOLE_PAGE_SIZE, visits: readVisits(),
+      } };
+    }
+    let hasMore = false;
+    function paintTaskList() {
+      const { querying, filter, results, options } = listQuery();
+      const signature = JSON.stringify(options);
+      if (consoleList.signature !== signature) {
+        Object.assign(consoleList, { signature, extra: [], loaded: 1, local: CONSOLE_PAGE_SIZE, loading: false, serial: consoleList.serial + 1 });
+      }
+      // 第 1 页走实时同步（状态变了当场就变）；后续页是 loadMore 攒下的，逐条换成
+      // 快照里最新的那份，按 id 去重（翻页期间有新任务插进来，页边界会错开一条）。
+      // 读不到（离线 / 旧 server 没有分页接口）就退回快照里那份本地数据，清单从不空着。
+      // 首次换口径时那一下还在路上：先用本地数据顶着，不让清单闪成空白。回来之后只
+      // 重画清单（不惊动整页），所以给它一个自己的回调。
+      const remote = root.MultiCCAirLive?.page('console', { ...options, page: 1 }, () => repaintConsoleList?.());
+      const first = remote && !remote.errorAt && !(remote.loading && !remote.tasks.length) ? remote : null;
+      let shown, total;
+      if (first) {
+        const fresh = new Map(tasks.map(task => [task.id, task]));
+        const seen = new Set();
+        shown = [...first.tasks, ...consoleList.extra.map(task => fresh.get(task.id) || task)]
+          .filter(task => !seen.has(task.id) && seen.add(task.id)).map(task => ({ task }));
+        total = first.total;
+        hasMore = !first.loading && consoleList.loaded < first.pages;
+        consoleList.remote = true;
+      } else {
+        consoleList.remote = false;
+        // 没有实时同步（旧 server / 测试夹具）：本地筛完再按同样的步长往下放。
+        const ranked = querying ? rankedRows(tasks, filter, context.directoryName, results) : null;
+        const rows = ranked || filterTasks(tasks, filter, context.directoryName).map(task => ({ task }));
+        if (!ranked) sortRows(rows);
+        total = rows.length;
+        shown = rows.slice(0, consoleList.local);
+        hasMore = shown.length < rows.length;
+      }
       allList.replaceChildren(...shown.map(({ task, snippet }) => openRow(task, { deletable: true, snippet })));
-      if (!shown.length && !remote?.loading) allList.append(make('p', t('airAdminNoMatchingTasks'), 'admin-empty'));
-      drawerNote.textContent = t('airAdminNItems', { n: remote && !remote.loading ? remote.total : rows.length });
-      pageLabel.textContent = t('airTaskPageOf', { page: consoleFilter.page, total: pageCount });
-      prev.disabled = consoleFilter.page <= 1;
-      next.disabled = consoleFilter.page >= pageCount;
-      pager.hidden = pageCount <= 1;
+      if (!shown.length && !first?.loading) allList.append(make('p', t('airAdminNoMatchingTasks'), 'admin-empty'));
+      listNote.textContent = t('airAdminNItems', { n: total });
+      loadMoreButton.hidden = !hasMore;
+      loadMoreButton.disabled = consoleList.loading;
+      for (const chip of chips.children) chip.setAttribute('aria-pressed', String(chip.dataset.filter === consoleFilter.status));
       for (const button of sortSwitch.children) button.setAttribute('aria-pressed', String(button.dataset.sort === consoleFilter.sort));
     }
-    // 四个固定过滤项的清单：口径就是上面那几格数字用的同一份数组，数字和清单不会分叉。
-    const fixedLists = {
-      running: [executing, 'airAdminNoRunningTasks'],
-      needs: [todos, 'airAdminNoAttentionTasks'],
-      error: [failed, 'airAdminNoErrorTasks'],
-      today: [finished, 'airAdminNoDoneToday'],
-    };
-    function paintDrawer() {
-      const view = consoleFilter.view;
-      for (const [key, card] of tileButtons) {
-        card.classList.toggle('selected', key === view);
-        card.setAttribute('aria-expanded', String(key === view));
+    // 接下一页。后续页不进实时同步的页缓存（它只有 16 格，攒十几页会把首页那几格
+    // 挤掉、互相淘汰重拉），直接问 /api/air/page；筛选一换（serial 变了）迟到的结果作废。
+    async function loadMore() {
+      if (!hasMore || consoleList.loading) return;
+      if (!consoleList.remote) { consoleList.local += CONSOLE_PAGE_SIZE; paintTaskList(); return; }
+      const { options } = listQuery();
+      const serial = consoleList.serial, next = consoleList.loaded + 1;
+      const dayStart = new Date().setHours(0, 0, 0, 0);
+      const params = new URLSearchParams(Object.entries({ ...options, ids: options.ids?.join(','), page: next, dayStart })
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => [key, typeof value === 'object' ? JSON.stringify(value) : String(value)]));
+      consoleList.loading = true;
+      loadMoreButton.disabled = true;
+      try {
+        const result = await context.api('/api/air/page?' + params);
+        if (consoleList.serial !== serial) return;
+        consoleList.extra.push(...(result?.tasks || []));
+        consoleList.loaded = next;
+      } catch (error) {
+        if (consoleList.serial === serial) context.notice?.(error.message);
+      } finally {
+        if (consoleList.serial === serial) consoleList.loading = false;
+        repaintConsoleList?.();
       }
-      drawer.hidden = !view;
-      if (!view) return;
-      drawer.dataset.view = view;
-      drawerTitle.textContent = tiles.find(([key]) => key === view)[1];
-      controls.hidden = view !== 'all';
-      sortSwitch.hidden = view !== 'all';
-      pager.hidden = view !== 'all' || pageCount <= 1;
-      if (view === 'all') { paintTaskList(); return; }
-      const [list, emptyKey] = fixedLists[view];
-      const remote = root.MultiCCAirLive?.page('console', { status: view, page: consoleFilter.page, sort: view === 'error' ? 'oldest' : 'message' });
-      if (remote) {
-        pageCount = remote.pages; consoleFilter.page = remote.page;
-        prev.disabled = remote.page <= 1; next.disabled = remote.page >= remote.pages;
-        pager.hidden = remote.pages <= 1;
-        pageLabel.textContent = t('airTaskPageOf', { page: remote.page, total: remote.pages });
-      }
-      const shown = remote && !remote.loading ? remote.tasks : list.slice(0, TASK_LIST_LIMIT);
-      allList.replaceChildren(...shown.map(task => openRow(task)));
-      if (!shown.length && !remote?.loading) allList.append(make('p', t(emptyKey), 'admin-empty'));
-      drawerNote.textContent = t('airAdminNItems', { n: remote?.total ?? list.length });
     }
-    search.oninput = () => { consoleFilter.query = search.value; consoleFilter.page = 1; paintTaskList(); };
-    // 搜索框同时挂两条路：本地筛选立刻重画（上面那条），全文结果到了再按相关度覆盖
-    // 一次。过滤条件不发给服务端 —— 「进行中」这类口径只此一份，命中结果回到这里
-    // 再按同一份 filterTasks 收窄，服务端只负责「哪些任务的正文里出现过这些词」。
-    fullText = window.MultiCCTaskSearch?.attach(search, {
-      request: path => context.api(path),
-      limit: TASK_LIST_LIMIT,
-      fullText: () => consoleFilter.fullText,
-      onChange: () => paintTaskList(),
-    });
-    statusPick.onchange = () => { consoleFilter.status = statusPick.value; consoleFilter.page = 1; paintTaskList(); };
-    // 搜索范围换了要重新问一次服务端（两条语料的召回不同），不能只重画：
-    // 缓存按「查询词 + 范围」分开，所以换回来是立刻的。
+    repaintConsoleList = () => { if (allList.isConnected) paintTaskList(); };
+    consoleListObserver?.disconnect();
+    consoleListObserver = typeof root.IntersectionObserver === 'function'
+      ? new root.IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadMore(); }, { rootMargin: '240px' })
+      : null;
+    consoleListObserver?.observe(loadMoreButton);
+    // 搜索框同时挂两条路：本地筛选立刻重画，全文结果到了再按相关度覆盖一次。过滤条件
+    // 不发给服务端 —— 服务端只负责「哪些任务的正文里出现过这些词」。
     scopePick.onchange = () => {
       consoleFilter.fullText = scopePick.value === 'full';
-      consoleFilter.page = 1;
       fullText?.refresh();
       paintTaskList();
     };
-    dirPick.onchange = () => { consoleFilter.dir = dirPick.value; consoleFilter.page = 1; paintTaskList(); };
-    paintDrawer();
+    dirPick.onchange = () => { consoleFilter.dir = dirPick.value; paintTaskList(); };
 
     // ── 目录首页：顶栏 / 待办流 / 目录网格 / 更多 ───────────────────────
     // 这一页现在是「所有目录的目录首页」：顶栏是全局搜索与新建，上面是跨目录的
@@ -733,6 +720,9 @@
         consoleView = view;
         try { root.localStorage.setItem(CONSOLE_VIEW_KEY, view); } catch (_) { /* 无痕模式：只在本页记住 */ }
         applyView();
+        // 输入框换成了另一份词：全文结果按新词重取，清单与网格按新词重画。
+        fullText?.refresh();
+        paintFlow(); paintTaskList(); paintDirectories();
       };
       viewSwitch.append(tab);
     }
@@ -744,22 +734,11 @@
     attentionHead.append(make('h2', t('airTodoSectionTitle')), action(t('airRecentAll'), () => setMode('attention')));
     const cards = make('div', null, 'console-priority-grid');
     attention.append(attentionHead, cards);
-
-    const runningPanel = make('section', null, 'admin-panel console-running');
-    const runningHead = make('div', null, 'admin-panel-head');
-    runningHead.append(make('h3', t('airAdminTileRunning')));
-    const runningList = make('div', null, 'admin-recent-list console-running-list');
-    runningPanel.append(runningHead, runningList);
-
-    const recentPanel = make('section', null, 'admin-panel console-recent');
-    const recentHead = make('div', null, 'admin-panel-head');
-    recentHead.append(make('h3', t('airRecentTasks')));
-    const recentList = make('div', null, 'admin-recent-list console-recent-list');
-    recentPanel.append(recentHead, recentList);
-    flow.append(attention, runningPanel, recentPanel);
+    flow.append(attention, listPanel);
 
     // 目录卡网格：二三十个目录直接平铺，不分页。卡片与 air.js 的目录库同一种
     // （.directory-card：按钮 + 备忘入口），排序用与 App 共享的 ui-layout 语义。
+    // 它只在「按目录」看法里出现（任务看法不再在清单下面再铺一遍目录）。
     const directoryPanel = make('section', null, 'admin-panel console-directories');
     const directoryHead = make('div', null, 'admin-panel-head');
     const directoryTitle = make('h3', t('airWorkspace'));
@@ -770,23 +749,13 @@
     directoryGrid.id = 'console-directory-grid';
     directoryPanel.append(directoryHead, directoryGrid);
 
-    // 原控制台的统计格与完整任务清单收进底部「更多」：首屏留给待办流和目录。
-    const more = make('details', null, 'console-more');
-    more.id = 'console-more';
-    more.append(make('summary', t('more')));
-    const moreBody = make('div', null, 'console-more-body');
-    moreBody.append(stats, drawer);
-    more.append(moreBody);
-    more.open = consoleMoreOpen;
-    more.addEventListener('toggle', () => { consoleMoreOpen = more.open; });
-
-    // 手机那张「最近任务 + 筛选」卡挂在这里（air-mobile.js 的 paintConsole）。
+    // 手机上资料入口（文档 / 记忆 / 任务图）挂在这里（air-mobile.js 的 paintConsole）。
     const mobileSlot = make('div', null, 'console-mobile-slot');
     mobileSlot.id = 'console-mobile-slot';
 
     const home = make('section', null, 'console-home');
     home.id = 'console-home';
-    home.append(top, flow, mobileSlot, directoryPanel, more);
+    home.append(top, flow, directoryPanel, mobileSlot);
     content.replaceChildren(home);
     // 目录看法只留顶栏与目录网格（其余几块由 air-navigation.css 按 data-view 让开，
     // 节点不拆：切回任务看法不用重画，手机那张卡也照旧挂着）；搜索框跟着改搜目录。
@@ -794,15 +763,9 @@
       home.dataset.view = consoleView;
       for (const tab of viewSwitch.children) tab.setAttribute('aria-selected', String(tab.dataset.consoleView === consoleView));
       homeSearch.placeholder = t(consoleView === 'dirs' ? 'airSearchNameOrPath' : 'airAdminSearchPlaceholder');
+      homeSearch.value = consoleView === 'dirs' ? consoleHomeQuery : consoleFilter.query;
     }
     applyView();
-
-    // 「最近使用」按最后一次更新时间倒序；已经出现在上面两段的（待办 /
-    // 正在运行）不在这里重复 —— 首屏同一件事只说一次。
-    const seenAbove = new Set([...todos, ...executing].map(task => task.id));
-    const recentTasks = tasks
-      .filter(task => task.status !== 'archived' && !seenAbove.has(task.id))
-      .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
 
     const layout = root.MultiCCUiLayout;
     const needleNow = () => consoleHomeQuery.trim().toLowerCase();
@@ -851,8 +814,10 @@
         : directories;
     }
 
+    // 「等我处理」那一段：限条（张数还要按可用高度裁），完整清单在 ?view=attention。
+    // 顶栏搜索在任务看法里同时收窄这一段与下面的清单。
     function paintFlow() {
-      const needle = needleNow();
+      const needle = consoleFilter.query.trim().toLowerCase();
       const live = root.MultiCCAirLive;
       const preview = (key, status, limit, fallback) => {
         const page = live?.page(key, { status, query: needle, limit });
@@ -880,14 +845,6 @@
       // 不让「等我处理」把目录和「更多」顶出首屏。
       requestAnimationFrame(() => { if (cards.isConnected) fitPriorityCards(cards); });
 
-      const runningNow = preview('home-running', 'running', 5, executing);
-      runningList.replaceChildren(...runningNow.slice(0, 5).map(task => openRow(task)));
-      if (!runningNow.length) runningList.append(empty(needle ? 'airAdminNoMatchingTasks' : 'airAdminNoRunningTasks'));
-
-      const recentNow = preview('home-recent', 'recent', 30, recentTasks)
-        .filter(task => !loud.some(t => t.id === task.id) && !runningNow.some(t => t.id === task.id));
-      recentList.replaceChildren(...recentNow.slice(0, HOME_RECENT_LIMIT).map(task => openRow(task)));
-      if (!recentNow.length) recentList.append(empty('airAdminNoMatchingTasks'));
     }
 
     // 目录顺序：服务端 ui-layout 的手动顺序在前，没排过的保持快照顺序缀在后面
@@ -927,14 +884,24 @@
       });
     }
 
+    // 顶栏这一个搜索框按看法分工：任务看法搜任务（清单走全文检索，「等我处理」按
+    // 标题收窄），目录看法搜目录名与路径。两份词各记各的，切看法时换回对应那份。
+    // 只重画清单 / 网格，输入框原地不动 —— 每敲一个字都换掉整页，输入框会在第一个
+    // 键之后失去焦点。
     homeSearch.oninput = () => {
-      consoleHomeQuery = homeSearch.value;
-      // 只重画三个清单和目录网格，输入框原地不动 —— 每敲一个字都换掉整页，
-      // 输入框会在第一个键之后失去焦点。
+      if (consoleView === 'dirs') { consoleHomeQuery = homeSearch.value; paintDirectories(); return; }
+      consoleFilter.query = homeSearch.value;
       paintFlow();
-      paintDirectories();
+      paintTaskList();
     };
+    fullText = window.MultiCCTaskSearch?.attach(homeSearch, {
+      request: path => context.api(path),
+      limit: TASK_LIST_LIMIT,
+      fullText: () => consoleView !== 'dirs' && consoleFilter.fullText,
+      onChange: () => paintTaskList(),
+    });
     paintFlow();
+    paintTaskList();
     paintDirectories();
     watchPriorityFit(cards);
     // 目录排布在服务端 ui-layout.json 里；首帧先按默认顺序画出来，拿到排布再覆盖。
@@ -943,7 +910,7 @@
     if (homeSearchFocus) {
       try { homeSearch.focus(); homeSearch.setSelectionRange?.(homeSearchCaret, homeSearchCaret); } catch (_) { /* noop */ }
     }
-    if (['console-task-search', 'console-task-status', 'console-task-scope', 'console-task-dir'].includes(controlFocus)) {
+    if (['console-task-scope', 'console-task-dir'].includes(controlFocus)) {
       const control = el(controlFocus); control?.focus();
       if (typeof controlCaret === 'number') control?.setSelectionRange?.(controlCaret, controlCaret);
     }
@@ -1697,12 +1664,11 @@
     bindCompositionGuard();
     currentContext = context;
     // 控制台那两页的正文就是搜索框所在的地方：组合期重建会把输入法打断，先欠着。
-    if (consoleComposing && (mode === 'overview' || mode === 'recent')) {
+    if (consoleComposing && mode === 'overview') {
       consoleRenderPending = true;
       activeMode = mode;
       return;
     }
-    if (mode === 'recent') { root.MultiCCAirMore?.park(); activeMode = mode; setActions(); return root.MultiCCAirMobile?.renderRecent(context); }
     if (mode === 'overview') {
       root.MultiCCAirMore?.park();
       activeMode = mode;
@@ -1753,11 +1719,20 @@
   }
 
   root.MultiCCAirAdmin = Object.freeze({
-    modes: new Set(['overview', 'recent', 'attention', 'docs', 'memory', 'settings', ...Object.keys(legacyPanels)]),
+    modes: new Set(['overview', 'attention', 'docs', 'memory', 'settings', ...Object.keys(legacyPanels)]),
     render,
     // The shell's console badge shows the same set the panel's first section does.
     todoTasks,
-    showAllTasks: () => { consoleFilter.view = 'all'; consoleFilter.status = 'all'; consoleFilter.query = ''; consoleFilter.dir = 'all'; },
+    showAllTasks: () => { consoleFilter.status = 'all'; consoleFilter.query = ''; consoleFilter.dir = 'all'; },
+    // 手机底部导航的「控制台 / 项目」两项就是控制台的两种看法（页内那道 tab 在手机上
+    // 藏着）：由 air-mobile.js 切，和桌面 tab 记在同一个键上。
+    consoleView: () => consoleView,
+    setConsoleView: view => {
+      consoleView = view === 'dirs' ? 'dirs' : 'tasks';
+      try { root.localStorage.setItem(CONSOLE_VIEW_KEY, consoleView); } catch (_) { /* 无痕模式 */ }
+    },
+    // 清单按某个项目在看时，新建任务默认落到那个项目（弹窗里仍可改）。
+    consoleDirectory: () => (consoleFilter.dir === 'all' ? null : consoleFilter.dir),
     refresh: context => render(activeMode || 'overview', context, true),
     bindServiceDialog,
     // 状态与「在不在跑」的唯一判定，侧栏（air.js）和控制台共用这一份，所以一条

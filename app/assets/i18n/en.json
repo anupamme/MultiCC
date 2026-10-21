@@ -1399,6 +1399,7 @@
   "airAdminNExecuting": "{n} running",
   "airAdminNInProgress": "{n} active",
   "airAdminNItems": "{n} items",
+  "airLoadMore": "Load more",
   "airAdminNTaskCount": "{n} tasks",
   "airAdminNeedsAttention": "Needs attention",
   "airAdminNewTask": "New task",

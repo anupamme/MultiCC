@@ -79,28 +79,31 @@ test('Air 同步：1277 张卡按页读取，轻量校准不重画，推送及�
       '数据变了必须更新到界面上：' + await page.evaluate(rowText));
     assert.deepEqual(await page.evaluate('window.__errors || []'), []);
     await page.screenshot('01-air-incremental-sync');
-    const mobileTasks = Array.from({ length: 45 }, (_, index) => ({ id: 'm' + index, title: '手机任务 ' + index,
+    // 手机原来那一页「最近任务」并进了控制台的清单：一页 50 条、滚到底接下一页，不截条数。
+    const mobileTasks = Array.from({ length: 120 }, (_, index) => ({ id: 'm' + index, title: '手机任务 ' + index,
       dirId: 'd1', status: 'active', runState: index === 0 ? 'error' : 'idle', updatedAt: 1000 + index }));
     const mobileSnapshot = () => ({ ok: true, directories: [{ id: 'd1', name: 'MultiCC', path: '/projects/multicc' }],
       tasks: mobileTasks, sessions: [], clis: ['codex'], migration: { errors: [] } });
     body = JSON.stringify(mobileSnapshot()); await sleep(200);
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await page.navigate('/air?view=recent');
-    assert.ok(await page.waitFor(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length===20`));
-    const mobilePager = '.mobile-recent-panel .directory-task-pager';
-    assert.ok(await page.waitFor(`document.querySelector('${mobilePager}')?.textContent.includes('3')`));
-    await page.evaluate(`document.querySelector('${mobilePager} button:last-child').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-task-list strong')?.textContent==='手机任务 24'`));
-    await page.evaluate(`document.querySelector('${mobilePager} button:last-child').click()`);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length===5`));
+    const rows = `document.querySelectorAll('#console-task-list > *').length`;
+    assert.ok(await page.waitFor(`${rows}===50`, { timeoutMs: 8000 }), '旧 view=recent 落到控制台，第一页 50 条');
+    assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview');
+    await page.evaluate(`document.getElementById('console-task-more').scrollIntoView()`);
+    assert.ok(await page.waitFor(`${rows}===100`, { timeoutMs: 8000 }), '滚到底接第二页');
+    await page.evaluate(`document.getElementById('console-task-more').scrollIntoView()`);
+    assert.ok(await page.waitFor(`${rows}===120`, { timeoutMs: 8000 }), '再接第三页，120 条全在');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-more').hidden`), true);
     await page.evaluate(`MultiCCAirLive.pause()`);
     mobileTasks[0].title = '断线后恢复的任务'; body = JSON.stringify(mobileSnapshot()); await sleep(250);
-    assert.equal(await page.evaluate(`document.querySelector('.mobile-task-list')?.textContent.includes('断线后恢复的任务')`), false);
+    assert.equal(await page.evaluate(`document.getElementById('console-task-list')?.textContent.includes('断线后恢复的任务')`), false);
     await page.evaluate(`MultiCCAirLive.resume()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-task-list')?.textContent.includes('断线后恢复的任务')`));
-    await page.evaluate(`document.querySelector('.mobile-task-filters [data-filter="error"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length===1`));
-    assert.equal(await page.evaluate(`document.querySelector('.mobile-task-list strong').textContent`), '断线后恢复的任务');
+    assert.ok(await page.waitFor(`document.getElementById('console-task-list')?.textContent.includes('断线后恢复的任务')`, { timeoutMs: 8000 }),
+      '接上来的后续页也跟着同步更新');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="error"]').click()`);
+    assert.ok(await page.waitFor(`${rows}===1`, { timeoutMs: 8000 }));
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-list strong').textContent`), '断线后恢复的任务');
     assert.equal(page.requests.filter(r => r.path === '/api/air').length, 0);
     await page.screenshot('02-air-mobile-page-reconnect');
   });

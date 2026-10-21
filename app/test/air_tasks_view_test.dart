@@ -1035,13 +1035,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('最近任务'),
-      ),
-    );
-    await tester.pumpAndSettle();
+    // 原「最近任务」页并进了控制台，一打开就落在这份清单上。
 
     // 钉住的 t5 排在 t1 上面 —— t1 才是 updatedAt 最新的那一条。
     final pinnedRow = find.byKey(const ValueKey('air-task-t5'));
@@ -1147,10 +1141,11 @@ void main() {
     expect(bodies.single, {'taskId': 't1'});
     expect(find.text('已 Pin 住「任务 1」'), findsOneWidget);
 
+    // 原「最近任务」页并进了控制台下段的清单。
     await tester.tap(
       find.descendant(
         of: find.byType(NavigationBar),
-        matching: find.text('最近任务'),
+        matching: find.text('控制台'),
       ),
     );
     await tester.pumpAndSettle();

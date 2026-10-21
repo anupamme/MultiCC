@@ -63,10 +63,7 @@
 .console-home-actions button { white-space: nowrap; }
 .console-flow { display: flex; flex-direction: column; gap: 18px; }
 .console-flow .console-priority { margin-bottom: 0; }
-.console-flow .console-running, .console-flow .console-recent { padding: 14px 18px; }
 .console-flow .admin-panel-head { margin-bottom: 6px; }
-.console-running-list, .console-recent-list { min-width: 0; }
-.console-recent .admin-empty, .console-running .admin-empty { padding: 6px 4px; }
 .console-mobile-slot:empty { display: none; }
 .console-directories { margin-top: 22px; }
 .console-directories .admin-panel-head { margin-bottom: 6px; }
@@ -80,16 +77,21 @@
 .console-directory-grid strong { margin-bottom: 7px; font-size: 15px; }
 .console-directory-grid small + small { margin-top: 9px; color: #3e75ad; }
 .console-directory-grid .directory-memo { align-self: flex-end; padding: 4px 12px; color: var(--accent-strong); font-size: 12px; }
-.console-more { margin-top: 26px; border-top: 1px solid var(--hairline); }
-.console-more > summary { padding: 14px 2px 6px; color: var(--muted); font-size: 13px; cursor: pointer; }
-.console-more-body { padding-top: 10px; }
-.console-more-body .admin-stats { margin-top: 6px; }
 /* 控制台的两种看法（air-admin.js 的 consoleView）：目录看法只留顶栏与目录网格。 */
 .console-view-switch { flex-shrink: 0; margin: 0; }
+/* 任务看法 = 等我处理 + 一份不截条数的清单；目录看法 = 目录网格。两边互相让位。 */
 .console-home[data-view="dirs"] > .console-flow,
 .console-home[data-view="dirs"] > .console-mobile-slot,
-.console-home[data-view="dirs"] > .console-more { display: none; }
+.console-home[data-view="tasks"] > .console-directories { display: none; }
 .console-home[data-view="dirs"] > .console-directories { margin-top: 0; }
+.console-task-panel { display: flex; flex-direction: column; gap: 10px; }
+.console-task-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.console-task-filters button { min-height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; }
+.console-task-filters button b { margin-left: 5px; color: var(--muted); font-weight: 600; }
+.console-task-filters button[aria-pressed="true"] { border-color: var(--accent); background: var(--blue-soft); color: var(--accent-strong); }
+.console-task-panel .admin-task-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.console-task-panel .admin-task-controls .admin-panel-note { margin-left: auto; }
+.console-task-more { align-self: center; min-width: 160px; }
 .console-directory-grid small.directory-card-needs { color: var(--warning); font-weight: 600; }
 /* 从控制台点开的目录页 = 盖在控制台上的一层（air-navigation.js 的 renderLayer）：
    升起来、关掉时落下去。位移只在动画那一下存在 —— 平时 #task-layout 不能带 transform，
@@ -108,6 +110,12 @@
   .directory-toolbar > #directory-layer-close { order: -1; flex: 0 0 88px; justify-content: center; padding: 0; }
 }
 @media (max-width: 760px) {
+  /* 手机上「按任务 / 按目录」由底部导航的「控制台 / 项目」两项承担，页内不再重复。 */
+  .console-view-switch { display: none; }
+  /* 底部常驻一颗「新任务」，页内那颗不再重复；「添加项目」独占一行。 */
+  #console-home-new-task { display: none; }
+  .console-task-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .console-task-filters button { flex-shrink: 0; min-height: 36px; }
   .console-home-top { flex-wrap: wrap; gap: 8px; }
   .console-home-top input { flex-basis: 100%; }
   .console-home-actions { width: 100%; }

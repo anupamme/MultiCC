@@ -106,23 +106,19 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     await tester.pageBack();
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('最近任务'),
-      ),
-    );
-    await tester.pumpAndSettle();
+    // 原「最近任务」页并进了控制台：搜索框就在控制台下段清单的头上。
     expect(
       find.byKey(const ValueKey('air-mobile-task-search')),
       findsOneWidget,
     );
+    expect(find.byKey(const ValueKey('air-task-t2')), findsOneWidget);
     await tester.enterText(
       find.byKey(const ValueKey('air-mobile-task-search')),
       '不存在',
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('air-task-t1')), findsNothing);
+    // t1 还在上段「等我处理」里（那一段不吃搜索），所以看只在清单里的 t2。
+    expect(find.byKey(const ValueKey('air-task-t2')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('air-mobile-settings')));
     await tester.pumpAndSettle();
     expect(find.byType(AirSettingsScreen), findsOneWidget);
@@ -130,7 +126,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(NamedBackButton),
-        matching: find.text('最近任务'),
+        matching: find.text('控制台'),
       ),
       findsOneWidget,
     );
@@ -158,7 +154,7 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('air-task-t1')),
+      find.byKey(const ValueKey('air-task-t2')),
       findsNothing,
       reason: '返回保留筛选状态',
     );
@@ -258,7 +254,7 @@ void main() {
     transport.close();
   });
 
-  testWidgets('手机控制台按状态格筛选，今日完成只列今天跑完的并带进最近任务', (tester) async {
+  testWidgets('手机控制台按状态格筛选，今日完成只列今天跑完的', (tester) async {
     final config = await settings();
     final now = DateTime.now().millisecondsSinceEpoch;
     final transport = MockClient((req) async {
@@ -320,7 +316,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final today = find.byKey(const ValueKey('air-mobile-console-today'));
+    // 默认那一格是「最近任务」：三条都在清单里。
+    expect(find.text('今天做完的'), findsOneWidget);
+    expect(find.text('昨天做完的'), findsOneWidget);
+    final today = find.byKey(const ValueKey('air-mobile-filter-today'));
     await tester.ensureVisible(today);
     expect(
       find.descendant(of: today, matching: find.text('今日完成 1')),
@@ -328,23 +327,11 @@ void main() {
     );
     await tester.tap(today);
     await tester.pumpAndSettle();
+    expect(tester.widget<ChoiceChip>(today).selected, isTrue);
     expect(find.text('今天做完的'), findsOneWidget);
     expect(find.text('昨天做完的'), findsNothing);
-    // 「全部 ›」带着这一格进最近任务页。
-    final all = find.byKey(const ValueKey('air-mobile-console-all'));
-    await tester.ensureVisible(all);
-    await tester.tap(all);
-    await tester.pumpAndSettle();
-    expect(
-      find.byKey(const ValueKey('air-mobile-task-search')),
-      findsOneWidget,
-    );
-    final picked = tester.widget<ChoiceChip>(
-      find.widgetWithText(ChoiceChip, '今日完成'),
-    );
-    expect(picked.selected, isTrue);
-    expect(find.text('今天做完的'), findsOneWidget);
-    expect(find.text('昨天做完的'), findsNothing);
+    // 控制台里不再有「全部 ›」跳最近任务页那颗按钮。
+    expect(find.byKey(const ValueKey('air-mobile-console-all')), findsNothing);
   });
 
   testWidgets('移动工作区「等我处理」卡与控制台同口径：含手动待办、排除忽略、最早消息在前', (tester) async {
@@ -477,27 +464,34 @@ void main() {
     await tester.ensureVisible(all);
     await tester.tap(all);
     await tester.pumpAndSettle();
-    // 点「全部」带着「等我处理」这一格过去：四条都在，被忽略的仍然不在。
+    // 点「全部」把下段清单切到「等我处理」这一格（不再跳页）：四条都在，被忽略
+    // 的仍然不在。
+    expect(
+      find.byKey(const ValueKey('air-mobile-task-search')),
+      findsOneWidget,
+    );
     expect(find.text('最新的待办'), findsOneWidget);
     expect(find.text('被忽略的'), findsNothing);
+    final needs = find.byKey(const ValueKey('air-mobile-filter-needsMe'));
     expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '等我处理'))
-          .selected,
+      tester.widget<ChoiceChip>(needs).selected,
       isTrue,
-      reason: '卡片「全部」带过来的是「等我处理」这一格',
+      reason: '卡片「全部」切过去的是「等我处理」这一格',
+    );
+    expect(
+      find.descendant(of: needs, matching: find.text('等我处理 4')),
+      findsOneWidget,
     );
     // 「待办」仍在筛选项里，但只收手动标记，和汇总不是一回事。
-    expect(find.widgetWithText(ChoiceChip, '待办'), findsOneWidget);
+    final todo = find.byKey(const ValueKey('air-mobile-filter-todo'));
     expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '待办'))
-          .selected,
-      isFalse,
+      find.descendant(of: todo, matching: find.text('待办 1')),
+      findsOneWidget,
     );
+    expect(tester.widget<ChoiceChip>(todo).selected, isFalse);
   });
 
-  testWidgets('手机控制台不分目录，目录在最近任务里选，选完留在本页', (tester) async {
+  testWidgets('手机控制台顶栏按项目筛选清单，选完留在控制台', (tester) async {
     final config = await settings();
     final now = DateTime.now().millisecondsSinceEpoch;
     final transport = MockClient((req) async {
@@ -552,23 +546,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 控制台：两个项目的任务都在，顶栏没有目录按钮。
-    expect(find.text('项目一的活'), findsOneWidget);
-    expect(find.text('项目二的活'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('air-mobile-project-picker')),
-        matching: find.byIcon(Icons.expand_more),
-      ),
-      findsNothing,
-    );
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('最近任务'),
-      ),
-    );
-    await tester.pumpAndSettle();
+    // 控制台：默认「全部项目」，两个项目的任务都在。
     final picker = find.byKey(const ValueKey('air-mobile-project-picker'));
     expect(
       find.descendant(of: picker, matching: find.text('全部项目')),
@@ -580,7 +558,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('air-mobile-project-two')));
     await tester.pumpAndSettle();
-    // 仍在最近任务页，只剩项目二的任务。
+    // 仍在控制台，只剩项目二的任务。
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      0,
+    );
     expect(
       find.byKey(const ValueKey('air-mobile-task-search')),
       findsOneWidget,
@@ -598,23 +580,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('项目一的活'), findsOneWidget);
     expect(find.text('项目二的活'), findsOneWidget);
-    // 回控制台，目录筛选不影响控制台。
-    await tester.tap(picker);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('air-mobile-project-two')));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('控制台'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('项目一的活'), findsOneWidget);
-    expect(find.text('项目二的活'), findsOneWidget);
   });
 
-  testWidgets('底部导航第 4 项直达工作目录，目录首页归它高亮', (tester) async {
+  testWidgets('底部导航三项：控制台 / 定时任务 / 工作目录，目录首页归第 3 项高亮', (tester) async {
     final config = await settings();
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
@@ -626,7 +594,24 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // 第 4 项「工作目录」→ 目录库视图，目录卡可见。
+    // 「最近任务」已并进控制台，底部只剩三项。
+    final nav = find.byType(NavigationBar);
+    expect(
+      find.descendant(of: nav, matching: find.byType(NavigationDestination)),
+      findsNWidgets(3),
+    );
+    for (final label in ['控制台', '定时任务', '工作目录']) {
+      expect(
+        find.descendant(of: nav, matching: find.text(label)),
+        findsOneWidget,
+      );
+    }
+    expect(find.descendant(of: nav, matching: find.text('最近任务')), findsNothing);
+    expect(tester.widget<NavigationBar>(nav).selectedIndex, 0);
+    await tester.tap(find.descendant(of: nav, matching: find.text('定时任务')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<NavigationBar>(nav).selectedIndex, 1);
+    // 第 3 项「工作目录」→ 目录库视图，目录卡可见。
     await tester.tap(
       find.descendant(
         of: find.byType(NavigationBar),
@@ -635,13 +620,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-directory-one')), findsOneWidget);
-    // 点目录卡进目录首页：NavigationBar 的选中项仍是「工作目录」（index 3）。
+    expect(tester.widget<NavigationBar>(nav).selectedIndex, 2);
+    // 点目录卡进目录首页：NavigationBar 的选中项仍是「工作目录」（index 2）。
     await tester.tap(find.byKey(const ValueKey('air-directory-one')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('air-directory-mode')), findsOneWidget);
     expect(
       tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-      3,
+      2,
     );
   });
 
@@ -715,6 +701,75 @@ void main() {
     expect(toggles, ['t1', 't1']);
     expect(find.text('已取消待办「首页改版」'), findsOneWidget);
     expect(flag, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('控制台下段清单不截断：45 条任务滚到底都在（旧服务本地快照）', (tester) async {
+    final config = await settings();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final transport = MockClient((req) async {
+      dynamic body = <String, dynamic>{};
+      if (req.url.path == '/api/air') {
+        body = {
+          'ok': true,
+          'clis': ['codex'],
+          'directories': [
+            {'id': 'one', 'name': '项目一', 'path': '/projects/one'},
+          ],
+          'tasks': [
+            for (var i = 0; i < 45; i++)
+              {
+                'id': 'n$i',
+                'dirId': 'one',
+                'title': '第 $i 条',
+                'status': 'active',
+                'runState': 'idle',
+                'updatedAt': now - i * 1000,
+              },
+          ],
+          'sessions': [],
+        };
+      } else if (req.url.path == '/api/settings/power') {
+        body = {'ok': true, 'available': false};
+      } else if (req.url.path == '/api/cron' ||
+          req.url.path == '/api/docs-registry') {
+        body = [];
+      }
+      return http.Response(
+        jsonEncode(body),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AirTasksView(settings: config, httpClient: transport),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final recent = find.byKey(const ValueKey('air-mobile-filter-recent'));
+    expect(
+      find.descendant(of: recent, matching: find.text('最近任务 45')),
+      findsOneWidget,
+    );
+    // 原来控制台卡片只摆 3 条，看全量得跳「最近任务」页；合并后的清单一条不少。
+    final last = find.byKey(const ValueKey('air-task-n44'));
+    await tester.scrollUntilVisible(
+      last,
+      400,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const PageStorageKey('mobile-console-scroll')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(last, findsOneWidget);
+    expect(find.byKey(const ValueKey('air-mobile-list-more')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

@@ -10,7 +10,6 @@ import 'package:multicc_app/services/air_service.dart';
 import 'package:multicc_app/services/air_sync_service.dart';
 import 'package:multicc_app/services/settings_service.dart';
 import 'package:multicc_app/widgets/air/air_mobile_workspace.dart';
-import 'package:multicc_app/widgets/air/air_task_status.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -68,8 +67,8 @@ void main() {
           body = {
             'cursor': 'boot:$revision',
             'page': page,
-            'pages': 5,
-            'total': 100,
+            'pages': (tasks.length / limit).ceil(),
+            'total': tasks.length,
             'tasks': tasks.skip((page - 1) * limit).take(limit).toList(),
           };
         } else if (req.url.path == '/api/auth/ws-ticket') {
@@ -104,11 +103,8 @@ void main() {
                 sync: sync,
                 directoryId: null,
                 recentTasks: const [],
-                recent: true,
-                initialFilter: AirDirectoryTaskFilter.all,
                 onOpenTask: (_) {},
                 onTaskAction: (_) => actions++,
-                onRecent: (_) {},
                 onRefresh: () async {
                   await sync.refresh();
                 },
@@ -141,25 +137,21 @@ void main() {
       pageGate = null;
       await tester.pumpAndSettle();
       final listFinder = find.byKey(
-        const PageStorageKey('mobile-recent-scroll'),
+        const PageStorageKey('mobile-console-scroll'),
       );
-      final next = find.byKey(const ValueKey('air-mobile-recent-page-next'));
+      // 滚到底自动接第二页（一页 50 条），第二页的行接在第一页后面。
+      final row = find.byKey(const ValueKey('air-task-t60'));
       await tester.scrollUntilVisible(
-        next,
+        row,
         400,
         scrollable: find
             .descendant(of: listFinder, matching: find.byType(Scrollable))
             .first,
       );
-      await Scrollable.ensureVisible(tester.element(next), alignment: .5);
-      await tester.pumpAndSettle();
-      await tester.tap(next);
+      await Scrollable.ensureVisible(tester.element(row), alignment: .5);
       await tester.pumpAndSettle();
       final controller = tester.widget<ListView>(listFinder).controller!;
-      controller.jumpTo(420);
-      await tester.pump();
-      final row = find.byKey(const ValueKey('air-task-t24'));
-      await tester.ensureVisible(row);
+      expect(find.byKey(const ValueKey('air-task-t59')), findsOneWidget);
       await tester.pump();
       final offset = controller.offset;
       expect(offset, greaterThan(0));
@@ -181,10 +173,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(controller.offset, offset);
       expect(
-        sync.page('mobile-recent', {
+        sync.page('mobile-list-2', {
           'dirId': null,
-          'status': 'all',
+          'status': 'recent',
           'query': 'Task',
+          'limit': 50,
           'page': 2,
         })!.page,
         2,

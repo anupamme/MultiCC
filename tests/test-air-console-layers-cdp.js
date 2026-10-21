@@ -1,11 +1,13 @@
 'use strict';
-// 控制台的两种看法与「控制台 → 目录 → 任务」三层浮层，在真浏览器里走一遍：
-//   ① 控制台顶上一道 tab（按任务 / 按目录）直接切；目录看法只铺目录卡，在跑的目录
-//      带圈、在等人的目录卡上写「等我处理 N」；选择记在本机，刷新还是那一种；
-//   ② 点目录卡在当前窗口打开目录页，它是盖在控制台上的一层（is-console-layer +
-//      一颗「关闭」）；
-//   ③ 目录里再开任务是对话浮层，关掉回到目录 —— 目录那一层还在、关闭钮还在；
-//   ④ 关掉目录回到控制台，还是目录看法。
+// 控制台（任务 / 目录两种看法）与「控制台 → 目录 → 任务」三层浮层，在真浏览器里走一遍：
+//   ① 任务看法 = 「等我处理」（限条）+ 一份不截条数的清单：筛选格带数，一页 50 条，
+//      滚到底自动接下一页；原来的「正在运行 / 最近使用 / 更多」与手机小卡都不在了；
+//   ② 目录看法只铺目录卡，在跑的目录带圈、在等人的目录卡上写「等我处理 N」；选择记在
+//      本机，刷新还是那一种；
+//   ③ 点目录卡在当前窗口打开目录页，它是盖在控制台上的一层（is-console-layer + 关闭）；
+//      目录里再开任务是对话浮层，关掉回到目录；关掉目录回到控制台；
+//   ④ 手机：底部导航三项「控制台 / 定时任务 / 项目」，「项目」就是目录看法，页内 tab
+//      藏起来；旧的 ?view=recent 落到控制台。
 const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { withCdpHarness, findChromeBinary } = require('./helpers/cdp-harness');
@@ -39,8 +41,13 @@ test('console switches between task and directory views; console, directory and 
     task('tsk_wait', 'd2', '结算页金额四舍五入错误', 'waiting', 9000),
     task('tsk_run', 'd3', '登录页空状态文案', 'running', 7000, { residency: 'materialized', lease: 'running' }),
   ];
+  // 再垫 70 条闲着的：清单总数 73，一页 50 条放不下 —— 原来控制台最多摆 8 条。
+  const filler = Array.from({ length: 70 }, (_, i) => task(`tsk_fill_${i}`, 'd1', `批量任务 ${String(i).padStart(2, '0')}`, 'idle', 100 + i));
+  const everyTask = [...airTasks, ...filler];
   routes['/api/air'] = () => json({ ok: true, directories, clis: ['codex', 'claude'], migration: { errors: [] },
-    tasks: airTasks, sessions: [], taskTodos: [], taskTodoIgnored: [] });
+    tasks: everyTask, sessions: [], taskTodos: [], taskTodoIgnored: [] });
+  // /api/air/sync 与 /api/air/page 由 harness 的 air-sync-fixture 用真实的读索引
+  // （src/workspace/air-read-index.js）从上面这份 /api/air 生成：分页口径就是服务端那份。
   for (const [index, item] of airTasks.entries()) {
     routes[`/api/air/tasks/${item.id}`] = routes[`/api/task-shell-tasks/${item.id}`] = () => json({ ok: true,
       task: item, sessionId: `task-${index}`, ownerShellId: `shell-${index}`, readOnly: false,
@@ -58,18 +65,42 @@ test('console switches between task and directory views; console, directory and 
     await page.navigate('/air');
     assert.ok(await page.waitFor(`!!document.getElementById('console-view-switch')`), '控制台顶上有看法切换');
 
-    // ── ① 两种看法 ───────────────────────────────────────────────────────
+    // ── ① 任务看法：等我处理 + 一份不截条数的清单 ─────────────────────────
     const view = () => page.evaluate(`(() => {
       const home = document.getElementById('console-home');
       const shown = sel => { const el = home.querySelector(sel); return !!el && getComputedStyle(el).display !== 'none'; };
       return { view: home.dataset.view,
         selected: [...document.querySelectorAll('#console-view-switch [role=tab]')].filter(b => b.getAttribute('aria-selected') === 'true').map(b => b.dataset.consoleView),
-        flow: shown('.console-flow'), dirs: shown('.console-directories'), more: shown('.console-more') };
+        flow: shown('.console-flow'), dirs: shown('.console-directories') };
     })()`);
-    assert.deepEqual(await view(), { view: 'tasks', selected: ['tasks'], flow: true, dirs: true, more: true }, '默认是以任务为主的看法');
+    assert.deepEqual(await view(), { view: 'tasks', selected: ['tasks'], flow: true, dirs: false }, '默认是任务看法，目录卡不在这里铺');
+    for (const gone of ['.console-running', '.console-recent', '#console-more', '.mobile-console-recent']) {
+      assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(gone)})`), null, `${gone} 已并进清单`);
+    }
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-priority-grid .console-priority-card, .console-priority-grid .console-priority-card').length === 1`), '等我处理那一段还在');
+    const chips = await page.evaluate(`[...document.querySelectorAll('#console-task-filters button')].map(b => b.textContent)`);
+    assert.deepEqual(chips, ['最近任务', '等我处理1', '待办0', '今日完成0', '进行中1', '异常0', '全部记录73'], '筛选格带数');
+    const listCount = () => page.evaluate(`document.querySelectorAll('#console-task-list .admin-recent-row, #console-task-list > button, #console-task-list > *:not(.admin-empty)').length`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list > *').length === 50`, { timeoutMs: 10000 }), '第一页 50 条（不是原来的 8 条）');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-note').textContent`), '73 条');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-more').hidden`), false, '还有下一页');
+    await page.screenshot('00-console-tasks-view');
+    // 滚到底自动接下一页（IntersectionObserver 盯着「加载更多」）。
+    await page.evaluate(`document.getElementById('console-task-more').scrollIntoView()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list > *').length === 73`, { timeoutMs: 10000 }), '滚到底接上第二页，73 条全在');
+    assert.equal(await page.evaluate(`document.getElementById('console-task-more').hidden`), true, '没有下一页了');
+    assert.equal(await listCount(), 73);
+    // 换筛选格：清单按新口径重来，攒下的后续页作废。
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="running"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list > *').length === 1`, { timeoutMs: 10000 }), '进行中只剩一条');
+    assert.equal(await page.evaluate(`document.querySelector('#console-task-filters [aria-pressed="true"]').dataset.filter`), 'running');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="recent"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list > *').length === 50`, { timeoutMs: 10000 }), '切回最近：又从第一页开始');
+
+    // ── ② 目录看法 ───────────────────────────────────────────────────────
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-view-switch [role=tab]')].map(b => b.textContent)`), ['按任务', '按目录']);
     await page.evaluate(`document.getElementById('console-view-dirs').click()`);
-    assert.deepEqual(await view(), { view: 'dirs', selected: ['dirs'], flow: false, dirs: true, more: false }, '目录看法只留目录网格');
+    assert.deepEqual(await view(), { view: 'dirs', selected: ['dirs'], flow: false, dirs: true }, '目录看法只留目录网格');
     assert.equal(await page.evaluate(`document.getElementById('console-home-search').placeholder`), '搜索名称或路径', '搜索框改搜目录');
     assert.equal(await page.evaluate(`localStorage.getItem('air:console-view')`), 'dirs', '选择记在本机');
     // 在跑的目录带圈，在等人的目录卡上写出来。
@@ -127,19 +158,31 @@ test('console switches between task and directory views; console, directory and 
     assert.equal((await view()).view, 'tasks');
     assert.equal(await page.evaluate(`localStorage.getItem('air:console-view')`), 'tasks');
 
-    // 手机：同一套 tab 与同一层目录，手机那张「最近任务」卡在目录看法里也让开。
+    // ── 手机：底部三项，「项目」= 目录看法，页内 tab 藏起来 ───────────────
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    await page.navigate('/air?view=overview');
-    assert.ok(await page.waitFor(`!!document.getElementById('console-view-dirs')`));
-    await page.evaluate(`document.getElementById('console-view-dirs').click()`);
-    assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('console-mobile-slot')).display`), 'none', '手机任务卡在目录看法里让开');
-    await page.screenshot('04-mobile-dirs-view');
+    // 旧的「最近任务」页地址落到控制台。
+    await page.navigate('/air?view=recent');
+    assert.ok(await page.waitFor(`!document.getElementById('console-center').hidden`), '旧 view=recent 落到控制台');
+    assert.equal(await page.evaluate(`new URLSearchParams(location.search).get('view')`), 'overview');
+    const nav = () => page.evaluate(`[...document.querySelectorAll('[data-mobile-view]')].map(b => b.textContent + (b.classList.contains('active') ? '*' : ''))`);
+    assert.deepEqual(await nav(), ['▦控制台*', '◷定时任务', '▤项目'], '底部三项，控制台亮着');
+    assert.equal(await page.evaluate(`getComputedStyle(document.getElementById('console-view-switch')).display`), 'none', '手机上页内 tab 藏起来');
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list > *').length === 50`, { timeoutMs: 10000 }), '手机控制台同一份不截条数的清单');
+    await page.screenshot('04-mobile-console');
+    await page.evaluate(`document.querySelector('[data-mobile-view="dirs"]').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('console-home')?.dataset.view === 'dirs'`), '「项目」= 控制台的目录看法');
+    assert.deepEqual(await nav(), ['▦控制台', '◷定时任务', '▤项目*']);
+    assert.equal(await page.evaluate(`document.getElementById('task-title').textContent`), '项目', '页头跟着叫项目');
+    await page.screenshot('05-mobile-projects');
     await page.evaluate(`document.querySelector('.console-directory-grid [data-dir-id="d3"] > button').click()`);
     assert.ok(await page.waitFor(`!document.getElementById('task-layout').hidden`));
     assert.deepEqual(await layer(), { layer: true, close: true }, '手机上同样是一层，带关闭');
+    assert.deepEqual(await nav(), ['▦控制台', '◷定时任务', '▤项目*'], '目录页归「项目」高亮');
     await page.evaluate(`new Promise(done => setTimeout(done, 300))`);
-    await page.screenshot('05-mobile-directory-layer');
+    await page.screenshot('06-mobile-directory-layer');
     await page.evaluate(`document.getElementById('directory-layer-close').click()`);
-    assert.ok(await page.waitFor(`!document.getElementById('console-center').hidden && document.getElementById('console-home').dataset.view === 'dirs'`), '手机上关掉同样回到控制台的目录看法');
+    assert.ok(await page.waitFor(`!document.getElementById('console-center').hidden && document.getElementById('console-home').dataset.view === 'dirs'`), '手机上关掉回到「项目」');
+    await page.evaluate(`document.querySelector('[data-mobile-view="tasks"]').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('console-home')?.dataset.view === 'tasks'`), '「控制台」切回任务看法');
   });
 });

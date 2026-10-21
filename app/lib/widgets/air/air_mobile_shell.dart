@@ -4,7 +4,6 @@ part of '../air_tasks_view.dart';
 extension _AirMobileShell on _AirTasksViewState {
   String get _mobileTitle => switch (_mode) {
     _AirMode.console => '控制台',
-    _AirMode.recent => '最近任务',
     _AirMode.schedules => '定时任务',
     _AirMode.library => '工作目录',
     _AirMode.tasks => _data?.directoryOf(_directoryId)?.name ?? '工作目录',
@@ -50,10 +49,10 @@ extension _AirMobileShell on _AirTasksViewState {
     if (mounted) await _mobileSetup.currentState?.refresh();
   }
 
-  /// [recentFilter]：在「最近任务」页里打开时，这张面板是那一页的目录筛选 ——
+  /// [listFilter]：在控制台里打开时，这张面板是那一页任务清单的项目筛选 ——
   /// 多一行「全部项目」，选完留在原页，不跳去目录首页（同 Web air-mobile.js）。
-  Future<void> _mobileProjects({bool recentFilter = false}) async {
-    final current = recentFilter ? _mobileRecentDir : _directoryId;
+  Future<void> _mobileProjects({bool listFilter = false}) async {
+    final current = listFilter ? _mobileConsoleDir : _directoryId;
     await widget.beforeOpenNavigation?.call();
     if (!mounted) return;
     final chosen = await showModalBottomSheet<String>(
@@ -75,7 +74,7 @@ extension _AirMobileShell on _AirTasksViewState {
               style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 12),
-            if (recentFilter)
+            if (listFilter)
               ListTile(
                 key: const ValueKey('air-mobile-project-all'),
                 leading: const Icon(Icons.folder_copy_outlined),
@@ -122,9 +121,9 @@ extension _AirMobileShell on _AirTasksViewState {
       await _addDirectory();
       return;
     }
-    if (recentFilter) {
+    if (listFilter) {
       _updateMobile(
-        () => _mobileRecentDir = chosen == '__all__' ? null : chosen,
+        () => _mobileConsoleDir = chosen == '__all__' ? null : chosen,
       );
       return;
     }
@@ -139,10 +138,8 @@ extension _AirMobileShell on _AirTasksViewState {
     key: ValueKey(_mode),
     data: data,
     sync: _sync,
-    // 控制台跨所有项目；最近任务按本页选的目录（null = 全部项目）。
-    directoryId: _mode == _AirMode.recent ? _mobileRecentDir : null,
-    recent: _mode == _AirMode.recent,
-    initialFilter: _mode == _AirMode.recent ? _mobileRecentFilter : null,
+    // 控制台按顶栏选的项目看（null = 全部项目），不改当前目录 [_directoryId]。
+    directoryId: _mobileConsoleDir,
     recentTasks: _sidebarTasks(),
     setupNotice: data == null
         ? null
@@ -155,10 +152,6 @@ extension _AirMobileShell on _AirTasksViewState {
     onOpenTask: (task) => unawaited(_open(task)),
     onTaskAction: (task) => _runTaskAction(task),
     onRefresh: _refresh,
-    onRecent: (filter) => _updateMobile(() {
-      _mobileRecentFilter = filter;
-      _mode = _AirMode.recent;
-    }),
     onResource: (v) {
       switch (v) {
         case 'docs':
@@ -217,38 +210,32 @@ extension _AirMobileShell on _AirTasksViewState {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: 12,
-        // 控制台不分目录：顶栏只留服务器地址，不给目录按钮。最近任务里这个按钮是
-        // 本页的目录筛选；其余页面照旧是切换当前项目。
+        // 控制台里这个按钮是本页任务清单的项目筛选（原「最近任务」页那一个，
+        // 两页合并后搬到这里）；其余页面照旧是切换当前项目。
         title: InkWell(
           key: const ValueKey('air-mobile-project-picker'),
-          onTap: _mode == _AirMode.console
-              ? null
-              : () => unawaited(
-                  _mobileProjects(recentFilter: _mode == _AirMode.recent),
-                ),
+          onTap: () =>
+              unawaited(_mobileProjects(listFilter: _mode == _AirMode.console)),
           child: Row(
             children: [
-              if (_mode != _AirMode.console) ...[
-                const Icon(Icons.folder_outlined, color: AppColors.accent),
-                const SizedBox(width: 8),
-              ],
+              const Icon(Icons.folder_outlined, color: AppColors.accent),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (_mode != _AirMode.console)
-                      Text(
-                        _mode == _AirMode.recent
-                            ? data?.directoryOf(_mobileRecentDir)?.name ??
-                                  t('airAllProjects')
-                            : directory?.name ?? '选择项目',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
+                    Text(
+                      _mode == _AirMode.console
+                          ? data?.directoryOf(_mobileConsoleDir)?.name ??
+                                t('airAllProjects')
+                          : directory?.name ?? '选择项目',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
+                    ),
                     Text(
                       widget.settings.host,
                       maxLines: 1,
@@ -261,8 +248,7 @@ extension _AirMobileShell on _AirTasksViewState {
                   ],
                 ),
               ),
-              if (_mode != _AirMode.console)
-                const Icon(Icons.expand_more, size: 18),
+              const Icon(Icons.expand_more, size: 18),
             ],
           ),
         ),
@@ -346,7 +332,7 @@ extension _AirMobileShell on _AirTasksViewState {
             ),
           Expanded(
             child: switch (_mode) {
-              _AirMode.console || _AirMode.recent => _mobileWorkspace(data),
+              _AirMode.console => _mobileWorkspace(data),
               _AirMode.schedules => _mobileSchedulePanel(data),
               _AirMode.library => AirDirectoryLibrary(
                 directories: data?.directories ?? [],
@@ -391,8 +377,8 @@ extension _AirMobileShell on _AirTasksViewState {
                                 )
                               : unawaited(
                                   _newTask(
-                                    preferDirectoryId: _mode == _AirMode.recent
-                                        ? _mobileRecentDir
+                                    preferDirectoryId: _mode == _AirMode.console
+                                        ? _mobileConsoleDir
                                         : null,
                                   ),
                                 ),
@@ -409,32 +395,26 @@ extension _AirMobileShell on _AirTasksViewState {
               ),
             NavigationBar(
               height: 68,
-              // 「工作目录」是底部导航第 4 项：10-17 改版把它收进 ⋯ 菜单后，
-              // 终端/目录入口深了一层，摸不到入口的用户以为功能被删了。目录首页
-              // （tasks）也归这一项高亮。
+              // 三项：控制台 / 定时任务 / 工作目录。原来的「最近任务」已并进控制台
+              // 下段的整份清单（三个入口功能重叠，用户拍板合并）。「工作目录」
+              // 10-17 改版收进 ⋯ 菜单后摸不到入口，用户以为功能被删了，所以留在
+              // 底部导航；目录首页（tasks）也归这一项高亮。
               selectedIndex: switch (_mode) {
-                _AirMode.schedules => 2,
-                _AirMode.library || _AirMode.tasks => 3,
-                _AirMode.recent => 1,
                 _AirMode.console => 0,
+                _AirMode.schedules => 1,
+                _AirMode.library || _AirMode.tasks => 2,
               },
-              onDestinationSelected: (i) => _updateMobile(() {
-                _mobileRecentFilter = null;
-                _mode = [
+              onDestinationSelected: (i) => _updateMobile(
+                () => _mode = const [
                   _AirMode.console,
-                  _AirMode.recent,
                   _AirMode.schedules,
                   _AirMode.library,
-                ][i];
-              }),
+                ][i],
+              ),
               destinations: const [
                 NavigationDestination(
                   icon: Icon(Icons.dashboard_outlined),
                   label: '控制台',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.list_alt_outlined),
-                  label: '最近任务',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.schedule),

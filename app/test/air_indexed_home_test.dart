@@ -121,44 +121,49 @@ void main() {
         expect(calls.where((u) => u.path == '/api/air'), isEmpty);
         if (width < 760) {
           expect(find.textContaining('11'), findsWidgets);
-          await tester.tap(
-            find.byKey(const ValueKey('air-mobile-console-all')),
-          );
-          await tester.pumpAndSettle();
-          final next = find.byKey(
-            const ValueKey('air-mobile-recent-page-next'),
-          );
+          // 控制台下段就是整份清单：滚到底自动接下一页，一页 50 条（服务端上限），
+          // 滚过三页仍在累加，不会停在 3 / 5 / 30 条。
+          final scrollable = find
+              .descendant(
+                of: find.byKey(const PageStorageKey('mobile-console-scroll')),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          final deep = find.byKey(const ValueKey('air-task-t120'));
           await tester.scrollUntilVisible(
-            next,
-            400,
-            scrollable: find
-                .descendant(
-                  of: find.byKey(const PageStorageKey('mobile-recent-scroll')),
-                  matching: find.byType(Scrollable),
-                )
-                .first,
+            deep,
+            600,
+            scrollable: scrollable,
+            maxScrolls: 200,
           );
-          await tester.tap(next);
           await tester.pumpAndSettle();
+          expect(deep, findsOneWidget);
+          final pages = calls
+              .where((u) => u.path == '/api/air/page')
+              .where((u) => u.queryParameters['status'] == 'recent')
+              .toList();
           expect(
-            calls.any(
-              (u) =>
-                  u.path == '/api/air/page' && u.queryParameters['page'] == '2',
-            ),
+            pages.map((u) => u.queryParameters['page']).toSet(),
+            containsAll(['1', '2', '3']),
+          );
+          expect(
+            pages.every((u) => u.queryParameters['limit'] == '50'),
             isTrue,
           );
-          // Loading the next page returns to the start of the lazy list.
-          await tester.scrollUntilVisible(
-            next,
-            400,
-            scrollable: find
-                .descendant(
-                  of: find.byKey(const PageStorageKey('mobile-recent-scroll')),
-                  matching: find.byType(Scrollable),
-                )
-                .first,
+          // 每页只读一次：接下一页不会把前面的页挤出缓存再重拉。
+          expect(
+            pages.length,
+            pages.map((u) => u.queryParameters['page']).toSet().length,
           );
-          expect(find.text('第 2 / 64 页'), findsOneWidget);
+          // 前面的页没有因为接了后面的页被换掉：第一页的行还在清单里。
+          final first = find.byKey(const ValueKey('air-task-t30'));
+          await tester.scrollUntilVisible(
+            first,
+            -600,
+            scrollable: scrollable,
+            maxScrolls: 200,
+          );
+          expect(first, findsOneWidget);
         } else {
           await tester.tap(find.byKey(const ValueKey('air-header-menu')));
           await tester.pumpAndSettle();

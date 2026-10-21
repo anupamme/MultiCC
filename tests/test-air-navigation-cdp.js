@@ -50,7 +50,8 @@ test('Air preserves recent tasks and uses one settings home with browser-consist
     assert.ok(await page.waitFor(`document.querySelector('.console-priority-card') && document.querySelector('#tasks button')`));
     assert.equal(await page.evaluate(`document.querySelectorAll('.console-priority-card').length`), 2);
     assert.equal(await page.evaluate(`document.querySelector('#task-title').textContent`), '控制台');
-    assert.equal(await page.evaluate(`document.querySelector('#console-task-list').children.length`), 5);
+    // 控制台清单默认「最近任务」= 未归档（已完成的也在），不截条数。
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-list').children.length === 7`));
     assert.equal(await page.evaluate(`document.querySelector('#sidebar-resources').open`), false);
     t.diagnostic(await page.screenshot('implemented-console'));
     await page.evaluate(`document.querySelector('#recent-all').click()`);
@@ -135,54 +136,68 @@ test('the three-step guide can be resumed after dismissing and reflects real set
   });
 });
 
-test('手机底部导航保留最近任务、真实来路与项目切换', async t => {
+test('手机底部导航三项：控制台（含不截条数的清单）/ 定时任务 / 项目，真实来路与项目筛选', async t => {
   if (!findChromeBinary()) return t.skip('需要浏览器');
   const state = fixture();
   await withCdpHarness({ routes: state.routes, screenshotDir: shots }, async page => {
     await page.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await page.navigate('/air');
-    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-create') && document.querySelector('.mobile-console-recent')`));
+    await page.evaluate(`localStorage.removeItem('air:console-view')`);
+    await page.navigate('/air');
+    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-create') && document.querySelector('#console-task-filters')`));
     assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').hidden`), false);
-    assert.equal(await page.evaluate(`document.querySelectorAll('[data-mobile-view]').length`), 4);
-    assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[3].right<=innerWidth;})()`), true);
-    // 第 4 项「工作目录」直通 library 视图，目录首页（tasks）归它高亮。
-    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]') != null`), true);
-    await page.evaluate(`document.querySelector('[data-mobile-view="library"]').click()`);
-    assert.ok(await page.waitFor(`!document.querySelector('#directory-library').hidden`), 'library tab opens the directory library');
-    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]').classList.contains('active')`), true);
-    await page.evaluate(`[...document.querySelectorAll('.directory-card button')].find(x => x.textContent.includes('${state.directories[0].name}')).click()`);
-    assert.ok(await page.waitFor(`document.querySelector('#directory-mode')`), 'directory home reachable from library');
-    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="library"]').classList.contains('active')`), true, 'directory home highlights the library tab');
+    // 原来的「最近任务」一项并进了控制台；「项目」就是控制台的按目录看法。
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.dataset.mobileView)`), ['tasks', 'schedules', 'dirs']);
+    assert.equal(await page.evaluate(`(() => {const tabs=[...document.querySelectorAll('[data-mobile-view]')].map(x=>x.getBoundingClientRect());return tabs.every(x=>Math.abs(x.top-tabs[0].top)<1) && tabs[2].right<=innerWidth;})()`), true);
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="tasks"]').classList.contains('active')`), true);
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#console-view-switch')).display`), 'none', '页内 tab 由底部两项承担');
+    await page.evaluate(`document.querySelector('[data-mobile-view="dirs"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#console-home')?.dataset.view === 'dirs'`), '「项目」= 控制台目录看法');
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="dirs"]').classList.contains('active')`), true);
+    await page.evaluate(`[...document.querySelectorAll('#console-directory-grid .directory-card button')].find(x => x.textContent.includes('${state.directories[0].name}')).click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#directory-mode') && !document.querySelector('#task-layout').hidden`), 'directory home reachable from 项目');
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="dirs"]').classList.contains('active')`), true, 'directory home highlights 项目');
     // 回控制台继续原有的控制台断言。
-    await page.evaluate(`document.querySelector('[data-mobile-view="overview"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-recent')`), 'back to console');
+    await page.evaluate(`document.querySelector('[data-mobile-view="tasks"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#console-home')?.dataset.view === 'tasks'`), 'back to console');
     assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#mobile-nav')).display`), 'none');
     t.diagnostic(await page.screenshot('mobile-implemented-home'));
-    // 控制台不分目录：顶栏没有目录按钮，卡片里两个项目的任务都在。
+    // 控制台不分目录：顶栏没有目录按钮，清单里两个项目的任务都在，而且是全部（不截条数）。
     assert.equal(await page.evaluate(`document.querySelector('#air-mobile-project').hidden`), true);
-    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.mobile-console-filters button')].map(x=>x.dataset.filter)`),
-      ['recent', 'needs', 'todo', 'today', 'running', 'error']);
-    const consoleIds = await page.evaluate(`[...document.querySelectorAll('.mobile-console-recent .mobile-task-row')].map(x=>x.dataset.taskId)`);
-    assert.deepEqual(new Set(consoleIds.map(id => state.tasks.find(task => task.id === id).dirId)), new Set(['site', 'api']));
+    assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#console-task-filters button')].map(x=>x.dataset.filter)`),
+      ['recent', 'needs', 'todo', 'today', 'running', 'error', 'all']);
+    const rowIds = `[...document.querySelectorAll('#console-task-list .admin-recent-row')].map(x=>x.dataset.taskId)`;
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length === ${state.tasks.length}`));
+    assert.deepEqual(new Set((await page.evaluate(rowIds)).map(id => state.tasks.find(task => task.id === id).dirId)), new Set(['site', 'api']));
     const expectToday = state.tasks.filter(task => task.status === 'done').map(task => task.id);
     assert.ok(expectToday.length >= 2);
-    await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="today"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters [data-filter="today"]')?.getAttribute('aria-pressed') === 'true'`));
-    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-console-recent .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(), [...expectToday].sort());
-    assert.ok((await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="today"]').textContent`)).endsWith(` ${expectToday.length}`));
-    assert.equal(await page.evaluate(`(() => { const b=document.querySelector('.mobile-console-filters [data-filter="today"]').getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth; })()`), true, 'today chip is visible without scrolling');
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="today"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelector('#console-task-filters [data-filter="today"]')?.getAttribute('aria-pressed') === 'true'`));
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length === ${expectToday.length}`));
+    assert.deepEqual((await page.evaluate(rowIds)).sort(), [...expectToday].sort());
+    assert.ok((await page.evaluate(`document.querySelector('#console-task-filters [data-filter="today"]').textContent`)).endsWith(`${expectToday.length}`));
     t.diagnostic(await page.screenshot('mobile-console-today-filter'));
-    await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="recent"]').click()`);
-    await page.evaluate(`document.querySelector('[data-mobile-view="recent"]').click()`);
-    assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')`));
-    assert.equal(await page.evaluate(`document.querySelector('#task-title').textContent`), '最近任务');
-    // 最近任务默认看全部项目，顶栏按钮就是这一页的目录筛选。
-    assert.equal(await page.evaluate(`document.querySelector('#air-mobile-project').textContent`), '全部项目 ⌄');
-    assert.equal(await page.evaluate(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length`), state.tasks.length);
-    await page.evaluate(`const field=document.querySelector('#mobile-task-search'); field.value='登录';field.dispatchEvent(new Event('input'));`);
-    assert.equal(await page.evaluate(`document.querySelectorAll('.mobile-task-list .mobile-task-row').length`), 1);
+    // 按项目筛（原来「最近任务」页顶栏那颗目录筛选）：留在控制台，只列这个项目的任务。
+    const apiIds = state.tasks.filter(task => task.dirId === 'api').map(task => task.id).sort();
+    await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='api'; s.dispatchEvent(new Event('change')); })()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length === ${expectToday.filter(id => apiIds.includes(id)).length}`));
+    assert.deepEqual((await page.evaluate(rowIds)).sort(), expectToday.filter(id => apiIds.includes(id)).sort());
+    await page.evaluate(`document.querySelector('#console-task-filters [data-filter="recent"]').click()`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length === ${apiIds.length}`));
+    assert.deepEqual((await page.evaluate(rowIds)).sort(), apiIds);
+    t.diagnostic(await page.screenshot('mobile-console-directory-filter'));
+    // 新任务默认建到清单正在看的那个项目。
+    await page.evaluate(`document.querySelector('#air-mobile-create').click()`);
+    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog').open`), true);
+    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog-directory').value`), 'api');
+    await page.evaluate(`document.querySelector('#quick-task-dialog').close()`);
+    await page.evaluate(`(() => { const s=document.getElementById('console-task-dir'); s.value='all'; s.dispatchEvent(new Event('change')); })()`);
+    // 搜索走顶栏输入框。
+    await page.evaluate(`const field=document.querySelector('#console-home-search'); field.value='登录';field.dispatchEvent(new Event('input'));`);
+    assert.ok(await page.waitFor(`document.querySelectorAll('#console-task-list .admin-recent-row').length === 1`));
+    // 真实来路：设置 → 二级 → 返回两次回到控制台，搜索词还在。
     await page.evaluate(`document.querySelector('#air-mobile-settings').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#page-back').textContent`), '‹ 最近任务');
+    assert.equal(await page.evaluate(`document.querySelector('#page-back').textContent`), '‹ 控制台');
     assert.equal(await page.evaluate(`document.querySelector('#air-mobile-dock').hidden`), true);
     await page.evaluate(`document.querySelector('[data-category="airSettingsMobile"]').click()`);
     assert.equal(await page.evaluate(`document.querySelector('#page-back').textContent`), '‹ 设置');
@@ -190,41 +205,10 @@ test('手机底部导航保留最近任务、真实来路与项目切换', async
     await page.evaluate(`document.querySelector('#page-back').click()`);
     assert.ok(await page.waitFor(`!new URLSearchParams(location.search).has('category') && document.querySelector('#task-title').textContent === '设置'`));
     await page.evaluate(`document.querySelector('#page-back').click()`);
-    assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')?.value === '登录'`));
-    await page.evaluate(`document.querySelector('#air-mobile-project').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#directory-flyout').hidden`), false);
-    assert.equal(await page.evaluate(`(() => { const r=document.querySelector('#directory-flyout').getBoundingClientRect();return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`), true);
-    await page.evaluate(`document.querySelector('#directory-flyout [data-dir-id="api"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-project').textContent.includes('后端服务')`));
-    // 在最近任务里选目录：留在这一页，只列这个目录的任务；全局目录不动。
-    assert.ok(await page.waitFor(`location.search.includes('view=recent') && document.querySelector('#mobile-task-search')`));
-    await page.evaluate(`(() => { const field=document.querySelector('#mobile-task-search'); field.value='';field.dispatchEvent(new Event('input')); })()`);
-    const apiIds = state.tasks.filter(task => task.dirId === 'api').map(task => task.id).sort();
-    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-task-list .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(), apiIds);
-    t.diagnostic(await page.screenshot('mobile-recent-directory-filter'));
-    // 控制台照旧跨目录；从「今日完成」的「全部 ›」进来，叠着这一页的目录筛选。
-    await page.evaluate(`document.querySelector('[data-mobile-view="overview"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-console-filters') && document.querySelector('#air-mobile-project').hidden`));
-    assert.equal(await page.evaluate(`document.querySelectorAll('.mobile-console-recent .mobile-task-row').length`), 3);
-    await page.evaluate(`document.querySelector('.mobile-console-filters [data-filter="today"]').click()`);
-    await page.evaluate(`document.querySelector('.mobile-console-recent .mobile-section-head button').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('.mobile-task-filters [data-filter="today"]')?.getAttribute('aria-pressed') === 'true'`));
-    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-task-list .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(),
-      expectToday.filter(id => apiIds.includes(id)).sort());
-    // 选回「全部项目」。
-    await page.evaluate(`document.querySelector('#air-mobile-project').click()`);
-    await page.evaluate(`[...document.querySelectorAll('#directory-flyout .directory-flyout-action')][0].click()`);
-    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-project').textContent === '全部项目 ⌄'`));
-    assert.deepEqual((await page.evaluate(`[...document.querySelectorAll('.mobile-task-list .mobile-task-row')].map(x=>x.dataset.taskId)`)).sort(), [...expectToday].sort());
-    // 新任务默认建到最近任务里选中的目录。
-    await page.evaluate(`document.querySelector('#air-mobile-project').click()`);
-    await page.evaluate(`document.querySelector('#directory-flyout [data-dir-id="api"]').click()`);
-    assert.ok(await page.waitFor(`document.querySelector('#air-mobile-project').textContent.includes('后端服务')`));
-    await page.evaluate(`document.querySelector('#air-mobile-create').click()`);
-    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog').open`), true);
-    assert.equal(await page.evaluate(`document.querySelector('#quick-task-dialog-directory').value`), 'api');
-    await page.evaluate(`document.querySelector('#quick-task-dialog').close();document.querySelector('[data-mobile-view="schedules"]').click()`);
+    assert.ok(await page.waitFor(`location.search.includes('view=overview') && document.querySelector('#console-home-search')?.value === '登录'`));
+    await page.evaluate(`document.querySelector('[data-mobile-view="schedules"]').click()`);
     assert.ok(await page.waitFor(`location.search.includes('view=schedules')`));
+    assert.equal(await page.evaluate(`document.querySelector('[data-mobile-view="schedules"]').classList.contains('active')`), true);
     for (const width of [360, 390, 430]) {
       await page.send('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
       assert.equal(await page.evaluate(`document.documentElement.scrollWidth <= innerWidth`), true, `${width} 像素无横向溢出`);

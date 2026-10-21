@@ -104,7 +104,10 @@ class AirTasksView extends StatefulWidget {
 /// `console` 是控制台 —— Web 那边它也是主区域里的一页（`?view=overview`），不是
 /// 盖在别处的一层。App 从前把它做成一条 push 的路由，于是左上角长出一颗返回
 /// 箭头，跟别的页不是一路；现在它回到主区里来，页头就只剩同一颗 ☰ 了。
-enum _AirMode { console, tasks, library, recent, schedules }
+///
+/// 手机上原来还有一页「最近任务」（recent），已并进控制台下段的整份清单，这里不再
+/// 有这一页。
+enum _AirMode { console, tasks, library, schedules }
 
 /// 目录首页顶部那道切换（Web `public/air.html` 的 `#directory-mode`）。
 ///
@@ -181,11 +184,9 @@ class _AirTasksViewState extends State<AirTasksView>
   /// 打开 Air 就落在控制台（Web 那边裸 `/air` 也落这一页）。第一眼要看到的是
   /// 「有什么在跑、有什么在等我」，而不是某一个目录里的对话。
   _AirMode _mode = _AirMode.console;
-  // 手机「最近任务」页打开时选中哪一格：控制台卡片的「全部 ›」带过来，底部导航进入时清空。
-  AirDirectoryTaskFilter? _mobileRecentFilter;
-  // 手机「最近任务」按哪个目录看（null = 全部项目）。控制台不分目录；这只是那一页的
-  // 筛选，不改 [_directoryId]。
-  String? _mobileRecentDir;
+  // 手机控制台下段清单按哪个目录看（null = 全部项目）。这只是那一页的筛选，不改
+  // [_directoryId]（原「最近任务」页的目录筛选，两页合并后归控制台）。
+  String? _mobileConsoleDir;
 
   /// 当前目录首页显示哪一类东西。默认 Chat（任务/对话），和 Web 一致；换一个
   /// 目录也回到 Chat —— 「默认还是 chat 模式」不该被上一次切到 Terminal 记住。
@@ -1681,7 +1682,6 @@ class _AirTasksViewState extends State<AirTasksView>
             Text(
               switch (_mode) {
                 _AirMode.console => t('airConsole'),
-                _AirMode.recent => t('airRecentTasks'),
                 _AirMode.schedules => t('airScheduledTasks'),
                 _AirMode.library => '工作目录',
                 _AirMode.tasks => directory?.name ?? '工作目录',
@@ -1845,7 +1845,6 @@ class _AirTasksViewState extends State<AirTasksView>
             ),
           Expanded(
             child: switch (_mode) {
-              _AirMode.recent => _mobileWorkspace(data),
               _AirMode.schedules => _mobileSchedulePanel(data),
               _AirMode.console => AirConsoleBody(
                 settings: widget.settings,

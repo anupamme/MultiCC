@@ -201,10 +201,10 @@ void main() {
     expect(find.text('b 的终端'), findsNothing);
     // 混排的判据：任务那一类的东西整块不在了（不是排在下面）。
     expect(find.text('登录页面'), findsNothing);
-    // 最近任务仍作为主导航保留，终端正文中没有任务行。
+    // 底部导航照旧在（工作目录这一项高亮），终端正文中没有任务行。
     expect(find.byKey(const ValueKey('air-task-t1')), findsNothing);
     expect(find.descendant(of: find.byType(NavigationBar),
-      matching: find.text('最近任务')), findsOneWidget);
+      matching: find.text('工作目录')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // 切回 Chat，任务又回来 —— 两边是同一份快照的两种摆法，谁也不吃掉谁。
