@@ -18,7 +18,7 @@
 // Read-only: nothing here mutates the board or touches disk. The message route
 // does hand work to the index runtime, but only reads: it never triggers a sweep.
 
-const search = require('../task-board/search');
+const { createTaskSearchBackend } = require('../native/task-search');
 
 const MAX_QUERY_CHARS = 200;
 const DEFAULT_LIMIT = 20;
@@ -55,7 +55,7 @@ function sessionTaskIds(board) {
   return bySession;
 }
 
-function createTaskSearchRoutes({ getBoard, messages = null, logger = console } = {}) {
+function createTaskSearchRoutes({ getBoard, messages = null, logger = console, searchTasks = createTaskSearchBackend() } = {}) {
   if (typeof getBoard !== 'function') {
     throw new TypeError('task-search routes require a getBoard() port');
   }
@@ -76,14 +76,19 @@ function createTaskSearchRoutes({ getBoard, messages = null, logger = console } 
     if (!board || typeof board.tasks !== 'object') {
       return res.status(503).json({ error: 'task_board_unavailable' });
     }
-    const results = search.searchBoard(board, query, {
+    const options = {
       limit: clampLimit(req.query?.limit),
       dirId: String(req.query?.dirId || '').trim() || null,
       dirIds: csv(req.query?.dirIds),
       statuses: csv(req.query?.statuses),
       minScore: Number(req.query?.minScore) || 0,
-    });
-    return res.json({ ok: true, query, count: results.length, results });
+    };
+    const respond = results => res.json({ ok: true, query, count: results.length, results });
+    const fail = () => res.status(503).json({ error: 'task_search_unavailable' });
+    try {
+      const results = searchTasks(board, query, options);
+      return results && typeof results.then === 'function' ? results.then(respond, fail) : respond(results);
+    } catch (_) { return fail(); }
   }
 
   // The message corpus is the whole conversation, so a result is a *session* plus

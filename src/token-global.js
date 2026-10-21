@@ -298,7 +298,7 @@ async function addCodexInto(windows, byDay, byDayFresh, W, codexDir = CODEX_DIR)
   return { files: files.length, responses };
 }
 
-async function compute({ projectsDir = PROJECTS_DIR, codexDir = CODEX_DIR, now = new Date() } = {}) {
+async function computeJs({ projectsDir = PROJECTS_DIR, codexDir = CODEX_DIR, now = new Date() } = {}) {
   const files = await listJsonl(projectsDir);
   const W = windowStarts(now);
   const seen = new Set();
@@ -347,6 +347,32 @@ async function compute({ projectsDir = PROJECTS_DIR, codexDir = CODEX_DIR, now =
   };
 }
 
+// Rust 扫描与聚合在工作线程执行；目录顺序和窗口边界保持 Node 原有语义。
+async function computeRust({ projectsDir = PROJECTS_DIR, codexDir = CODEX_DIR, now = new Date(), telemetry = null } = {}, addon) {
+  const native = require('./native/runtime');
+  const input = JSON.stringify({
+    claudeFiles: await listJsonl(projectsDir),
+    codexFiles: (await listJsonl(codexDir)).sort(),
+    windows: windowStarts(now),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+  const result = await native.runNative(() => addon.computeUsage(input));
+  const data = JSON.parse(result.result);
+  if (telemetry) telemetry.nativeMs = result.computeMs;
+  native.record('usage');
+  return { generatedAt: new Date().toISOString(), sources: { claude: projectsDir, codex: codexDir }, ...data };
+}
+async function compute(options = {}) {
+  const native = require('./native/runtime');
+  try {
+    const addon = native.getNative('usage', options.backend);
+    if (addon) return await computeRust(options, addon);
+  } catch (error) {
+    native.fallback('usage', options.backend, error);
+  }
+  return computeJs(options);
+}
+
 // Cached accessor. Re-scans at most once per TTL; concurrent callers share the
 // same in-flight scan. `force` bypasses the cache (UI "refresh" button).
 async function getGlobalUsage({ force = false } = {}) {
@@ -368,6 +394,7 @@ async function getGlobalUsage({ force = false } = {}) {
 module.exports = {
   getGlobalUsage,
   _compute: compute,
+  _computeJs: computeJs,
   _scanCodexRollout: scanCodexRollout,
   _isDerivedCodexRollout: isDerivedCodexRollout,
 };
