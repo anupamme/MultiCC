@@ -75,8 +75,13 @@ function createClaudeAccountCredentialService(options = {}) {
 
   function withTimeout(promise, ms) {
     return new Promise((resolve, reject) => {
+      // The timer is deliberately ref'd: the caller is awaiting this promise, and
+      // an unref'd timer is not event-loop work — when the wait is the only thing
+      // pending the process exits before it can fire, so the read never settles
+      // (node --test reports "Promise resolution is still pending but the event
+      // loop has already resolved"). Staying alive at most refreshWaitMs while a
+      // read is genuinely in flight is the correct behaviour.
       const timer = setTimeout(() => reject(new Error(`delegated refresh timed out after ${ms}ms`)), ms);
-      if (timer.unref) timer.unref();
       Promise.resolve(promise).then(
         value => { clearTimeout(timer); resolve(value); },
         error => { clearTimeout(timer); reject(error); },
