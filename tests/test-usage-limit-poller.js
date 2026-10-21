@@ -369,7 +369,7 @@ test('relay adapter passes a balance DTO through unchanged', async () => {
 
 test('relay adapter: lender failure / bad shape / bad kind / degenerate target â†’ null or thrown cause', async () => {
   const nullCases = [
-    [() => ({ ok: true, status: 200, json: async () => ({ ok: false, reason: 'fetch_failed' }) }), 'lender reported failure without detail'],
+    [() => ({ ok: true, status: 200, json: async () => ({ ok: false }) }), 'lender reported failure without reason or detail'],
     [() => ({ ok: true, status: 200, json: async () => ({ ok: true }) }), 'missing dto'],
     [() => ({ ok: true, status: 200, json: async () => ({ ok: true, dto: { kind: 'surprise' } }) }), 'unknown dto kind'],
     [() => ({ ok: true, status: 200, json: async () => ({ ok: true, dto: { kind: 'window', utilization: 'high' } }) }), 'non-numeric utilization'],
@@ -384,6 +384,10 @@ test('relay adapter: lender failure / bad shape / bad kind / degenerate target â
   }
   // Degenerate targets never fetch.
   // HTTP-level failures and lender-supplied details throw with the cause.
+  await withFetch(() => okJson({ ok: false, reason: 'fetch_failed' }), async () => {
+    await assert.rejects(poller.pollRelayQuota(RELAY_TARGET, 0),
+      (error) => error.kind === 'limit_fetch_failed' && error.detail === 'lender: fetch_failed');
+  });
   await withFetch(() => ({ ok: false, status: 503, text: async () => 'busy', json: async () => ({}) }), async () => {
     await assert.rejects(
       poller.pollRelayQuota(RELAY_TARGET, 0),

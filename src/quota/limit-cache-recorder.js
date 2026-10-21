@@ -174,6 +174,21 @@ function createLimitRecorder({ cache, persistedSessions, providers, now = Date.n
     if (!dto || typeof dto !== 'object') return null;
     const at = now();
     if (dto.kind === 'window') {
+      // A borrowed Claude reading is a full account snapshot, unlike the
+      // passive 5h event. Keep every model/window and its label in the cache.
+      if (dto.provider === 'claude' && Array.isArray(dto.windows)) {
+        const rows = dto.windows.map(w => w && windowRow(w.window, w.label, w.usedPercent, w.resetMs)).filter(Boolean);
+        if (!rows.length) return null;
+        const previous = cache.get(appType, providerId);
+        const windows = mergeWindows(rows, previous?.summary?.windows, at);
+        const main = rows.find(w => w.window === '5h') || rows[0];
+        const summary = { kind: 'window', provider: 'claude', status: dto.status,
+          window: main.window, usedPercentage: main.usedPercent, resetsAtMs: main.resetMs,
+          observedAtMs: dto.fetchedAt || at, windows };
+        const bar = providerLimitBar({ kind: 'window', summary, fetchedAt: dto.fetchedAt || at });
+        return cache.record(appType, providerId, { kind: 'window', summary,
+          summaryText: compactBarText(bar?.text || ''), barText: bar?.text || null, fetchedAt: dto.fetchedAt || at });
+      }
       const normalized = normalizeWindowEvent(dto, dto.fetchedAt || at);
       if (!normalized) return null;
       const bar = windowEventBar(normalized);

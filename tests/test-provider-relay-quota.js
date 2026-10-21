@@ -23,7 +23,8 @@ process.env.MULTICC_DATA_DIR = dataDir;
 const runtimePaths = createPaths({ dataDir });
 const { getProviderLimitTarget } = require('../src/providers/core');
 const poller = require('../src/usage-limit-poller');
-const { mountProviderRelayQuotaRoutes } = require('../src/routes/provider-balance');
+const { mountProviderRelayQuotaRoutes, pollClaudeUsage, createProviderBalanceRuntime } = require('../src/routes/provider-balance');
+const { createLimitRecorder } = require('../src/quota/limit-cache-recorder');
 
 const RELAY_CREDENTIAL = 'mcr1.abcdefghijklmnop.secret-token-1';
 
@@ -55,6 +56,16 @@ test('claude relay provider resolves to strategy relay-quota with the canonical 
     relayUrl: 'https://relay.example:3000/claude-proxy/glm/remote',
     apiKey: RELAY_CREDENTIAL,
     strategy: 'relay-quota',
+  });
+});
+
+test('official Claude quota target retains the shared account identity', () => {
+  writeProviders([{ id: 'official-shared', appType: 'claude', settingsConfig: {
+    env: {}, officialAccount: { id: 'account-a' },
+  } }]);
+  assert.deepEqual(getProviderLimitTarget('claude', 'official-shared'), {
+    providerId: 'official-shared', appType: 'claude', host: 'api.anthropic.com', apiKey: null,
+    officialAccountId: 'account-a', strategy: 'claude-oauth-usage',
   });
 });
 
@@ -195,4 +206,63 @@ test('end-to-end: borrower detection → relay adapter → lender endpoint → f
   } finally {
     global.fetch = origFetch;
   }
+});
+
+test('official Claude quota survives lender → borrower → durable snapshot without switching accounts', async () => {
+  const routes = {};
+  mountProviderRelayQuotaRoutes({ get() {}, post: (p, fn) => { routes[p] = fn; } }, {
+    getProvider: () => ({ appType: 'claude' }), listProviders: () => [],
+    getProviderLimitTarget: () => ({ strategy: 'claude-oauth-usage', officialAccountId: 'account-a' }),
+    adapters: { 'claude-oauth-usage': target => pollClaudeUsage(target, 0, undefined, {
+      credentials: { peekAccountToken: id => {
+        assert.equal(id, 'account-a');
+        return { token: 'private-test-token' };
+      } },
+      fetchUsage: async () => ({ five_hour: { utilization: 20 }, seven_day: { utilization: 60 },
+        seven_day_sonnet: { utilization: 90 } }),
+    }) },
+  });
+  let stored = null;
+  const recorder = createLimitRecorder({ persistedSessions: new Map(), providers: {},
+    cache: { get: () => stored, record: (appType, providerId, data) => {
+      stored = { ...data, appType, providerId }; return stored;
+    } },
+  });
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    let result;
+    const res = { set() { return this; }, json(body) { result = body; return this; } };
+    await routes['/claude-proxy/:id/remote/quota']({ params: { id: 'lender-provider' } }, res);
+    assert.ok(!JSON.stringify(result).includes('private-test-token'));
+    return { ok: true, json: async () => result };
+  };
+  try {
+    const borrower = createProviderBalanceRuntime({
+      getProvider: () => ({ appType: 'claude' }), listProviders: () => [],
+      getProviderLimitTarget: () => ({ strategy: 'relay-quota',
+        relayUrl: 'https://lender.example/claude-proxy/lender-provider/remote', apiKey: RELAY_CREDENTIAL }),
+      onResult: recorder.recordProvider,
+    });
+    const result = await borrower.queryOne('claude', 'borrower-provider');
+    assert.equal(result.ok, true);
+    assert.equal(stored.providerId, 'borrower-provider');
+    assert.deepEqual(stored.summary.windows.map(w => w.usedPercent), [20, 60, 90]);
+    assert.match(result.snapshot.bar.text, /5h 80%/);
+    assert.match(result.snapshot.bar.text, /1wk-ALL 40%/);
+    assert.match(result.snapshot.bar.text, /1wk-Sonnet 10%/);
+    // Weekly-only plans must also persist; they are not passive 5h events.
+    const weekly = { ...result.dto, rateLimitType: 'weekly', windows: result.dto.windows.slice(1) };
+    recorder.recordProvider('claude', 'weekly-provider', { ok: true, dto: weekly });
+    assert.equal(stored.summary.window, '1wk');
+    assert.equal(stored.summary.windows.length, 2);
+  } finally { global.fetch = originalFetch; }
+});
+
+test('an unsupported lender exposes its reason instead of silently dropping quota', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => ({ ok: false, reason: 'unsupported' }) });
+  try {
+    await assert.rejects(poller.pollRelayQuota({ relayUrl: 'https://lender.example/codex-proxy/p', apiKey: RELAY_CREDENTIAL }),
+      /lender: unsupported/);
+  } finally { global.fetch = originalFetch; }
 });
