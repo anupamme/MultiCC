@@ -28,6 +28,7 @@ const {
   releaseCliAccountReferences,
 } = require('../src/cli-key-accounts');
 const { mountCliKeyAccountRoutes } = require('../src/routes/cli-key-accounts');
+const { readCommandcodeLogin, mountCommandcodeAuthRoutes } = require('../src/routes/commandcode-auth');
 const { createProviderRouterRuntime } = require('../src/providers/router-runtime');
 const { REQUIRED_CAPABILITIES } = require('../src/providers/router-port');
 const providers = require('../src/providers/core.js');
@@ -40,6 +41,67 @@ const OC_KEY = 'sk-oc-test-key-00000000000000000000000002';
 function freshStore() {
   return createCliKeyAccountStore({ root: fs.mkdtempSync(path.join(tmpRoot, 'store-')) });
 }
+
+test('官方登录状态只返回身份摘要，区分本地凭据和环境密钥，不泄漏凭据', () => {
+  const home = fs.mkdtempSync(path.join(tmpRoot, 'commandcode-home-'));
+  const dir = path.join(home, '.commandcode');
+  fs.mkdirSync(dir);
+  const status = env => readCommandcodeLogin({ home, env });
+  assert.deepEqual(status({}), { credentialSaved: false, userName: '', environmentKey: false });
+  fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ apiKey: CC_KEY, userName: '测试用户', extraSecret: OC_KEY }));
+  assert.deepEqual(status({}), { credentialSaved: true, userName: '测试用户', environmentKey: false });
+  assert.equal(status({ COMMAND_CODE_API_KEY: OC_KEY }).environmentKey, true);
+  assert.equal(JSON.stringify(status({})).includes(CC_KEY), false);
+  assert.equal(JSON.stringify(status({})).includes(OC_KEY), false);
+  assert.equal(status({ COMMANDCODE_API_ENV: 'staging' }).credentialSaved, false);
+  fs.writeFileSync(path.join(dir, 'auth.staging.json'), JSON.stringify({ apiKey: OC_KEY, userName: '测试环境' }));
+  assert.equal(status({ COMMANDCODE_API_ENV: 'staging' }).userName, '测试环境');
+  for (const value of ['{损坏', 'null', '[]', JSON.stringify({ userName: '过期文件' })]) {
+    fs.writeFileSync(path.join(dir, 'auth.json'), value);
+    assert.deepEqual(status({}), { credentialSaved: false, userName: '', environmentKey: false });
+  }
+});
+
+test('官方登录接口创建并复用受限登录终端，不接受客户端命令或密钥', async () => {
+  const app = fakeApp();
+  const created = [];
+  let exists = false;
+  mountCommandcodeAuthRoutes(app, {
+    directories: new Map([['project', { id: 'project', path: '/project' }]]),
+    persistedSessionExists: () => exists,
+    getStatus: () => ({ credentialSaved: true, userName: '测试用户', environmentKey: false }),
+    createSessionRecord: async input => { created.push(input); exists = true; return { ok: true, id: input.id }; },
+  });
+  const invoke = async (route) => {
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+    await app.routes.get(route)({ body: { command: '不应执行', apiKey: CC_KEY } }, res);
+    return res;
+  };
+  assert.equal((await invoke('GET /api/commandcode/auth/status')).body.userName, '测试用户');
+  const first = await invoke('POST /api/commandcode/auth/login');
+  const second = await invoke('POST /api/commandcode/auth/login');
+  assert.equal(first.body.sessionId, 'commandcode-login');
+  assert.equal(second.body.reused, true);
+  assert.equal(created.length, 1);
+  assert.equal(created[0].loginFlow, 'commandcode-login');
+  assert.equal(created[0].kind, 'terminal');
+  assert.equal(created[0].provider, null);
+  assert.equal(JSON.stringify(created).includes(CC_KEY), false);
+});
+
+test('官方登录接口对缺少目录和创建失败返回中文错误，不暴露内部异常', async () => {
+  for (const scenario of ['no-dir', 'failed', 'throws']) {
+    const app = fakeApp();
+    mountCommandcodeAuthRoutes(app, {
+      directories: new Map(scenario === 'no-dir' ? [] : [['p', { path: '/project' }]]),
+      createSessionRecord: async () => { if (scenario === 'throws') throw new Error(CC_KEY); return { ok: false, error: CC_KEY }; },
+    });
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+    await app.routes.get('POST /api/commandcode/auth/login')({}, res);
+    assert.equal(res.statusCode, scenario === 'no-dir' ? 409 : 500);
+    assert.equal(JSON.stringify(res.body).includes(CC_KEY), false);
+  }
+});
 
 function mode(file) {
   return fs.statSync(file).mode & 0o777;

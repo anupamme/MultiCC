@@ -814,6 +814,8 @@
     const accountTouched = new Set();
     const accountLists = new Map(); // cli → 账户数组 | null（加载中）| Error
     let accountVanished = '';
+    let commandcodeLogin;
+    let commandcodeLoginLoading = false;
 
     function loadCatalog(cli) {
       if (catalogs.has(cli)) return Promise.resolve(catalogs.get(cli));
@@ -1011,6 +1013,18 @@
     const accountDelete = el(doc, 'button', 'rc-account-delete', tt('runConfigAccountDelete', '删除'));
     accountDelete.type = 'button';
     accountRow.append(accountSelect, accountDelete);
+    const accountLoginRow = el(doc, 'div', 'rc-account-login-row');
+    const accountLoginStatus = el(doc, 'span', 'rc-login-status');
+    accountLoginStatus.setAttribute('role', 'status');
+    const accountLogin = el(doc, 'button', 'rc-account-login', tt('runConfigAccountLogin', '登录官方账号'));
+    const accountLoginRefresh = el(doc, 'button', 'rc-account-login-refresh', tt('runConfigAccountRefresh', '刷新登录状态'));
+    accountLogin.type = accountLoginRefresh.type = 'button';
+    const accountLoginLink = el(doc, 'a', 'rc-account-login-link', tt('runConfigAccountLoginOpen', '打开登录终端'));
+    accountLoginLink.target = '_blank';
+    accountLoginLink.rel = 'noopener';
+    show(accountLoginLink, false);
+    accountLoginRow.append(accountLoginStatus, accountLogin, accountLoginRefresh, accountLoginLink);
+    show(accountLoginRow, false);
     // 内联的添加表单：key 只经这一个输入框直接发给本机 MultiCC，不进聊天、不发给模型。
     const accountForm = el(doc, 'div', 'rc-account-form');
     const accountLabelInput = el(doc, 'input', 'rc-account-name');
@@ -1031,7 +1045,7 @@
     accountForm.append(accountLabelInput, accountKeyInput, accountSave, accountCancel);
     show(accountForm, false);
     const accountNote = el(doc, 'p', 'rc-note');
-    accountField.append(accountRow, accountForm, accountNote);
+    accountField.append(accountRow, accountLoginRow, accountForm, accountNote);
     const effortField = el(doc, 'div', 'rc-field rc-effort-field');
     effortField.append(el(doc, 'span', null, tt('runConfigEffortLabel', '推理强度')));
     const effortSeg = segment(doc, 'rc-efforts', tt('runConfigEffortLabel', '推理强度'));
@@ -1467,17 +1481,63 @@
       accountSelect.disabled = !accountPicksReady;
       const account = pickedAccount();
       show(accountDelete, !!account);
+      show(accountLoginRow, cli === 'commandcode');
+      if (cli === 'commandcode') {
+        if (commandcodeLogin === undefined) refreshCommandcodeLogin();
+        accountLoginRefresh.disabled = commandcodeLoginLoading;
+        accountLogin.textContent = tt(commandcodeLogin && commandcodeLogin.credentialSaved ? 'runConfigAccountRelogin' : 'runConfigAccountLogin',
+          commandcodeLogin && commandcodeLogin.credentialSaved ? '查看／登录官方账号' : '登录官方账号');
+        accountLoginStatus.textContent = commandcodeLogin instanceof Error
+          ? tt('runConfigAccountLoginFailed', '无法读取登录状态，请重试。')
+          : commandcodeLogin && commandcodeLogin.environmentKey
+            ? tt('runConfigAccountLoginEnv', '当前默认使用环境变量中的 API Key，优先于本机账号。')
+            : commandcodeLogin && commandcodeLogin.credentialSaved
+              ? tt('runConfigAccountLoginSaved', '本机已保存登录：{name}（有效性以实际调用为准）', { name: commandcodeLogin.userName || 'Command Code' })
+              : tt('runConfigAccountLoginMissing', '本机尚未保存官方账号登录。');
+        if (commandcodeLoginLoading) accountLoginStatus.textContent = tt('runConfigAccountLoading', '加载中…');
+      }
       accountNote.textContent = list instanceof Error
         ? tt('runConfigAccountLoadFailed', '账户列表加载失败')
         : accountVanished === cli
           ? tt('runConfigAccountVanished', '之前选的账户已不存在，保存后改用本机 CLI 登录。')
           : cli === 'opencode'
             ? tt('runConfigAccountHintOpencode', '添加时填 opencode.ai 的 API Key，Zen 与 Go 共用；只用于这个会话，不改本机配置。')
-            : tt('runConfigAccountHintCommandcode', '添加时填 Command Code 的 API Key；只用于这个会话，不改本机登录。');
+            : tt('runConfigAccountHintCommandcode', '官方账号通过登录按钮授权，选择“本机 CLI 登录”并保存后使用；影响所有复用本机登录的会话。添加 API Key 账户只用于所选会话。');
       fixedStatus.textContent = account
         ? tt('runConfigStatusAccount', '使用 {name} 账户「{account}」', { name: cliLabel(currentCli), account: account.label || String(account.id).slice(0, 6) })
         : providerless(currentCli) ? tt('runConfigStatusOwn', '使用 {name} 自己的账号', { name: cliLabel(currentCli) }) : '';
     }
+
+    function refreshCommandcodeLogin() {
+      if (commandcodeLoginLoading) return;
+      commandcodeLoginLoading = true;
+      commandcodeLogin = null;
+      request('/api/commandcode/auth/status', undefined, 'GET').then(
+        result => { commandcodeLogin = result; },
+        cause => { commandcodeLogin = cause instanceof Error ? cause : new Error(String(cause)); },
+      ).then(() => {
+        commandcodeLoginLoading = false;
+        if (dialog.isConnected && accountLane() === 'commandcode') renderAccount();
+      });
+    }
+
+    accountLoginRefresh.onclick = () => { refreshCommandcodeLogin(); renderAccount(); };
+    accountLogin.onclick = () => {
+      // 同步打开标签页，避免异步请求完成后被浏览器拦截；拦截时仍提供可点击链接。
+      const popup = scope().open('about:blank', '_blank');
+      if (popup) popup.opener = null;
+      accountLogin.disabled = true;
+      request('/api/commandcode/auth/login', {}).then(result => {
+        const url = `/?id=${encodeURIComponent(result.sessionId)}`;
+        accountLoginLink.href = url;
+        show(accountLoginLink, true);
+        if (popup) popup.location.replace(url);
+        accountLoginStatus.textContent = tt('runConfigAccountLoginHint', '在登录终端完成浏览器授权，回来点击“刷新登录状态”。远程访问时，请在运行 MultiCC 的电脑上完成授权。');
+      }, cause => {
+        if (popup) popup.close();
+        accountLoginStatus.textContent = cause.message;
+      }).then(() => { accountLogin.disabled = false; });
+    };
 
     // 保存时要写回的那一格：只写用户动过的车道。
     function accountPatch() {

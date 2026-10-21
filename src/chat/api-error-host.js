@@ -227,7 +227,9 @@ function createApiErrorHost(options = {}) {
       // can only be fixed by logging in inside the vendor TUI. Attach a
       // structured action so clients can render a one-click "open login
       // terminal" button instead of a dead-end text notice.
-      const vendorLogin = decision.error.category === 'authentication_permission'
+      const commandcodeKeyAccount = identity.cli === 'commandcode'
+        && persisted?.cliAccounts?.commandcode;
+      const vendorLogin = decision.error.category === 'authentication_permission' && !commandcodeKeyAccount
         ? vendorLoginForCli(identity.cli) : null;
       parkRevokedCredential(decision, identity, vendorLogin);
       const authAction = vendorLogin ? {
@@ -235,10 +237,11 @@ function createApiErrorHost(options = {}) {
         cli: identity.cli,
         label: vendorLogin.label,
         loginCommand: vendorLogin.loginCommand,
+        ...(vendorLogin.autoStart ? { autoStart: true } : {}),
       } : null;
       const baseMessage = retryNotice(decision);
       const message = vendorLogin
-        ? `${baseMessage} ${vendorLogin.label} 使用厂商独立账号：点下方按钮打开登录终端，输入 ${vendorLogin.loginCommand} 完成登录后再重新发送。`
+        ? `${baseMessage} ${vendorLogin.label} 使用厂商独立账号：点下方按钮打开登录终端，${vendorLogin.autoStart ? '按提示完成浏览器授权' : `输入 ${vendorLogin.loginCommand} 完成登录`}后再重新发送。`
         : baseMessage;
       chatBroadcast(sessionName, {
         type: 'api_error_policy',

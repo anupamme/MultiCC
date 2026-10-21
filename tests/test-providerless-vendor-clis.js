@@ -88,8 +88,8 @@ assert.match(source, /appType === 'codex'/);
 });
 
 test('vendor login flows map each vendor-auth CLI to a whitelisted login terminal spec', () => {
-  const { VENDOR_LOGIN, vendorLoginForCli, cliForLoginFlow } = require('../src/cli-adapters/vendor-login');
-  assert.deepEqual(Object.keys(VENDOR_LOGIN).sort(), ['codebuddy', 'qoder']);
+  const { VENDOR_LOGIN, vendorLoginForCli, cliForLoginFlow, vendorLoginTerminalCmd } = require('../src/cli-adapters/vendor-login');
+  assert.deepEqual(Object.keys(VENDOR_LOGIN).sort(), ['codebuddy', 'commandcode', 'qoder']);
   assert.equal(vendorLoginForCli('codebuddy').loginFlow, 'codebuddy-login');
   assert.equal(vendorLoginForCli('codebuddy').label, 'WorkBuddy');
   assert.equal(vendorLoginForCli('qoder').loginFlow, 'qoder-login');
@@ -98,6 +98,9 @@ test('vendor login flows map each vendor-auth CLI to a whitelisted login termina
   assert.equal(vendorLoginForCli('dsh'), null, 'dsh uses DEEPSEEK_API_KEY, not TUI login');
   assert.equal(cliForLoginFlow('codebuddy-login'), 'codebuddy');
   assert.equal(cliForLoginFlow('qoder-login'), 'qoder');
+  assert.equal(cliForLoginFlow('commandcode-login'), 'commandcode');
+  assert.equal(vendorLoginForCli('commandcode').autoStart, true);
+  assert.equal(vendorLoginTerminalCmd('commandcode-login', { commandcode: '/a path/command-code' }), "'/a path/command-code' login --no-auto-update");
   assert.equal(cliForLoginFlow('codex-login'), null, 'codex/claude login flows stay hardcoded in create-record');
   assert.equal(cliForLoginFlow('bogus'), null);
 });
