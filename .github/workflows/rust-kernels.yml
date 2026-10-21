@@ -1,7 +1,7 @@
 name: Rust kernels
 on:
   pull_request:
-    paths: ['native/**', 'src/native/**', 'src/token-global.js', 'src/task-board/**', 'src/routes/task-search.js', 'scripts/*rust*', 'tests/*rust*', 'tests/fixtures/rust-kernel-fixtures.js', '.github/workflows/rust-kernels.yml']
+    paths: ['native/**', 'src/native/**', 'src/sqlite/**', 'tests/test-sqlite*', 'src/token-global.js', 'src/task-board/**', 'src/routes/task-search.js', 'scripts/*rust*', 'tests/*rust*', 'tests/fixtures/rust-kernel-fixtures.js', '.github/workflows/rust-kernels.yml']
   workflow_dispatch:
   workflow_call:
 permissions:
@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci --no-audit --no-fund
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -36,4 +37,4 @@ jobs:
           set -euo pipefail
           node scripts/build-rust-kernels.js
           export MULTICC_RUST_ADDON="$(node -p 'require("node:path").join(process.env.MULTICC_RUST_PREBUILT_DIR,`${process.platform}-${process.arch}`,"multicc_core.node")')"
-          node --test tests/test-rust-kernels.js tests/test-task-search.js tests/test-token-global.js
+          node --test tests/test-rust-kernels.js tests/test-rust-sqlite.js tests/test-sqlite-driver.js tests/test-orchestration-sqlite-store.js tests/test-provider-limit-cache.js tests/test-task-shells.js tests/test-search-index.js tests/test-task-search.js tests/test-token-global.js

@@ -16,17 +16,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22.16 is the floor: storage is `node:sqlite`, which ships inside Node
-        # since 22.5. Node 20 has no such module, so running this suite there
-        # tested a runtime MultiCC refuses to start on.
+        # Node remains the host; storage is provided by the Rust module built below.
         node: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - name: Build Rust SQLite
+        run: node scripts/build-rust-kernels.js
+        env:
+          MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
+      - name: Configure Rust module
+        run: echo "MULTICC_RUST_PREBUILT_DIR=${{ runner.temp }}/multicc-rust-prebuilt" >> "$GITHUB_ENV"
       - name: Run deterministic, architecture, and repository governance suites
         run: npm run test:deterministic
       - name: Validate API schemas, golden payloads, and compatibility
@@ -39,11 +44,18 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: 22.x
           cache: npm
       - run: npm ci
+      - name: Build Rust SQLite
+        run: node scripts/build-rust-kernels.js
+        env:
+          MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
+      - name: Configure Rust module
+        run: echo "MULTICC_RUST_PREBUILT_DIR=${{ runner.temp }}/multicc-rust-prebuilt" >> "$GITHUB_ENV"
       - name: Run isolated server integration without live AI
         env:
           CLAUDE_CMD: /bin/true

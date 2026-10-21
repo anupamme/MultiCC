@@ -455,7 +455,7 @@ test('private file permissions fail closed instead of being silently ignored', a
   );
 });
 
-test('storage has no compiled dependency: SQLite comes from Node, not an addon', () => {
+test('storage uses the Rust driver; the npm addon remains a development oracle', () => {
   const root = path.join(__dirname, '..');
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
@@ -467,7 +467,8 @@ test('storage has no compiled dependency: SQLite comes from Node, not an addon',
   assert.ok(manifest.devDependencies['better-sqlite3'], 'the cross-driver oracle must stay available to tests');
 
   const driver = fs.readFileSync(path.join(root, 'src/sqlite/driver.js'), 'utf8');
-  assert.match(driver, /require\('node:sqlite'\)/);
+  assert.match(driver, /RustDatabase/);
+  assert.doesNotMatch(driver, /require\('node:sqlite'\)/);
   for (const file of ['src/task-shell/store.js',
     'src/orchestration/sqlite-store.js', 'src/quota/provider-limit-cache.js', 'src/sqlite-runtime.js']) {
     const source = fs.readFileSync(path.join(root, file), 'utf8');

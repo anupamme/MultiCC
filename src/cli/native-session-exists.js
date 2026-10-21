@@ -122,7 +122,7 @@ function opencodeSessionExists(sessionId, { dbPath = opencodeDbPath() } = {}) {
   if (!sessionId || !fs.existsSync(dbPath)) return null;
   let db = null;
   try {
-    const Database = require('better-sqlite3');
+    const Database = require('../sqlite/driver').databaseConstructor();
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
     return db.prepare('SELECT 1 FROM session WHERE id = ? LIMIT 1').get(String(sessionId)) !== undefined;
   } catch (_) {

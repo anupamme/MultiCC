@@ -781,5 +781,6 @@ test('standalone build wiring: lifecycle lib is shared with the desktop shell, n
   // Storage must be proved against the bundled runtime itself: this is the
   // check that would catch a pinned runtime without a working node:sqlite.
   assert.match(build, /verifyRuntimeSqlite\(\{/);
-  assert.match(build, /node:sqlite/);
+  assert.match(build, /Rust SQLite required/);
+  assert.match(build, /serverDir: path.join\(resourcesDir, 'app-server'\)/);
 });

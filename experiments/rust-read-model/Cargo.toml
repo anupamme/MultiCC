@@ -1,0 +1,25 @@
+[package]
+name = "multicc-read-model-experiment"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# 独立实验：不加入生产 native workspace，不被安装包或服务加载。
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+napi = { version = "3", default-features = false, features = ["napi8"] }
+napi-derive = "3"
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

@@ -73,11 +73,9 @@ async function run(command, args, cwd, env = process.env) {
   const config = fs.readFileSync(configFile, 'utf8');
   assert.match(config, /^ACCESS_TOKEN=clean-install-test$/m);
   assert.match(config, /^PORT=3000$/m);
-  // Storage ships inside the runtime (node:sqlite since 22.5). Proving the
-  // *shipped* runtime can open a database is the meaningful check — and the one
-  // a host `node` could never make on its behalf.
+  // The shipped runtime must load its own Rust SQLite module.
   await run(runtime, ['--disable-warning=ExperimentalWarning', '-e',
-    "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(':memory:').close();"], installed);
+    "const D=require('./Resources/app-server/src/sqlite/driver').databaseConstructor(); const db=new D(':memory:'); if(db.backend!=='rust')throw Error('Rust required'); db.close();"], installed);
 
   const smokeEnv = { ...process.env, MULTICC_STANDALONE_HOME: standaloneHome, MULTICC_DATA_DIR: dataDir,
     MULTICC_MEMORY_ROOT: `${dataDir}/memories`, MULTICC_SHELL_BROWSER_TEST: '1',

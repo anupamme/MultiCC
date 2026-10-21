@@ -76,9 +76,8 @@ function checkRuntimeDeps({
   const failures = sqlite.failures.slice();
   if (!providerRouter.ok) failures.push(providerRouter.failure);
   if (!lanDiscovery.ok) failures.push(lanDiscovery.failure);
-  // A missing SQLite runtime is always "your Node is too old", which callers
-  // report differently from a damaged install — hence the distinct exit code.
-  const sqliteOnly = failures.length === 1 && failures[0].dependency === 'node:sqlite';
+  // A missing Rust SQLite module retains the storage-specific repair exit code.
+  const sqliteOnly = failures.length === 1 && failures[0].dependency === 'rust:sqlite';
   return {
     ok: failures.length === 0,
     failures,
@@ -106,7 +105,7 @@ function formatReport(result) {
     lines.push(`- ${failure.dependency}: ${failure.message}`);
   }
   lines.push(`Repair: cd '${String(path.join(__dirname, '..')).replace(/'/g, `'"'"'`)}' && npm install`
-    + ' — and run MultiCC on Node 22.16 or newer, which is where SQLite lives now.');
+    + ' — for Rust SQLite, install the matching prebuilt module or run npm run build:rust and configure MULTICC_RUST_PREBUILT_DIR.');
   return lines.join('\n');
 }
 

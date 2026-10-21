@@ -2,6 +2,8 @@
 
 > Repository layout, message-flow diagrams, and the design decisions behind them.
 
+> 后端语言约定（2026-10-22）：新增后端功能及现有后端代码改进默认使用 Rust，Node.js 仅限明确的特殊场景；完整规则与例外边界见 [项目级开发原则](../AGENTS.md)。下方目录描述现有架构，不代表继续新增 Node.js 后端逻辑的许可。
+
 ```
 multicc/
 ├── server.js                     # HTTP + WebSocket host: wires routes, tmux, CLI spawner, bridges
@@ -129,6 +131,10 @@ multicc/
 ```
 
 > State-file locations are resolved by `src/paths.js` and follow `MULTICC_DATA_DIR` when it is set.
+
+## SQLite storage boundary
+
+Database connections, SQL execution, statement caching and transactions use the Rust module through `src/sqlite/driver.js`. Packaged installations must include the matching native module. Existing synchronous business callbacks remain behind a compatibility bridge; `MULTICC_SQLITE_BACKEND=node` is an explicit emergency rollback. See [migration scope, validation and measurements](rust-sqlite-migration-2026-10-22.md).
 
 ## How a message flows
 

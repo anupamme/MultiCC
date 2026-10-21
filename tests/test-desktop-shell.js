@@ -531,6 +531,18 @@ function stubRepoRoot(dir) {
 
 function stageWithStubNpm(body, extraArgs = []) {
   const root = stubRepoRoot(tmpdir('desktop-stage-root-'));
+  // This test only verifies npm target propagation. A labelled Mach-O header
+  // fixture supplies its cross-platform staging prerequisite, never runtime proof.
+  const fixtureEnv = {};
+  if (extraArgs.includes('darwin') && extraArgs.includes('x64')) {
+    const prebuilt = path.join(root, 'fixture-prebuilt');
+    const dir = path.join(prebuilt, 'darwin-x64');
+    fs.mkdirSync(dir, { recursive: true });
+    const header = Buffer.alloc(32);
+    header.writeUInt32LE(0xfeedfacf, 0); header.writeUInt32LE(0x01000007, 4);
+    fs.writeFileSync(path.join(dir, 'multicc_core.node'), header);
+    fixtureEnv.MULTICC_RUST_PREBUILT_DIR = prebuilt;
+  }
   const bin = tmpdir('desktop-stage-bin-');
   const npm = path.join(bin, process.platform === 'win32' ? 'npm.cmd' : 'npm');
   fs.writeFileSync(npm, `#!/bin/sh\n${body}\n`);
@@ -538,7 +550,7 @@ function stageWithStubNpm(body, extraArgs = []) {
   return spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'desktop-bundle-server.js'),
     '--out', path.join(root, 'staged'), '--repo-root', root, '--install', ...extraArgs], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: [bin, ...process.env.PATH.split(path.delimiter)].join(path.delimiter) },
+    env: { ...process.env, ...fixtureEnv, PATH: [bin, ...process.env.PATH.split(path.delimiter)].join(path.delimiter) },
   });
 }
 
@@ -1035,7 +1047,7 @@ test('desktop-release workflow: three native runners, publishes before Android, 
   // land on the same release; a failed build blocks publishing instead of
   // shipping a half-populated Release.
   assert.match(wf, /scripts\/standalone-bundle\.js/);
-  assert.match(wf, /needs: \[core-tests, clean-install, build, standalone\]/);
+  assert.match(wf, /needs: \[core-tests, clean-install, rust-kernels, build, standalone\]/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-darwin-x64\.tar\.gz/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-linux-arm64\.tar\.gz/);
   assert.match(wf, /multicc-standalone-\$\{VERSION\}-win32-x64\.zip/);

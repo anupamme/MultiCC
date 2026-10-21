@@ -1,12 +1,7 @@
 'use strict';
 
-// Storage moved off the compiled `better-sqlite3` addon and onto the SQLite
-// inside Node (`node:sqlite`). src/sqlite/driver.js is the compatibility layer
-// that keeps every call site unchanged, so these tests pin the exact slice of
-// the old API the server depends on — and, where the addon is still installed
-// (it is a devDependency), run the same statements through both drivers and
-// compare the results. A silent divergence here is a corrupt-state bug in
-// production, which is why the oracle is worth the extra dependency.
+// Rust is the default storage driver. Keep the former Node API contract and
+// compare results with the independent better-sqlite3 development oracle.
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -50,12 +45,12 @@ function catchError(fn) {
   throw new Error('expected the call to throw');
 }
 
-test('the driver is the SQLite that ships inside Node, and reports its absence', () => {
+test('默认驱动使用 Rust，缺失原生模块时明确报错', () => {
   assert.equal(typeof databaseConstructor(), 'function');
   assert.equal(isSqliteAvailable(), true);
   // 22.16 is the floor package.json declares: `node:sqlite` landed in 22.5 and
   // had its experimental warning removed in 22.13.
-  assert.match(new SqliteUnavailableError().message, /Node 22\.16 or newer/);
+  assert.match(new SqliteUnavailableError().message, /Rust SQLite/);
   assert.equal(new SqliteUnavailableError().code, 'SQLITE_RUNTIME_UNAVAILABLE');
   assert.ok(new CompatDatabase(':memory:') instanceof CompatDatabase);
 });

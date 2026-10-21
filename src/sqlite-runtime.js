@@ -3,15 +3,12 @@
 const fs = require('fs');
 const { databaseConstructor } = require('./sqlite/driver');
 
-// SQLite stopped being a compiled dependency: Node 22.16+ ships the engine in
-// core as `node:sqlite`, and src/sqlite/driver.js is the only place MultiCC
-// opens it. So the CC-Switch import can fail for exactly one reason — a Node
-// older than the floor in package.json — and there is nothing to rebuild.
-const RUNTIME_REQUIREMENT = 'Node 22.16 or newer';
+// 数据库由打包的 Rust 原生模块提供；缺失模块与数据库文件缺失分别报告。
+const RUNTIME_REQUIREMENT = '与当前平台和架构匹配的 Rust SQLite 模块';
 
 function sqliteUnavailableMessage() {
-  return 'SQLite is unavailable in this Node.js runtime. MultiCC needs '
-    + RUNTIME_REQUIREMENT + ' (it ships SQLite in core as `node:sqlite`).';
+  return 'SQLite 不可用，需要' + RUNTIME_REQUIREMENT
+    + '；请安装完整 MultiCC 包，源码运行先执行 npm run build:rust 并配置 MULTICC_RUST_PREBUILT_DIR。';
 }
 
 function makeError(message, code, reason, cause) {

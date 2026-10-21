@@ -11,7 +11,7 @@
 // either one. The Node project still builds darwin-x64 with
 // `-mmacosx-version-min=11.0`, so a bundle pinned to Node 22 runs there
 // untouched — provided nothing in it has to be compiled. Storage no longer
-// does: src/sqlite/driver.js uses the SQLite built into that runtime.
+// does: src/sqlite/driver.js loads the bundled Rust SQLite module.
 //
 //   node scripts/standalone-bundle.js --platform darwin --arch x64
 //
@@ -65,13 +65,13 @@ const LAUNCHER_LIB_FILES = ['port-chooser.js', 'health-probe.js', 'backend-super
 const LAUNCHER_FILES = ['standalone-launcher.js', 'standalone-cli.js'];
 const NODE_DIST_BASE = 'https://nodejs.org/dist';
 const BUNDLE_README = '使用说明.txt';
-// The server's durable state is SQLite. It ships inside Node itself
-// (`node:sqlite`), so the smoke test below loads the bundled runtime and proves
-// *it* can open a database — the one check that would have caught "the runtime
-// we pinned cannot do storage" without any addon involved.
-const RUNTIME_SMOKE_SCRIPT = "[require('node:sqlite').DatabaseSync]"
-  + ".map(ctor => new ctor(':memory:'))"
-  + ".map(db => (db.exec('create table t(x)'), db.close(), 'sqlite-ok'))[0]";
+// Validate the packaged Rust SQLite with the bundled Node runtime, without
+// accepting a host addon override or the legacy emergency driver.
+const RUNTIME_SMOKE_SCRIPT = "const D=require('./src/sqlite/driver').databaseConstructor();"
+  + "const db=new D(':memory:');if(db.backend!=='rust')throw Error('Rust SQLite required');"
+  + "db.exec('CREATE TABLE t(x); CREATE VIRTUAL TABLE f USING fts5(x)');"
+  + "db.transaction(()=>db.prepare('INSERT INTO t VALUES(?)').run('rust'))();"
+  + "if(db.prepare('SELECT x FROM t').get().x!=='rust')throw Error('SQLite smoke failed');db.close();";
 
 function parseArgs(argv) {
   const args = {
@@ -463,7 +463,7 @@ function bundleReadme({ version, platform, nodeVersion, macosFloor }) {
       ? `- macOS ${macosFloor} 及以上（Intel 与 Apple Silicon 均可）。`
       : '- 64 位 Linux / Windows 10 及以上。',
     `- 内置 Node 运行时 ${nodeVersion}；不要把它换成 Node 24+：Node 24+ 要求 macOS 13.5 起。`,
-    '- 存储用的是 Node 自带的 SQLite（`node:sqlite`），包里没有任何需要编译或匹配 ABI 的原生 SQLite 模块。',
+    '- 数据库由随包提供的 Rust SQLite 模块读写；用户无需安装 Rust、Cargo 或 SQLite。',
     '',
     '## 已知限制',
     '- 本地语音识别（sherpa-onnx）需要 macOS 15 及以上；更老系统上会自动回退到云端 ASR。',
@@ -569,6 +569,7 @@ function sanityGate({ bundleDir, resourcesDir, platform, arch, install, runtime,
 // arm64 building x64) skip instead of failing — CI runs those natively.
 function verifyRuntimeSqlite({
   runtimeNode,
+  serverDir = path.resolve(__dirname, '..'),
   logger = console,
   timeoutMs = 60_000,
 } = {}) {
@@ -577,7 +578,8 @@ function verifyRuntimeSqlite({
     return { ok: false, skipped: true, reason: 'runtime-missing' };
   }
   const res = spawnSync(runtimeNode, ['--disable-warning=ExperimentalWarning', '-e', RUNTIME_SMOKE_SCRIPT],
-    { encoding: 'utf8', timeout: timeoutMs });
+    { cwd: serverDir, encoding: 'utf8', timeout: timeoutMs,
+      env: { ...process.env, MULTICC_RUST_ADDON: '', MULTICC_RUST_PREBUILT_DIR: '', MULTICC_SQLITE_BACKEND: 'rust' } });
   if (res.error) {
     const code = res.error.code;
     if (code === 'ENOEXEC' || code === 'EPERM' || code === 'EACCES') {
@@ -590,7 +592,7 @@ function verifyRuntimeSqlite({
     const output = `${res.stdout || ''}${res.stderr || ''}`.trim().split('\n').slice(-6).join(' | ');
     throw new Error(`the bundled runtime cannot open a SQLite database: ${output}`);
   }
-  logger.log('[standalone-bundle] runtime smoke passed (node:sqlite works under the bundled runtime)');
+  logger.log('[standalone-bundle] runtime smoke passed (Rust SQLite works under the bundled runtime)');
   return { ok: true, skipped: false };
 }
 
@@ -668,8 +670,7 @@ async function stageResources({
   // Cross-arch builds: the staged production deps (and every prebuilt native
   // addon left in them) must match the TARGET, not the build host.
   // prebuild-install reads npm_config_arch/npm_config_target when picking a
-  // binary, so these stay pinned even though SQLite itself is now the runtime's
-  // built-in `node:sqlite` — the optional sherpa-onnx ASR payload still needs
+  // binary, so these stay pinned. Rust uses N-API, while sherpa-onnx still needs
   // the right arch and the right runtime ABI.
   const npmEnv = {
     // Target the BUNDLED runtime, not the build host: without this a staged
@@ -712,7 +713,7 @@ async function stageResources({
     runtime = fetched;
     verifyRuntimeArch({ runtimeNode: runtimeNodePath(resourcesDir, platform), arch, platform, logger });
     if (verify) {
-      verifyRuntimeSqlite({ runtimeNode: runtimeNodePath(resourcesDir, platform), logger });
+      verifyRuntimeSqlite({ runtimeNode: runtimeNodePath(resourcesDir, platform), serverDir: path.join(resourcesDir, 'app-server'), logger });
     }
   } else {
     logger.log('[standalone-bundle] staging without a Node runtime');

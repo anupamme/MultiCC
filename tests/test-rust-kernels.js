@@ -165,7 +165,7 @@ rustTest('打包后的 Rust 模块可加载，错误架构不能进入安装包'
   const { stageRustKernels } = require('../scripts/stage-rust-kernels');
   try {
     process.env.MULTICC_RUST_PREBUILT_DIR = path.join(root, 'prebuilt');
-    const source = process.env.MULTICC_RUST_ADDON || path.resolve(__dirname, '../native/prebuilt', `${process.platform}-${process.arch}/multicc_core.node`);
+    const source = process.env.MULTICC_RUST_ADDON || path.join(beforeDir || path.resolve(__dirname, '../native/prebuilt'), `${process.platform}-${process.arch}/multicc_core.node`);
     for (const arch of [process.arch, 'ia32']) {
       const dir = path.join(process.env.MULTICC_RUST_PREBUILT_DIR, `${process.platform}-${arch}`);
       fs.mkdirSync(dir, { recursive: true }); fs.copyFileSync(source, path.join(dir, 'multicc_core.node'));

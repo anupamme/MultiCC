@@ -4488,6 +4488,11 @@
       "owner": "npm:test:rust"
     },
     {
+      "path": "tests/test-rust-sqlite.js",
+      "tier": "core",
+      "lane": "deterministic"
+    },
+    {
       "path": "tests/test-safe-markdown.js",
       "tier": "flow",
       "lane": "deterministic",

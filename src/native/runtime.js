@@ -16,7 +16,7 @@ function modeFor(feature, override) {
   return mode;
 }
 function addonPath() {
-  return process.env.MULTICC_RUST_ADDON || path.resolve(__dirname, '../../native/prebuilt',
+  return process.env.MULTICC_RUST_ADDON || path.join(process.env.MULTICC_RUST_PREBUILT_DIR || path.resolve(__dirname, '../../native/prebuilt'),
     `${process.platform}-${process.arch}`, 'multicc_core.node');
 }
 function getNative(feature, override) {

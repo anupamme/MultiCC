@@ -79,7 +79,7 @@ const noSqlite = checkRuntimeDeps({
 assert.equal(noSqlite.ok, false);
 assert.equal(noSqlite.sqliteOnly, true);
 assert.equal(noSqlite.exitCode, EXIT_SQLITE_UNAVAILABLE);
-assert.match(formatReport(noSqlite), /node:sqlite: Cannot find module/);
-assert.match(formatReport(noSqlite), /Node 22\.16 or newer/);
+assert.match(formatReport(noSqlite), /rust:sqlite: Cannot find module/);
+assert.match(formatReport(noSqlite), /Rust SQLite/);
 
 console.log('Runtime dependency check tests passed');

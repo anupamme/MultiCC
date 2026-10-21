@@ -74,7 +74,7 @@ test('构建与门禁并行，失败只阻断发布并保留构建等待诊断',
     const publish = blocks[file === 'release.yml' ? 'publish-apk' : 'release'];
     assert.ok(publish);
     const needs = publish.match(/^    needs: \[([^\]]+)\]/m)?.[1].split(',').map(s => s.trim());
-    assert.deepEqual(needs, ['core-tests', 'clean-install', ...jobs]);
+    assert.deepEqual(needs, ['core-tests', 'clean-install', ...(file === 'desktop-release.yml' ? ['rust-kernels'] : []), ...jobs]);
     assert.doesNotMatch(publish, /if:.*(?:always\(|failure\(|cancelled\()/, '发布不能绕过成功依赖');
     assert.doesNotMatch(source, /cancel-on-.*failure|cancel-release\.yml|cancelWorkflowRun|gh run cancel/, '门禁失败不得自动取消构建');
     assert.match(source, /cancel-in-progress: false/, '后续运行不得自动取消待诊断构建');

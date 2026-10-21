@@ -15,8 +15,7 @@ const { indexTokens, matchExpression, tokenize } = require('./tokenize');
 // appends. That is what this module is.
 //
 // SQLite supplies it, through the driver that already backs every other store
-// (src/sqlite/driver.js → node:sqlite): FTS5 is compiled into the SQLite Node
-// ships, so this costs no dependency, no native build and no second process.
+// (src/sqlite/driver.js → Rust): FTS5 is bundled into the native SQLite engine.
 //
 // Tokenisation is the *same* bigram scheme the board ranks with (./tokenize.js),
 // fed in as pre-split tokens — FTS5 only stores and matches them. The postings

@@ -175,10 +175,8 @@ jobs:
             echo "::endgroup::"
 
             echo "::group::arch gate ($arch)"
-            # There is no ABI rebuild step: storage is the node:sqlite inside the
-            # runtime the staging step just verified (its arch and its OS are
-            # read out of the binary's header), and the ASR package is N-API plus
-            # prebuilt. What still needs proving is that whatever prebuilt binary
+            # Rust SQLite and ASR use N-API with target-specific prebuilt modules.
+            # What still needs proving is that whatever prebuilt binary
             # did land belongs to this arch — a build-host binary installs fine
             # and only fails at the first require() on the target machine.
             # --allow-none: that binary is optional, so a platform without it is
