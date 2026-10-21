@@ -90,7 +90,7 @@ if [ -n "${MULTICC_IPA_PROFILE_PLIST:-}" ]; then
   cp "$MULTICC_IPA_PROFILE_PLIST" "$WORK/profile.plist"
 elif ! unzip -p "$SRC" "$PROFILE_ENTRY" > "$WORK/profile.mobileprovision" \
   || ! security cms -D -i "$WORK/profile.mobileprovision" > "$WORK/profile.plist" 2>/dev/null; then
-  echo "[publish-ipa] ERROR: 解不开 $PROFILE_ENTRY（security cms -D 失败）—— 这个包装不上，先别发布" >&2
+  echo "[publish-ipa] ERROR: 解不开 ${PROFILE_ENTRY}（security cms -D 失败）—— 这个包装不上，先别发布" >&2
   exit 1
 fi
 if ! plutil -extract ProvisionedDevices raw -o - "$WORK/profile.plist" >/dev/null 2>&1; then
