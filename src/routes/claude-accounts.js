@@ -17,6 +17,7 @@ const { outboundFetch } = require('../network/outbound');
 //   POST   /api/claude/accounts                    {label} → account + {oauthUrl}
 //   GET    /api/claude/accounts/:id/login-status   pending | complete | error | idle
 //   POST   /api/claude/accounts/:id/relogin        restart the browser flow
+//   POST   /api/claude/accounts/:id/login-callback finish from a pasted address/code
 //   DELETE /api/claude/accounts/:id                remove an inactive credential file
 //   GET    /api/claude/accounts/:id/quota          per-account subscription usage
 
@@ -96,7 +97,13 @@ function mountClaudeAccountRoutes(app, deps) {
   const loginStates = new Map(); // accountId -> {state, error, email}
 
   function loginStatus(accountId) {
-    return loginStates.get(accountId) || { state: 'idle' };
+    const status = loginStates.get(accountId) || { state: 'idle' };
+    // When the browser cannot reach this machine's loopback listener (a remote
+    // server), the UI still needs the authorize URL to reopen it after a reload.
+    if (status.state === 'pending' && pending && pending.accountId === accountId) {
+      return { ...status, oauthUrl: pending.oauthUrl };
+    }
+    return status;
   }
 
   function beginLogin(account) {
@@ -171,6 +178,37 @@ function mountClaudeAccountRoutes(app, deps) {
       return res.status(404).json({ ok: false, error: 'account not found' });
     }
     res.json({ ok: true, accountId, ...loginStatus(accountId) });
+  });
+
+  // Browser sign-in from another machine: the redirect lands on the user's own
+  // localhost, so they paste that final address (or `code#state`) back here.
+  // The listener validates it as this login's own loopback callback and finishes
+  // the PKCE exchange; no token or verifier ever leaves this server.
+  app.post('/api/claude/accounts/:id/login-callback', (req, res) => {
+    const accountId = String(req.params.id || '');
+    if (!accounts.listClaudeAccounts().some(a => a.id === accountId)) {
+      return res.status(404).json({ ok: false, error: 'account not found' });
+    }
+    if (loginStatus(accountId).state === 'complete') {
+      return res.json({ ok: true, accountId, state: 'complete', accepted: false });
+    }
+    if (!pending || pending.accountId !== accountId) {
+      return res.status(409).json({ ok: false, error: '没有等待中的登录，请先点「重新登录」' });
+    }
+    if (typeof pending.listener.submit !== 'function') {
+      return res.status(501).json({ ok: false, error: '当前登录方式不支持粘贴回调' });
+    }
+    const raw = req.body && (req.body.callback != null ? req.body.callback : (req.body.url != null ? req.body.url : req.body.code));
+    if (typeof raw !== 'string' || !raw.trim()) {
+      return res.status(400).json({ ok: false, error: '请粘贴浏览器地址栏里的完整链接，或授权码 code#state' });
+    }
+    try {
+      pending.listener.submit(raw, { expectedState: pending.state });
+    } catch (error) {
+      return res.status(400).json({ ok: false, error: error.message });
+    }
+    logger.info('claude_account_login_callback_pasted', { accountId });
+    res.json({ ok: true, accountId, accepted: true });
   });
 
   app.post('/api/claude/accounts/:id/relogin', (req, res) => {

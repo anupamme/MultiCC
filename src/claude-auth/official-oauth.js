@@ -247,7 +247,10 @@ const LOGIN_PAGE_ERR = '<!doctype html><meta charset="utf-8"><title>multicc</tit
 function waitForCallback({ timeoutMs = 5 * 60 * 1000, port = CALLBACK_PORT } = {}) {
   let server;
   let timer;
+  let settled = false;
+  let settleResolve;
   const promise = new Promise((resolve, reject) => {
+    settleResolve = resolve;
     server = http.createServer((req, res) => {
       let url;
       try {
@@ -271,7 +274,7 @@ function waitForCallback({ timeoutMs = 5 * 60 * 1000, port = CALLBACK_PORT } = {
       res.end(LOGIN_PAGE_OK);
       finish(() => resolve({ code, state }));
     });
-    server.once('error', reject);
+    server.once('error', (error) => finish(() => reject(error)));
     server.listen(port, '127.0.0.1');
     timer = setTimeout(() => {
       finish(() => reject(new ClaudeOAuthError('login timed out waiting for the browser callback')));
@@ -280,6 +283,8 @@ function waitForCallback({ timeoutMs = 5 * 60 * 1000, port = CALLBACK_PORT } = {
   });
 
   function finish(settle) {
+    if (settled) return;
+    settled = true;
     clearTimeout(timer);
     try {
       if (server) server.close(() => settle());
@@ -289,11 +294,77 @@ function waitForCallback({ timeoutMs = 5 * 60 * 1000, port = CALLBACK_PORT } = {
     }
   }
 
+  function callbackPort() {
+    const address = server && server.address();
+    return address && typeof address === 'object' ? String(address.port) : '';
+  }
+
+  // A browser on another machine ends at this listener's loopback address and
+  // cannot reach it. The user can paste that final address (or the code page's
+  // `code#state`) back here, and the sign-in is finished exactly as if the
+  // browser had reached the listener. Only this login's own loopback callback
+  // is accepted: the address is parsed, never fetched.
+  function submit(raw, { expectedState } = {}) {
+    if (settled) throw new ClaudeOAuthError('this sign-in is over; start it again');
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text) throw new ClaudeOAuthError('paste the address the browser ended on, or the code shown');
+
+    let parsed;
+    if (/^https?:\/\//i.test(text)) {
+      let url;
+      try { url = new URL(text); } catch (_) { throw new ClaudeOAuthError('that address is not a valid URL'); }
+      if (!isLoopbackHost(url.hostname)) {
+        throw new ClaudeOAuthError('that address is not a loopback callback for this sign-in');
+      }
+      const wantPort = callbackPort();
+      const gotPort = url.port || (url.protocol === 'https:' ? '443' : '80');
+      if (!wantPort || gotPort !== wantPort) {
+        throw new ClaudeOAuthError('that address is from a different sign-in (port mismatch)');
+      }
+      if (url.pathname !== '/callback') {
+        throw new ClaudeOAuthError('that address is not a sign-in callback');
+      }
+      const code = url.searchParams.get('code') || '';
+      const state = url.searchParams.get('state') || '';
+      if (!code) throw new ClaudeOAuthError('that callback address has no code');
+      parsed = { code, state };
+    } else {
+      // Claude's page can also show the authorization code itself as
+      // `code#state`; exchangeCode() splits it the same way.
+      const hash = text.indexOf('#');
+      if (hash <= 0 || hash === text.length - 1 || /\s/.test(text)) {
+        throw new ClaudeOAuthError('paste the whole callback address, or the code shown as code#state');
+      }
+      parsed = { code: text.slice(0, hash), state: text.slice(hash + 1) };
+    }
+
+    if (expectedState && !parsed.state) {
+      throw new ClaudeOAuthError('that callback address has no state to verify');
+    }
+    if (expectedState && parsed.state !== expectedState) {
+      throw new ClaudeOAuthError('state mismatch (possible CSRF) — login discarded');
+    }
+    finish(() => settleResolve(parsed));
+  }
+
   return {
     promise,
     cancel: () => finish(() => {}),
     address: () => (server && server.address()) || null,
+    submit,
   };
+}
+
+function isLoopbackHost(hostname) {
+  switch (String(hostname || '').toLowerCase()) {
+    case 'localhost':
+    case '127.0.0.1':
+    case '::1':
+    case '[::1]':
+      return true;
+    default:
+      return false;
+  }
 }
 
 module.exports = {

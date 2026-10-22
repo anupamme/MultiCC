@@ -150,10 +150,25 @@
     const cred = a.credential || {};
     if (cred.lastError) chips += ' <span style="font-size:11px;color:var(--danger)" title="' + esc(tr('airOfficialAcctRefreshTitle')) + '">' + esc(tr('airOfficialAcctRefreshError', { message: cred.lastError })) + '</span>';
     else if (cred.lastRefreshAt) chips += ' <span style="font-size:11px;color:var(--faint)">' + esc(tr('airOfficialAcctLastRefresh', { at: fmtTime(cred.lastRefreshAt) })) + '</span>';
-    return accountRow('claude', a, chips);
+    return accountRow('claude', a, chips, login.state === 'pending' ? claudePasteBlock(a) : '');
   }
 
-  function accountRow(vendor, a, chipsHtml) {
+  // The browser on a remote machine ends on its own localhost, where nothing
+  // listens. The address bar still holds the callback: copy it here and the
+  // server finishes the same login without an SSH tunnel.
+  function claudePasteBlock(a) {
+    const id = esc(a.id);
+    const canReopen = !!(a.login && a.login.oauthUrl);
+    return '<div style="border-top:1px dashed var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px">'
+      + '<div style="font-size:11px;line-height:1.6;color:var(--faint)">' + esc(tr('airOfficialAcctPasteHint')) + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      + '<input data-k="claude-callback" data-id="' + id + '" autocomplete="off" spellcheck="false" placeholder="' + esc(tr('airOfficialAcctPastePlaceholder')) + '" style="flex:1;min-width:220px;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text)">'
+      + '<button class="btn btn-green" style="padding:4px 10px;font-size:12px" data-act="paste-login" data-vendor="claude" data-id="' + id + '">' + esc(tr('airOfficialAcctPasteAction')) + '</button>'
+      + (canReopen ? '<button class="btn" style="padding:4px 10px;font-size:12px" data-act="open-oauth" data-id="' + id + '">' + esc(tr('airOfficialAcctPasteOpen')) + '</button>' : '')
+      + '</div></div>';
+  }
+
+  function accountRow(vendor, a, chipsHtml, extraHtml) {
     const name = a.label || tr(vendor === 'codex' ? 'airOfficialAcctCodexAccount' : 'airOfficialAcctClaudeAccount', { id: a.id.slice(0, 6) });
     const provider = a.providerName
       ? '<span style="font-size:11px;color:var(--faint)">⇄ ' + esc(a.providerName) + '</span>' : '';
@@ -169,6 +184,7 @@
       + '</span></div>'
       + (a.global ? '' : '<div style="font-size:12px">' + quotaHtml(vendor, a.id) + '</div>')
       + '<div data-subscription-vendor="' + vendor + '" data-subscription-account="' + esc(a.id) + '"></div>'
+      + (extraHtml || '')
       + '</div>';
   }
 
@@ -354,6 +370,27 @@
     state.loginWatch[accountId].unref?.();
   }
 
+  async function submitClaudeCallback(accountId) {
+    const input = [...document.querySelectorAll('[data-k="claude-callback"]')].find(el => el.dataset.id === accountId);
+    const raw = input ? input.value.trim() : '';
+    if (!raw) { toast(tr('airOfficialAcctPasteEmpty'), true); return; }
+    try {
+      await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-callback', { method: 'POST', json: { callback: raw } });
+      if (input) input.value = '';
+      toast(tr('airOfficialAcctPasteAccepted'));
+      watchClaudeLogin(accountId);
+    } catch (err) {
+      toast(err.message || tr('airOfficialAcctPasteFailed'), true);
+    }
+  }
+
+  function openClaudeLogin(accountId) {
+    const account = state.claude.find(a => a.id === accountId);
+    const url = account && account.login && account.login.oauthUrl;
+    if (!url) { toast(tr('airOfficialAcctPasteNoUrl'), true); return; }
+    window.open(url, '_blank');
+  }
+
   function watchCodexLogin(accountId) {
     if (!accountId || state.loginWatch[accountId]) return;
     const startedAt = Date.now();
@@ -387,6 +424,15 @@
     else if (btn.dataset.act === 'relogin') relogin(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'activate') activate(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'delete') removeAccount(vendor, btn.dataset.id);
+    else if (btn.dataset.act === 'paste-login') submitClaudeCallback(btn.dataset.id);
+    else if (btn.dataset.act === 'open-oauth') openClaudeLogin(btn.dataset.id);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const input = e.target;
+    if (e.key !== 'Enter' || !input || !input.dataset || input.dataset.k !== 'claude-callback') return;
+    e.preventDefault();
+    submitClaudeCallback(input.dataset.id);
   });
 
   // Provider 视图每次被打开时刷新（账号可能刚在别处登录/删除过）。
