@@ -45,9 +45,11 @@ input 里传 `"checkProxy": false`（UI 不提供这个开关，属于明知故�
 本机 → mihomo(跳板节点) → 上游住宅代理(可带账号密码) → 目标站
 ```
 
-内核需要本机已有 mihomo / clash：装了 Clash Verge 会自动用它的
-`verge-mihomo`，或 `brew install mihomo`。插件不内置内核（二进制太大），
-但会在 `detect` 里告诉你找没找到。
+内核**随插件自带**：`bin/<平台>-<架构>/mihomo.gz`（本仓库带 darwin-arm64，
+mihomo v1.19.33，许可与校验值见 `THIRD_PARTY.md`）。首次使用时自动解压到
+`plugins-data/.../runtime/mihomo` 并复用，**不需要另装 Clash 客户端**。其他
+平台把官方 release 的二进制（或 `.gz`）放进对应 `bin/<平台>-<架构>/` 即可；
+自带内核缺失时才回退系统里的 `mihomo` / `clash`。
 
 订阅原文与解析结果都只留在本机；订阅 URL 通常含 token，**不要提交进仓库**。
 
@@ -59,6 +61,7 @@ input 里传 `"checkProxy": false`（UI 不提供这个开关，属于明知故�
 - `subscriptions.json` + `subscriptions/<id>.yaml` —— 订阅清单与拉取到的配置原文
 - `run/<id>.pid` —— 运行中的实例 pid
 - `run/<id>.core.pid` / `run/<id>.core.json` —— 订阅出口的 mihomo 内核
+- `runtime/mihomo` —— 从插件自带 `.gz` 解压出来的内核（可随时删除，会自动重建）
 - `core/<id>/` —— 每个身份的内核工作目录（`config.yaml`、`core.log`）
 - `chrome-profiles/<id>/` —— 每个身份的 Chrome user-data-dir（删除身份时
   **保留**，cookie 等敏感数据不自动清理，需手动删）

@@ -160,7 +160,11 @@ fn profile_with_runtime(profile: Profile, subscriptions: &[Subscription]) -> Val
 
 fn command_detect(_input: &Value) -> Result<Value, String> {
     let browser = chrome::find_browser(None).ok().map(|path| path.display().to_string());
-    let core_path = core::find_core().ok().map(|path| path.display().to_string());
+    // 内核来源：bundled（插件自带）/ system / clash-verge；找不到时带原因。
+    let (core_path, core_source, core_error) = match core::find_core() {
+        Ok(core) => (Some(core.path.display().to_string()), Some(core.source), None),
+        Err(err) => (None, None, Some(err)),
+    };
     let mut handles = Vec::new();
     for (port, label) in COMMON_PROXY_PORTS {
         handles.push(thread::spawn(move || {
@@ -176,7 +180,13 @@ fn command_detect(_input: &Value) -> Result<Value, String> {
             }
         }
     }
-    Ok(json!({ "browser": browser, "core": core_path, "proxies": reachable }))
+    Ok(json!({
+        "browser": browser,
+        "core": core_path,
+        "coreSource": core_source,
+        "coreError": core_error,
+        "proxies": reachable,
+    }))
 }
 
 fn command_list(_input: &Value) -> Result<Value, String> {

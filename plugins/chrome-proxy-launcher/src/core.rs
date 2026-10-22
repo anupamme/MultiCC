@@ -75,17 +75,114 @@ fn find_in_path(names: &[&str]) -> Option<PathBuf> {
     None
 }
 
-pub fn find_core() -> Result<PathBuf, String> {
+/// 找到的内核 + 来源（UI/detect 用来区分「自带」还是「系统」）。
+pub struct Core {
+    pub path: PathBuf,
+    pub source: &'static str,
+}
+
+/// 插件自带的内核：和插件二进制同目录的 `mihomo`，或压缩包 `mihomo.gz`。
+/// 自带优先，这样用户不需要另装 Clash 客户端。
+fn bundled_core() -> Result<Option<PathBuf>, String> {
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+    // 真实部署时二进制在 bin/<平台>-<架构>/，内核就在同目录；顺手也看一层
+    // 父目录（bin/），兼容被放到 bin/ 根下的安装方式。
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = exe.parent() {
+        dirs.push(dir.to_path_buf());
+        if let Some(parent) = dir.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    let plain_names: &[&str] = if cfg!(windows) {
+        &["mihomo.exe", "mihomo"]
+    } else {
+        &["mihomo", "mihomo.exe"]
+    };
+    for dir in &dirs {
+        for name in plain_names {
+            let plain = dir.join(name);
+            if plain.is_file() {
+                return Ok(Some(plain));
+            }
+        }
+    }
+    for dir in &dirs {
+        for name in ["mihomo.gz", "mihomo.exe.gz", "verge-mihomo.gz"] {
+            let archive = dir.join(name);
+            if archive.is_file() {
+                return ensure_extracted(&archive).map(Some);
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// 把自带 `.gz` 解到 `plugins-data/.../runtime/mihomo`，存在且比压缩包新就复用。
+/// 先写临时文件再 rename：两个身份同时首次启动也不会互相写坏。
+fn ensure_extracted(archive: &std::path::Path) -> Result<PathBuf, String> {
+    let runtime = store::data_dir().join("runtime");
+    std::fs::create_dir_all(&runtime).map_err(|err| format!("创建 runtime 目录失败：{err}"))?;
+    let target = runtime.join(if cfg!(windows) { "mihomo.exe" } else { "mihomo" });
+    let up_to_date = match (std::fs::metadata(archive), std::fs::metadata(&target)) {
+        (Ok(source), Ok(done)) => {
+            done.len() > 0
+                && match (source.modified(), done.modified()) {
+                    (Ok(source_time), Ok(done_time)) => done_time >= source_time,
+                    _ => false,
+                }
+        }
+        _ => false,
+    };
+    if up_to_date {
+        return Ok(target);
+    }
+    let tmp = runtime.join(format!(".mihomo.{}.tmp", std::process::id()));
+    let unpack = || -> Result<(), String> {
+        let file = File::open(archive).map_err(|err| format!("打开自带内核失败：{err}"))?;
+        let mut decoder = flate2::read::GzDecoder::new(std::io::BufReader::new(file));
+        let mut out = File::create(&tmp).map_err(|err| format!("创建内核文件失败：{err}"))?;
+        std::io::copy(&mut decoder, &mut out)
+            .map_err(|err| format!("解压自带内核失败（文件可能损坏）：{err}"))?;
+        Ok(())
+    };
+    if let Err(err) = unpack() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("设置内核可执行位失败：{err}"))?;
+    }
+    std::fs::rename(&tmp, &target).map_err(|err| format!("安装自带内核失败：{err}"))?;
+    Ok(target)
+}
+
+pub fn find_core() -> Result<Core, String> {
+    if let Some(path) = bundled_core()? {
+        return Ok(Core { path, source: "bundled" });
+    }
     for path in candidate_cores() {
         if path.is_file() {
-            return Ok(path);
+            let source = if path.to_string_lossy().contains("Clash") {
+                "clash-verge"
+            } else {
+                "system"
+            };
+            return Ok(Core { path, source });
         }
     }
     if let Some(path) = find_in_path(&["mihomo", "clash", "verge-mihomo"]) {
-        return Ok(path);
+        return Ok(Core { path, source: "system" });
     }
-    Err("没找到 mihomo / clash 内核。订阅里的 vmess/trojan 等协议需要内核来跑：\
-装 Clash Verge（自带 verge-mihomo）或 `brew install mihomo` 后重试"
+    Err("没找到 mihomo 内核：插件自带的 bin/ 内核缺失，系统里也没有。\
+把官方 mihomo 的 darwin/linux/windows 二进制（或 .gz）放进插件 bin/<平台>-<架构>/，\
+或 `brew install mihomo` 后重试"
         .into())
 }
 
@@ -296,7 +393,8 @@ fn write_core_info(id: &str, pid: i32, port: u16) -> Result<(), String> {
 /// 起一个身份专属内核，等 mixed-port 可连后返回。
 pub fn start(profile_id: &str, raw: &str, node: &str, via: Option<&ProxyConfig>) -> Result<CoreRun, String> {
     stop_if_any(profile_id);
-    let core_path = find_core()?;
+    let core = find_core()?;
+    let core_path = core.path;
     let mixed_port = free_port()?;
     let config = build_config(raw, node, via, mixed_port)?;
     let text = serde_yaml::to_string(&config).map_err(|err| format!("生成内核配置失败：{err}"))?;
