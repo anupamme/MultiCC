@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/claude_signin_dialog.dart';
 import '../widgets/named_back_button.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -375,8 +376,14 @@ class _ProviderScreenState extends State<ProviderScreen> {
       final result = await _manage.createProviderAccount(vendor, label: label);
       if (vendor == 'claude') {
         final url = result['oauthUrl']?.toString() ?? '';
-        if (url.isNotEmpty) {
-          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        final id = result['accountId']?.toString() ?? '';
+        if (url.isNotEmpty && id.isNotEmpty && mounted) {
+          await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (_) => ClaudeSigninDialog(
+                manage: _manage, accountId: id, oauthUrl: url, name: label.isEmpty ? 'Claude' : label),
+          );
         }
       } else {
         final id = result['loginSessionId']?.toString() ?? '';
@@ -387,8 +394,8 @@ class _ProviderScreenState extends State<ProviderScreen> {
           });
           await launchUrl(uri, mode: LaunchMode.externalApplication);
         }
+        _snack('账号已创建，请在打开的页面完成登录');
       }
-      _snack('账号已创建，请在打开的页面完成登录');
       await _refresh();
     } catch (e) {
       _snack('添加账号失败：$e');

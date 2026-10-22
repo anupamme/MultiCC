@@ -341,6 +341,34 @@ class ManageService {
         .cast<String, dynamic>();
   }
 
+  /// Finish a pending Claude account sign-in from the address the browser
+  /// ended on (or `code#state`); the PKCE exchange stays on the server.
+  Future<Map<String, dynamic>> submitClaudeLoginCallback(
+    String accountId,
+    String callback,
+  ) async {
+    final res = await _send(
+      'POST',
+      '/api/claude/accounts/${Uri.encodeComponent(accountId)}/login-callback',
+      body: jsonEncode({'callback': callback}),
+      timeout: const Duration(seconds: 20),
+    );
+    if (res.statusCode >= 400) _throwWrite(res);
+    return (jsonDecode(utf8.decode(res.bodyBytes)) as Map)
+        .cast<String, dynamic>();
+  }
+
+  /// `{state: idle|pending|complete|error, email?, error?}` of a Claude sign-in.
+  Future<Map<String, dynamic>> claudeLoginStatus(String accountId) async {
+    final res = await _send(
+      'GET',
+      '/api/claude/accounts/${Uri.encodeComponent(accountId)}/login-status',
+    );
+    if (res.statusCode >= 400) _throw(res);
+    return (jsonDecode(utf8.decode(res.bodyBytes)) as Map)
+        .cast<String, dynamic>();
+  }
+
   Future<void> updateProvider(
     String appType,
     String id, {

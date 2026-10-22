@@ -6,7 +6,9 @@
  *
  * Codex 账号登录走白名单 loginFlow 终端（CODEX_HOME 指向账号目录），添加后
  * 打开该终端页让用户完成浏览器授权；Claude 账号登录走 multicc 自己的 PKCE
- * 流程，添加后 window.open(oauthUrl) 并轮询 login-status 直到完成。
+ * 流程，添加后不自动打开授权页，而是弹出登录面板（照 Magpie 的做法）：给出完整
+ * 授权链接供复制到任意浏览器，再粘贴浏览器最终停留的回调地址，轮询 login-status
+ * 直到完成。
  *
  * 依赖 manage.html 已加载的全局：window.MultiCCApi（api-client.js）、
  * window.QuotaBarView（quota-bar-view.js）、escapeHtml / showToast /
@@ -31,6 +33,7 @@
     loading: false,
     quota: {}, // `${vendor}:${id}` → {status:'loading'} | {status:'ok'|'err', html}
     loginWatch: {}, // claude accountId → poll timer
+    signin: null, // the open Claude sign-in panel {accountId, url, overlay, onStatus}
     cli: {}, // vendor → 本机 CLI 登录状态 {loggedIn, email, inStore}
   };
 
@@ -150,22 +153,15 @@
     const cred = a.credential || {};
     if (cred.lastError) chips += ' <span style="font-size:11px;color:var(--danger)" title="' + esc(tr('airOfficialAcctRefreshTitle')) + '">' + esc(tr('airOfficialAcctRefreshError', { message: cred.lastError })) + '</span>';
     else if (cred.lastRefreshAt) chips += ' <span style="font-size:11px;color:var(--faint)">' + esc(tr('airOfficialAcctLastRefresh', { at: fmtTime(cred.lastRefreshAt) })) + '</span>';
-    return accountRow('claude', a, chips, login.state === 'pending' ? claudePasteBlock(a) : '');
+    return accountRow('claude', a, chips, login.state === 'pending' ? claudeResumeBlock(a) : '');
   }
 
-  // The browser on a remote machine ends on its own localhost, where nothing
-  // listens. The address bar still holds the callback: copy it here and the
-  // server finishes the same login without an SSH tunnel.
-  function claudePasteBlock(a) {
-    const id = esc(a.id);
-    const canReopen = !!(a.login && a.login.oauthUrl);
-    return '<div style="border-top:1px dashed var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px">'
-      + '<div style="font-size:11px;line-height:1.6;color:var(--faint)">' + esc(tr('airOfficialAcctPasteHint')) + '</div>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
-      + '<input data-k="claude-callback" data-id="' + id + '" autocomplete="off" spellcheck="false" placeholder="' + esc(tr('airOfficialAcctPastePlaceholder')) + '" style="flex:1;min-width:220px;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text)">'
-      + '<button class="btn btn-green" style="padding:4px 10px;font-size:12px" data-act="paste-login" data-vendor="claude" data-id="' + id + '">' + esc(tr('airOfficialAcctPasteAction')) + '</button>'
-      + (canReopen ? '<button class="btn" style="padding:4px 10px;font-size:12px" data-act="open-oauth" data-id="' + id + '">' + esc(tr('airOfficialAcctPasteOpen')) + '</button>' : '')
-      + '</div></div>';
+  // A pending login keeps its link on the server; this reopens the panel for it.
+  function claudeResumeBlock(a) {
+    return '<div style="border-top:1px dashed var(--border);padding-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      + '<span style="flex:1;min-width:200px;font-size:11px;line-height:1.6;color:var(--faint)">' + esc(tr('airOfficialAcctSigninRowHint')) + '</span>'
+      + '<button class="btn btn-green" style="padding:4px 10px;font-size:12px" data-act="open-signin" data-vendor="claude" data-id="' + esc(a.id) + '">' + esc(tr('airOfficialAcctSigninResume')) + '</button>'
+      + '</div>';
   }
 
   function accountRow(vendor, a, chipsHtml, extraHtml) {
@@ -292,9 +288,7 @@
             watchCodexLogin(data.accountId);
           } else { toast(tr('airOfficialAcctTerminalOpenFailed', { message: data.error || '' }), true); }
         } else {
-          toast(tr('airOfficialAcctCreatedFinishInBrowser'));
-          if (data.oauthUrl) window.open(data.oauthUrl, '_blank');
-          watchClaudeLogin(data.accountId);
+          openClaudeSignin(data.accountId, data.oauthUrl, label);
         }
         loadOfficialAccounts();
         refreshProviders();
@@ -316,8 +310,7 @@
         toast(data.loginSessionId ? tr('airOfficialAcctTerminalOpened') : tr('airOfficialAcctTerminalOpenFailed', { message: data.error || '' }), !data.loginSessionId);
         if (data.loginSessionId) watchCodexLogin(id);
       } else {
-        if (data.oauthUrl) { window.open(data.oauthUrl, '_blank'); watchClaudeLogin(id); }
-        toast(tr('airOfficialAcctFinishInBrowser'));
+        openClaudeSignin(id, data.oauthUrl);
       }
       setStatus('');
       loadOfficialAccounts();
@@ -358,7 +351,9 @@
         const s = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-status');
         if (s.state === 'pending') return;
         stopWatch(accountId);
-        if (s.state === 'complete') {
+        const panel = state.signin && state.signin.accountId === accountId ? state.signin : null;
+        if (panel) panel.onStatus(s);
+        else if (s.state === 'complete') {
           toast(s.email ? tr('airOfficialAcctClaudeLoginDoneEmail', { email: s.email }) : tr('airOfficialAcctClaudeLoginDone'));
         } else if (s.state === 'error') {
           toast(tr('airOfficialAcctClaudeLoginFailed', { message: s.error || '' }), true);
@@ -370,25 +365,148 @@
     state.loginWatch[accountId].unref?.();
   }
 
-  async function submitClaudeCallback(accountId) {
-    const input = [...document.querySelectorAll('[data-k="claude-callback"]')].find(el => el.dataset.id === accountId);
-    const raw = input ? input.value.trim() : '';
-    if (!raw) { toast(tr('airOfficialAcctPasteEmpty'), true); return; }
-    try {
-      await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-callback', { method: 'POST', json: { callback: raw } });
-      if (input) input.value = '';
-      toast(tr('airOfficialAcctPasteAccepted'));
-      watchClaudeLogin(accountId);
-    } catch (err) {
-      toast(err.message || tr('airOfficialAcctPasteFailed'), true);
-    }
+  // ── claude sign-in panel ───────────────────────────────────────────────────
+  // Magpie's sign-in sheet: nothing opens by itself. The whole link is shown to
+  // copy into whichever browser or profile holds the account; that browser ends
+  // on its own localhost (unreachable when MultiCC runs on a server), so its
+  // address is pasted back here and the server finishes the PKCE exchange.
+
+  function openClaudeSignin(accountId, oauthUrl, label) {
+    closeSignin();
+    if (!accountId) return;
+    const account = state.claude.find(a => a.id === accountId);
+    const name = label || (account && account.label) || tr('airOfficialAcctClaudeAccount', { id: accountId.slice(0, 6) });
+    const btn = 'font-size:12px;padding:4px 10px;white-space:nowrap';
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
+    overlay.innerHTML = '<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:18px;width:540px;max-width:94vw;max-height:90vh;overflow:auto;box-sizing:border-box;display:flex;flex-direction:column;gap:10px">'
+      + '<div style="font-size:14px;color:#c9d1d9;font-weight:600">' + esc(tr('airOfficialAcctSigninTitle', { name })) + '</div>'
+      + '<div data-k="phase" style="font-size:12px;color:#d29922"></div>'
+      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr('airOfficialAcctSigninStep1')) + '</div>'
+      + '<div style="display:flex;gap:6px;align-items:center;min-width:0">'
+      + '<code data-k="url" style="flex:1;min-width:0;white-space:nowrap;overflow-x:auto;user-select:all;-webkit-user-select:all;font-size:12px;padding:6px 8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9"></code>'
+      + '<button class="btn" data-k="copy" style="' + btn + '">' + esc(tr('airOfficialAcctSigninCopy')) + '</button>'
+      + '<button class="btn" data-k="open" style="' + btn + '">' + esc(tr('airOfficialAcctSigninOpen')) + '</button>'
+      + '</div>'
+      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr('airOfficialAcctSigninStep2')) + '</div>'
+      + '<form data-k="form" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">'
+      + '<input data-k="callback" type="text" autocomplete="off" spellcheck="false" aria-label="' + esc(tr('airOfficialAcctSigninCallbackLabel')) + '" placeholder="' + esc(tr('airOfficialAcctPastePlaceholder')) + '" style="flex:1;min-width:220px;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:12px;padding:7px 10px;outline:none">'
+      + '<button type="submit" class="btn btn-green" data-k="submit" style="' + btn + '" disabled>' + esc(tr('airOfficialAcctPasteAction')) + '</button>'
+      + '</form>'
+      + '<div data-k="error" style="font-size:12px;color:var(--danger);line-height:1.6;word-break:break-word"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end">'
+      + '<button class="btn" data-k="retry" style="' + btn + ';display:none">' + esc(tr('airOfficialAcctSigninRetry')) + '</button>'
+      + '<button class="btn" data-k="close" style="' + btn + '">' + esc(tr('airOfficialAcctSigninLater')) + '</button>'
+      + '</div></div>';
+    document.body.appendChild(overlay);
+    const q = k => overlay.querySelector('[data-k="' + k + '"]');
+    const input = q('callback'), submit = q('submit'), phase = q('phase'), error = q('error'), retry = q('retry');
+    const panel = { accountId, url: oauthUrl || '', submitting: false, finished: false, overlay };
+    state.signin = panel;
+    const same = () => state.signin === panel;
+    const syncSubmit = () => { submit.disabled = panel.submitting || panel.finished || input.disabled || !input.value.trim(); };
+    const reset = (url) => {
+      panel.url = url || '';
+      q('url').textContent = panel.url;
+      phase.textContent = tr('airOfficialAcctSigninWaiting');
+      error.textContent = '';
+      retry.style.display = panel.url ? 'none' : '';
+      input.disabled = !panel.url;
+      syncSubmit();
+    };
+
+    panel.onStatus = (s) => {
+      if (!same()) return;
+      panel.submitting = false;
+      if (s.state === 'complete') {
+        panel.finished = true;
+        input.disabled = true;
+        error.textContent = '';
+        phase.textContent = s.email ? tr('airOfficialAcctClaudeLoginDoneEmail', { email: s.email }) : tr('airOfficialAcctClaudeLoginDone');
+        phase.style.color = '#3fb950';
+        q('close').textContent = tr('airOfficialAcctSigninClose');
+        setTimeout(() => { if (same()) closeSignin(); }, 1500);
+      } else if (s.state === 'error') {
+        input.disabled = true;
+        phase.textContent = '';
+        error.textContent = tr('airOfficialAcctClaudeLoginFailed', { message: s.error || '' });
+        retry.style.display = '';
+      }
+      syncSubmit();
+      loadOfficialAccounts();
+      refreshProviders();
+    };
+
+    q('copy').onclick = () => {
+      const done = () => toast(tr('airOfficialAcctSigninCopied'));
+      const fallback = () => {
+        // Plain-HTTP pages have no async clipboard: select the link instead.
+        const range = document.createRange && document.createRange();
+        if (range) { range.selectNodeContents(q('url')); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+        if (ok) done(); else toast(tr('airOfficialAcctSigninCopyFailed'), true);
+      };
+      if (navigator.clipboard && window.isSecureContext !== false) navigator.clipboard.writeText(panel.url).then(done, fallback);
+      else fallback();
+    };
+    q('open').onclick = () => { if (panel.url) window.open(panel.url, '_blank', 'noopener'); };
+    input.oninput = syncSubmit;
+    q('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const raw = input.value.trim();
+      if (panel.submitting || panel.finished || !raw) return;
+      panel.submitting = true;
+      input.disabled = true;
+      error.textContent = '';
+      phase.textContent = tr('airOfficialAcctSigninSubmitting');
+      syncSubmit();
+      try {
+        const res = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-callback', { method: 'POST', json: { callback: raw } });
+        if (!same()) return;
+        if (res && res.state === 'complete') { panel.onStatus({ state: 'complete' }); return; }
+        phase.textContent = tr('airOfficialAcctPasteAccepted');
+        watchClaudeLogin(accountId);
+      } catch (err) {
+        if (!same()) return;
+        panel.submitting = false;
+        input.disabled = false;
+        phase.textContent = tr('airOfficialAcctSigninWaiting');
+        error.textContent = (err && err.message) || tr('airOfficialAcctPasteFailed');
+        syncSubmit();
+      }
+    };
+    retry.onclick = async () => {
+      retry.disabled = true;
+      try {
+        const data = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/relogin', { method: 'POST', json: {} });
+        if (!same()) return;
+        input.value = '';
+        reset(data.oauthUrl);
+        watchClaudeLogin(accountId);
+      } catch (err) {
+        if (same()) error.textContent = tr('airOfficialAcctReloginFailed', { message: err.message });
+      } finally { retry.disabled = false; }
+    };
+    q('close').onclick = closeSignin;
+
+    reset(panel.url);
+    watchClaudeLogin(accountId);
+    if (input.focus) input.focus();
   }
 
-  function openClaudeLogin(accountId) {
+  function closeSignin() {
+    const panel = state.signin;
+    if (!panel) return;
+    state.signin = null;
+    panel.overlay.remove();
+  }
+
+  function resumeClaudeSignin(accountId) {
     const account = state.claude.find(a => a.id === accountId);
     const url = account && account.login && account.login.oauthUrl;
-    if (!url) { toast(tr('airOfficialAcctPasteNoUrl'), true); return; }
-    window.open(url, '_blank');
+    if (url) openClaudeSignin(accountId, url);
+    else relogin('claude', accountId);
   }
 
   function watchCodexLogin(accountId) {
@@ -424,15 +542,7 @@
     else if (btn.dataset.act === 'relogin') relogin(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'activate') activate(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'delete') removeAccount(vendor, btn.dataset.id);
-    else if (btn.dataset.act === 'paste-login') submitClaudeCallback(btn.dataset.id);
-    else if (btn.dataset.act === 'open-oauth') openClaudeLogin(btn.dataset.id);
-  });
-
-  document.addEventListener('keydown', (e) => {
-    const input = e.target;
-    if (e.key !== 'Enter' || !input || !input.dataset || input.dataset.k !== 'claude-callback') return;
-    e.preventDefault();
-    submitClaudeCallback(input.dataset.id);
+    else if (btn.dataset.act === 'open-signin') resumeClaudeSignin(btn.dataset.id);
   });
 
   // Provider 视图每次被打开时刷新（账号可能刚在别处登录/删除过）。
