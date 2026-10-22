@@ -169,7 +169,7 @@ test('global account controls switch via account API and retain the singleton pr
       return { status: 'ok' };
     } } },
     document: { body: { dataset: {} }, getElementById: key => key === 'official-accounts-body' ? body : status,
-      addEventListener: (_, handler) => { click = handler; } },
+      addEventListener: (name, handler) => { if (name === 'click') click = handler; } },
     MutationObserver: class { observe() {} }, setInterval, clearInterval, Date,
     escapeHtml: text => text, loadProviders() {},
   });
@@ -183,6 +183,44 @@ test('global account controls switch via account API and retain the singleton pr
   assert.ok(calls.some(c => c.url === `/api/codex/accounts/${id}/activate` && c.method === 'POST'));
   assert.match(body.innerHTML, new RegExp(`data-act="delete"[^>]*data-id="${id}"`));
   assert.match(status.textContent, /已全局切换/);
+});
+
+test('a pending Claude account posts the pasted callback from its row', async () => {
+  let click;
+  const calls = [];
+  const id = 'bbbbbbbbbbbbbbbb';
+  const callback = 'http://localhost:54545/callback?code=pasted&state=st';
+  const input = { value: callback, dataset: { id } };
+  const body = { innerHTML: '', querySelectorAll: () => [] };
+  const context = vm.createContext({
+    window: { t, MultiCCApi: { json: async (url, options) => {
+      calls.push({ url, method: options?.method || 'GET', body: options?.json });
+      if (url === '/api/claude/accounts') return { accounts: [
+        { id, label: '远程号', loggedIn: false, login: { state: 'pending', oauthUrl: 'https://claude.ai/oauth/authorize?x=1' } },
+      ] };
+      if (url === '/api/codex/accounts') return { accounts: [] };
+      return { ok: true, accepted: true };
+    } } },
+    document: {
+      body: { dataset: {} },
+      getElementById: key => key === 'official-accounts-body' ? body : {},
+      addEventListener: (name, handler) => { if (name === 'click') click = handler; },
+      querySelectorAll: selector => selector.includes('claude-callback') ? [input] : [],
+    },
+    MutationObserver: class { observe() {} }, setInterval, clearInterval, Date,
+    escapeHtml: text => text, loadProviders() {},
+  });
+  vm.runInContext(fs.readFileSync(SOURCE_PATH, 'utf8'), context);
+  await context.window.MultiCCOfficialAccounts.load();
+  assert.match(body.innerHTML, /data-act="paste-login"/);
+  assert.match(body.innerHTML, /浏览器若提示无法访问 localhost/);
+
+  click({ target: { closest: () => ({ dataset: { act: 'paste-login', vendor: 'claude', id } }) } });
+  await new Promise(resolve => setImmediate(resolve));
+  const paste = calls.find(c => c.url === `/api/claude/accounts/${id}/login-callback`);
+  assert.equal(paste.method, 'POST');
+  assert.equal(paste.body.callback, callback);
+  assert.equal(input.value, '', 'the pasted secret is cleared from the row');
 });
 
 test('an official Provider card still opens the editor, because the egress-IP allowlist lives only there', () => {

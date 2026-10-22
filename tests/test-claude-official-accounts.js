@@ -134,6 +134,31 @@ test('waitForCallback resolves code+state and answers a browser page', async () 
   assert.deepEqual(result, { code: 'abc#def', state: 'st' });
 });
 
+test('waitForCallback finishes from a pasted loopback callback (remote browser)', async () => {
+  const listener = oauth.waitForCallback({ port: 0, timeoutMs: 5000 });
+  await new Promise(resolve => setImmediate(resolve));
+  const port = listener.address().port;
+
+  assert.throws(() => listener.submit(`http://evil.example:${port}/callback?code=x&state=st`, { expectedState: 'st' }),
+    /loopback/);
+  assert.throws(() => listener.submit(`http://localhost:${port}/callback?state=st`, { expectedState: 'st' }),
+    /no code/);
+  assert.throws(() => listener.submit(`http://localhost:${port + 1}/callback?code=x&state=st`, { expectedState: 'st' }),
+    /port mismatch/);
+  assert.throws(() => listener.submit(`http://localhost:${port}/callback?code=x&state=wrong`, { expectedState: 'st' }),
+    /state mismatch/);
+
+  listener.submit(`http://localhost:${port}/callback?code=pasted-code&state=st`, { expectedState: 'st' });
+  assert.deepEqual(await listener.promise, { code: 'pasted-code', state: 'st' });
+  assert.throws(() => listener.submit('another#st', { expectedState: 'st' }), /over/);
+});
+
+test('waitForCallback accepts the code#state form shown on the page', async () => {
+  const listener = oauth.waitForCallback({ port: 0, timeoutMs: 5000 });
+  listener.submit('page-code#page-state', { expectedState: 'page-state' });
+  assert.deepEqual(await listener.promise, { code: 'page-code', state: 'page-state' });
+});
+
 // ── credential service ───────────────────────────────────────────────────────
 
 function storeWithClaudeAccount(cred) {
@@ -395,7 +420,27 @@ function listenerStub() {
   const factory = () => {
     let resolvePromise; let rejectPromise;
     const promise = new Promise((resolve, reject) => { resolvePromise = resolve; rejectPromise = reject; });
-    const inst = { promise, cancel: () => {}, address: () => null, resolve: resolvePromise, reject: rejectPromise };
+    const inst = {
+      promise,
+      cancel: () => {},
+      address: () => null,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+      submit(raw, { expectedState } = {}) {
+        let code = ''; let state = '';
+        try {
+          const url = new URL(raw);
+          code = url.searchParams.get('code') || '';
+          state = url.searchParams.get('state') || '';
+        } catch (_) {
+          const [c, s] = String(raw).split('#');
+          code = c || ''; state = s || '';
+        }
+        if (!code) throw new Error('no code');
+        if (expectedState && state !== expectedState) throw new Error('state mismatch');
+        resolvePromise({ code, state });
+      },
+    };
     instances.push(inst);
     return inst;
   };
@@ -449,6 +494,45 @@ test('claude account lifecycle: create → login callback → credential stored 
   assert.equal(deleted.body.deletedProviderId, created.body.providerId);
   assert.equal(store.listClaudeAccounts().length, 0);
   assert.equal(providers.listProviders('claude').length, 0);
+});
+
+test('pasted callback finishes a remote login; a wrong state is rejected', async () => {
+  const store = createOfficialAccountStore({ root: tmpRoot() });
+  const listener = listenerStub();
+  const credentials = createClaudeAccountCredentialService({ accounts: store, fetch: mockFetch({}).fetch });
+  const { fetch } = mockFetch({ 'platform.claude.com': { status: 200, body: TOKEN_OK } });
+  const h = routeHarness({ accounts: store, providers: providersStub(), credentials, fetch, waitForCallback: listener.factory });
+
+  const created = await h.invoke('POST', '/api/claude/accounts', { label: '远程号' });
+  const accountId = created.body.accountId;
+  const state = new URL(created.body.oauthUrl).searchParams.get('state');
+
+  // The page offers the authorize URL even after a reload of the account list.
+  const pending = await h.invoke('GET', `/api/claude/accounts/${accountId}/login-status`);
+  assert.equal(pending.body.oauthUrl, created.body.oauthUrl);
+
+  const bad = await h.invoke('POST', `/api/claude/accounts/${accountId}/login-callback`, {
+    callback: `http://localhost:54545/callback?code=stolen&state=wrong`,
+  });
+  assert.equal(bad.statusCode, 400);
+  assert.match(bad.body.error, /state mismatch/);
+  assert.equal((await h.invoke('GET', `/api/claude/accounts/${accountId}/login-status`)).body.state, 'pending');
+
+  const ok = await h.invoke('POST', `/api/claude/accounts/${accountId}/login-callback`, {
+    callback: `http://localhost:54545/callback?code=pasted-code&state=${state}`,
+  });
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.body.accepted, true);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  const done = await h.invoke('GET', `/api/claude/accounts/${accountId}/login-status`);
+  assert.equal(done.body.state, 'complete');
+  assert.equal(store.readClaudeCredential(accountId).access_token, 'oat-new');
+
+  const idle = store.createClaudeAccount({ label: '未发起登录' });
+  const none = await h.invoke('POST', `/api/claude/accounts/${idle.id}/login-callback`, { callback: 'x#y' });
+  assert.equal(none.statusCode, 409);
 });
 
 test('login state mismatch discards the callback', async () => {
