@@ -60,6 +60,8 @@
   #notice.bad { display: block; background: color-mix(in srgb, var(--bad) 12%, var(--card)); color: var(--bad); }
   .empty { color: var(--muted); text-align: center; padding: 18px 0; }
   .sub-meta { color: var(--muted); font-size: 12px; }
+  .btnbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  ul.subs li.editing { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 </style>
 </head>
 <body>
@@ -186,7 +188,10 @@
   <label>订阅地址（Clash 订阅链接；含 token，只保存在本机）</label>
   <input id="s-url" placeholder="https://…/subscription.yaml">
   <div class="row" style="margin-top:10px">
-    <button type="button" class="primary" id="btn-sub-add">添加订阅</button>
+    <div class="btnbar">
+      <button type="button" class="primary" id="btn-sub-add">添加订阅</button>
+      <button type="button" id="btn-sub-cancel" hidden>取消编辑</button>
+    </div>
   </div>
   <ul class="subs" id="sub-list"></ul>
   <p class="empty" id="sub-empty" hidden>还没有订阅。粘贴 Clash 订阅链接后点「添加订阅」。</p>
@@ -227,6 +232,7 @@ async function run(command, input) {
 }
 
 let subscriptions = [];   // 最近一次 list 的结果
+let editingSubId = '';    // 正在编辑的订阅 id（空 = 新增）
 const probeResults = new Map(); // id -> {exitIp, via, latencyMs}
 const editingId = () => $('btn-save').dataset.editing || '';
 
@@ -363,6 +369,7 @@ function renderSubscriptions() {
   $('sub-empty').hidden = subscriptions.length > 0;
   for (const item of subscriptions) {
     const row = document.createElement('li');
+    if (item.id === editingSubId) row.className = 'editing';
 
     const head = document.createElement('div');
     head.className = 'p-head';
@@ -378,6 +385,7 @@ function renderSubscriptions() {
     const actions = document.createElement('div');
     actions.className = 'p-actions';
     actions.append(
+      makeButton('编辑', '', () => startEditSubscription(item)),
       makeButton('刷新', '', async event => {
         event.target.disabled = true;
         try {
@@ -395,6 +403,7 @@ function renderSubscriptions() {
         event.target.disabled = true;
         try {
           await run('subscription-remove', { id: item.id });
+          if (editingSubId === item.id) resetSubForm();
           notice(`已删除订阅「${item.name}」`);
         } catch (error) {
           notice(error.message, 'bad');
@@ -409,9 +418,32 @@ function renderSubscriptions() {
   }
 }
 
+/// 把已保存的订阅回填到表单，改完点「保存修改」。
+function startEditSubscription(item) {
+  editingSubId = item.id;
+  $('s-name').value = item.name;
+  $('s-url').value = item.url;
+  $('btn-sub-add').textContent = '保存修改';
+  $('btn-sub-cancel').hidden = false;
+  renderSubscriptions();
+  $('s-url').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  $('s-name').focus();
+}
+
+function resetSubForm() {
+  editingSubId = '';
+  $('s-name').value = '';
+  $('s-url').value = '';
+  $('btn-sub-add').textContent = '添加订阅';
+  $('btn-sub-cancel').hidden = true;
+  renderSubscriptions();
+}
+
 async function refresh() {
   const data = await run('list');
   subscriptions = data.subscriptions || [];  const profiles = data.profiles || [];
+  // 正在编辑的订阅被别人删了：退出编辑态，避免拿失效 id 去保存。
+  if (editingSubId && !subscriptions.some(item => item.id === editingSubId)) resetSubForm();
   renderSubscriptions();
   // 表单里的订阅下拉跟着最新清单走（保留当前选择）。
   fillSubscriptionOptions($('f-sub').value);
@@ -608,22 +640,31 @@ $('btn-sub-add').onclick = async event => {
     notice('先粘贴订阅地址', 'bad');
     return;
   }
+  const editing = editingSubId;
   event.target.disabled = true;
   try {
-    const result = await run('subscription-save', { name: $('s-name').value.trim(), url });
-    $('s-url').value = '';
-    $('s-name').value = '';
-    notice(`已添加订阅「${result.subscription.name}」：${result.subscription.nodes.length} 个节点`);
+    const input = { name: $('s-name').value.trim(), url };
+    if (editing) input.id = editing;
+    const result = await run('subscription-save', input);
+    const count = result.subscription.nodes.length;
+    resetSubForm();
+    notice(editing
+      ? `已更新订阅「${result.subscription.name}」：${count} 个节点`
+      : `已添加订阅「${result.subscription.name}」：${count} 个节点`);
     await refresh();
-    // 顺手选中刚加的订阅，少点一次。
-    fillSubscriptionOptions(result.subscription.id);
-    fillNodeOptions('');
+    if (!editing) {
+      // 顺手选中刚加的订阅，少点一次；编辑时保留身份表单里已选的订阅/节点。
+      fillSubscriptionOptions(result.subscription.id);
+      fillNodeOptions('');
+    }
   } catch (error) {
     notice(error.message, 'bad');
   } finally {
     event.target.disabled = false;
   }
 };
+
+$('btn-sub-cancel').onclick = () => resetSubForm();
 
 fillForm(null);
 refresh().catch(error => notice(error.message, 'bad'));

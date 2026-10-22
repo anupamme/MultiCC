@@ -428,13 +428,25 @@ fn command_subscription_save(input: &Value) -> Result<Value, String> {
     if url.is_empty() {
         return Err("订阅地址不能为空".into());
     }
-    let fetched = subs::fetch(&url, Duration::from_secs(20))?;
     let mut subscriptions = store::load_subscriptions()?;
     let id = get_str(input, "id");
     let name = {
         let raw = get_str(input, "name");
         if raw.is_empty() { host_of(&url) } else { raw }
     };
+    // 编辑时只改名（地址没变）就不必重新拉订阅：省一次网络，token 已失效
+    // 或机场暂时不通时也能改名。
+    if !id.is_empty() {
+        if let Some(existing) = subscriptions.iter_mut().find(|item| item.id == id) {
+            if existing.url == url {
+                existing.name = name;
+                let updated = existing.clone();
+                store::save_subscriptions(&subscriptions)?;
+                return Ok(json!({ "subscription": updated }));
+            }
+        }
+    }
+    let fetched = subs::fetch(&url, Duration::from_secs(20))?;
     let now = store::now_secs();
     let bytes = fetched.raw.len() as u64;
 
