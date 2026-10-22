@@ -101,6 +101,28 @@ test('a closed connection settles the entry instead of leaving it open', () => {
   assert.equal(entry.aborted, true);
 });
 
+test('completed proxy 404 responses log their responding stage once without leaking capabilities', () => {
+  const warnings = [];
+  const trace = createCodexProxyTrace({ logger: { warn: (...args) => warnings.push(args) } });
+  for (const stage of ['proxy', 'official-relay']) {
+    const res = new FakeResponse();
+    trace.middleware(fakeRequest(`/codex-proxy/codex-official/${CAPABILITY}/main/responses`, {
+      id: `missing-${stage}`, body: { model: 'gpt-6-astra' },
+    }), res, () => {});
+    markStage(res, stage);
+    res.statusCode = 404;
+    res.emit('finish');
+    res.emit('close');
+  }
+  assert.equal(warnings.length, 2, 'finish followed by close must not duplicate the warning');
+  assert.deepEqual(warnings.map(([, entry]) => [entry.requestId, entry.status, entry.stage, entry.aborted]), [
+    ['missing-proxy', 404, 'proxy', false],
+    ['missing-official-relay', 404, 'official-relay', false],
+  ]);
+  assert.equal(JSON.stringify(warnings).includes(CAPABILITY), false);
+  assert.equal(warnings[0][1].route, '/codex-proxy/codex-official/pr1.<redacted>/main/responses');
+});
+
 test('the window is bounded and only anomalies reach the logger', () => {
   const warnings = [];
   const trace = createCodexProxyTrace({ capacity: 3, logger: { warn: (...args) => warnings.push(args) } });
