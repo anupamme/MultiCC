@@ -172,10 +172,18 @@ rustTest('打包后的 Rust 模块可加载，错误架构不能进入安装包'
     }
     const options = { repoRoot: '.', out: path.join(root, 'app-server'), logger: { log() {} } };
     const staged = stageRustKernels(options);
-    const addon = require(staged);
-    assert.equal(addon.protocolVersion(), 1);
-    const index = await addon.buildSearchIndex('[]');
-    assert.deepEqual(JSON.parse((await index.search('{"terms":[],"strong":[],"phrase":""}')).result), []);
+    // Windows keeps loaded DLLs locked until process exit. Probe in a child so
+    // cleanup tests the package, without trying to unlink our own loaded module.
+    const probe = spawnSync(process.execPath, ['-e', `
+      const assert = require('node:assert/strict');
+      const addon = require(process.argv[1]);
+      assert.equal(addon.protocolVersion(), 1);
+      (async () => {
+        const index = await addon.buildSearchIndex('[]');
+        assert.deepEqual(JSON.parse((await index.search('{"terms":[],"strong":[],"phrase":""}')).result), []);
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `, staged], { encoding: 'utf8', timeout: 15000 });
+    assert.equal(probe.status, 0, probe.stderr);
     assert.throws(() => stageRustKernels({ ...options, npmEnv: { npm_config_arch: 'ia32' } }), /架构不匹配/);
   } finally {
     if (beforeDir === undefined) delete process.env.MULTICC_RUST_PREBUILT_DIR; else process.env.MULTICC_RUST_PREBUILT_DIR = beforeDir;

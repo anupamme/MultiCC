@@ -80,7 +80,8 @@ test('migrates legacy JSON exactly into normalized private SQLite tables', async
   assert.equal(store.backend, 'sqlite');
   assert.equal(store.migration.migrated, true);
   assert.deepEqual(await store.snapshot(), before);
-  assert.equal(fs.statSync(files.sqlite).mode & 0o777, 0o600);
+  // Windows exposes synthetic POSIX mode bits; owner-only mode is a POSIX contract.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(files.sqlite).mode & 0o777, 0o600);
   assert.equal(fs.existsSync(files.json), true, 'legacy snapshot remains as explicit rollback source');
 
   const db = new Database(files.sqlite, { readonly: true });
@@ -175,7 +176,8 @@ test('graceful close refreshes a current JSON rollback snapshot outside the hot 
   const snapshot = await rollback.snapshot();
   assert.ok(snapshot.waits.rollback);
   assert.equal(snapshot.revision, 1);
-  assert.equal(fs.statSync(files.json).mode & 0o777, 0o600);
+  // Windows exposes synthetic POSIX mode bits; owner-only mode is a POSIX contract.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(files.json).mode & 0o777, 0o600);
 });
 
 test('runtime stop checkpoints but preserves post-stop reads until explicit dispose', async t => {
