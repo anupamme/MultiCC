@@ -461,3 +461,25 @@ test('explicit compatibleClis keeps credential-gated dsh and grok', () => {
   assert.deepEqual(responsesWithCreds.compatibleClis, ['codex', 'kimi', 'grok'],
     'dsh only speaks anthropic; grok accepts either protocol');
 });
+
+test('official advanced settings (egress binding and IP allowlist) survive normalization', () => {
+  const official = catalog.normalizeProvider({
+    id: 'claude-official-aaaaaaaaaaaaaaaa',
+    appType: 'claude',
+    apiFormat: 'anthropic',
+    isOfficial: true,
+    hasToken: false,
+    egressBinding: { pluginId: 'chrome-proxy-launcher', profileId: 'us-home', secret: 'drop-me' },
+    egressIpAllowlist: ['1.2.3.4', ' 5.6.7.8 ', '', null],
+  });
+  // The editor round-trips both fields; extra keys must not leak through.
+  assert.deepEqual(official.egressBinding, { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' });
+  assert.deepEqual(official.egressIpAllowlist, ['1.2.3.4', '5.6.7.8']);
+
+  const unbound = catalog.normalizeProvider({
+    id: 'claude-local', appType: 'claude', apiFormat: 'anthropic', hasToken: true,
+    egressBinding: { pluginId: 'chrome-proxy-launcher' },
+  });
+  assert.equal(unbound.egressBinding, null, 'a half binding is not a binding');
+  assert.deepEqual(unbound.egressIpAllowlist, []);
+});

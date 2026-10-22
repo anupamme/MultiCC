@@ -97,6 +97,8 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 | `launch` | `{id, url?, checkProxy?=true}` | 启动隔离实例 |
 | `stop` | `{id}` | 停止实例（连带收割本地中继 / 内核） |
 | `probe` | `{id}` 或 `{proxy:{…}}` 或 `{subscription:{…}}` | 经该出口取外网 IP + 延迟 |
+| `egress` | `{id, check?=false}` | 确保该身份的出口**现在**可用，返回标准代理 URL（`proxyUrl`）。订阅出口会复用/拉起内核，带凭据出口会复用/拉起中继；幂等，可被外部程序按需调用 |
+| `egress-stop` | `{id}` | 收割该身份的内核与中继（不动 Chrome），出口配置变化时插件自己也会调 |
 | `subscription-save` | `{id?, name?, url}` | 拉取并保存订阅（刷新节点缓存） |
 | `subscription-refresh` | `{id}` | 重新拉取订阅 |
 | `subscription-remove` | `{id}` | 删除订阅（仍被身份引用时拒绝） |
@@ -126,4 +128,27 @@ Chrome --proxy-server=http://127.0.0.1:<随机端口>  →  中继  →  真实�
 
 带凭据的身份在 launch 前会做一次**认证探测**（而不是仅 TCP 可达）：凭据错了
 直接拒绝启动，不会让 Chrome 挂在一个永远 407 的中继上。
+
+## 给 Claude 账号当专用出口
+
+同一个身份除了给 Chrome 用，也可以给**某一个 Claude 官方账号**当专用出口
+（MultiCC 侧「线路 → 官方账号 → 编辑 → 专用出口」）：每个账号绑一个不同的
+身份，各账号的请求就从不同的 IP 出去。
+
+调用方（MultiCC 的 `/claude-egress/<providerId>` 转发器）拿的是一条标准代理
+URL，由它自己在 http 层把上游请求接到这条出口上。`egress` 只负责「把出口准备好」
+—— 内核/中继已在跑就复用，不在跑就拉起；返回的 `kind` 说明用的是哪一段：
+
+| kind | proxyUrl | 何时 |
+| --- | --- | --- |
+| `direct` | `<scheme>://host:port` | 无凭据直连代理（本机 Clash / VPN 端口） |
+| `core` | `http://127.0.0.1:<内核端口>` | 订阅节点，无上游 |
+| `relay` | `http://127.0.0.1:<中继端口>` | 带凭据直连，或订阅节点 + 上游住宅代理 |
+
+要在 UI 之外核对这个身份此刻的出口 IP，加 `"check": true`，返回里会带 `exitIp`
+（多一次外网探测，默认不做）。不想让它继续常驻就调 `egress-stop`。
+
+出口配置（代理地址/订阅节点/上游）一改，插件会立刻收割旧内核与中继：内核没有
+空闲退出，不收割的话下一个请求会继续走旧出口 —— 改了却换不了 IP 是最坏的结果。
+订阅「刷新」同样会收割引用它的身份的内核。
 

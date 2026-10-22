@@ -1353,6 +1353,14 @@ providerRouterRuntime.mountProtocolProxies(app, {
   onActivity: event => { const bound = providerAttemptRuntime.onProxyActivity(event); if (bound) livenessRuntime.recordProxyActivity({ ...event, sessionId: bound.sessionId }); },
   ...createProxyBroadcasters(chatBroadcast, { resolveCli: name => (persistedSessions.get(name) || {}).cli, recordLimit: limitRecorder.recordSession, attemptRuntime: providerAttemptRuntime, audit: (id, event) => turnEventJournal.note(id, event) }),
 });
+// 官方账号的「专用出口」：有一条 /claude-egress/<providerId> 的本机跳，按账号把
+// 请求接到「Chrome 隔离出口启动器」插件里的某个身份。必须在 express.json() 之前
+// 挂载 —— 请求体要原样流到上游，不能被解析消耗。
+require('./src/claude-auth/egress-forwarder').createClaudeEgressForwarder({
+  getProvider: providers.getProvider,
+  readCredential: arg => claudeAccountCredentials.readOfficialCredential(arg),
+  logger,
+}).mount(app, { port: PORT });
 app.use(express.json({ limit: '50mb' })); serviceRoutes.mountManagement(app); require('./src/routes/quota-guard').mountQuotaGuardRoutes(app, { file: MULTICC_PATHS.quotaGuardFile }); // GET/PUT /api/settings/quota-guard —— 官方账号额度保护阈值（写 quota-guard.json，约 5 秒热生效）
 // Codex 协议代理端点：官方 relay 与 responses-compat（XFYun 流稳定化）。
 // Responses↔Chat 转换桥已退役——主流国产服务商均已原生支持 /responses。

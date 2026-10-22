@@ -961,3 +961,52 @@ test('relay-share inventory lists and revokes durable records without returning 
   });
   assert.equal(response.statusCode, 404);
 });
+
+// A dedicated-egress binding is official-account-only and rides the same PATCH
+// as the allowlist. Three things matter at this layer: the object is passed
+// through verbatim, an absent key means "don't touch", and a malformed value is
+// a 400 instead of a stored half-binding.
+test('dedicated-egress bindings are validated and forwarded only when present', async () => {
+  const harness = createHarness();
+  const params = { appType: 'claude', id: 'claude-official-aaaaaaaaaaaaaaaa' };
+
+  let response = await invoke(harness.app, 'PATCH', '/api/providers/:appType/:id', {
+    params,
+    body: { egressBinding: { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' } },
+  });
+  assert.equal(response.body.ok, true);
+  assert.deepEqual(harness.calls.at(-1).input.egressBinding,
+    { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' });
+  assert.equal('egressIpAllowlist' in harness.calls.at(-1).input, false,
+    'an absent allowlist stays absent, so the stored one is not cleared');
+
+  // Clear: null is meaningful and must reach the store layer.
+  await invoke(harness.app, 'PATCH', '/api/providers/:appType/:id', {
+    params, body: { egressBinding: null },
+  });
+  assert.equal(harness.calls.at(-1).input.egressBinding, null);
+
+  // Absent: the key must not appear at all (undefined would be dropped by
+  // destructuring anyway, but a stray key would flip "unchanged" into "clear").
+  await invoke(harness.app, 'PATCH', '/api/providers/:appType/:id', {
+    params, body: { name: undefined },
+  });
+  assert.equal('egressBinding' in harness.calls.at(-1).input, false);
+
+  const before = harness.calls.length;
+  response = await invoke(harness.app, 'PATCH', '/api/providers/:appType/:id', {
+    params, body: { egressBinding: 'chrome-proxy-launcher:us-home' },
+  });
+  assert.equal(response.statusCode, 400);
+  assert.equal(harness.calls.length, before, 'a malformed binding never reaches the store');
+
+  const created = await invoke(harness.app, 'POST', '/api/providers', {
+    body: {
+      appType: 'claude', name: 'New relay', baseUrl: 'https://relay.test',
+      egressBinding: { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' },
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  assert.deepEqual(harness.calls.at(-1).input.egressBinding,
+    { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' });
+});

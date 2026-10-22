@@ -124,9 +124,12 @@ const MIGRATION_DEBT = Object.freeze({
   // 那一族抬起且没回来登记 —— 2026-10-22 插件通道接线时实测 3020/158444
   //（本轮零行变更，仅合并 require 与挂载同行）。按棘轮补登记存量高水位；
   // 下一次动 server.js 该拆的仍是账号/额度路由那一族，落回 <= 3000 就删掉这条。
+  // 2026-10-22 同一轮再接一跳：官方账号「专用出口」的本机转发器
+  //（src/claude-auth/egress-forwarder.js）必须挂在 express.json() 之前，实测
+  // 3028/158966。
   'server.js': Object.freeze({
-    ceiling: 3020,
-    byteCeiling: 158444,
+    ceiling: 3028,
+    byteCeiling: 158966,
     target: 3000,
     reason: 'split account/quota and host-power route families out of server.js to return under 3k',
   }),
@@ -443,8 +446,12 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 删 5 个随旧「自动打开授权页」与行内粘贴框退场的键，实测 9524/607173。
     // +11 双语键（airPlugins*）：插件面板（air-plugins.js）与侧栏「资料」更名
     // 「资料与插件」（airMaterials 改值，行数不变），实测 9546/608607。
-    maxLines: 9546,
-    maxBytes: 608607,
+    // +9 双语键（airProviderEgressBinding*）：官方账号线路的「专用出口」选择器
+    // （插件身份清单、未安装提示、已删除身份占位）。中英各 9 行 = +18 行；
+    // 另 +1 双语键（airProviderEgressBindingTag）给线路卡打标 = +2 行，
+    // 重跑生成器实测 9566/611135。
+    maxLines: 9566,
+    maxBytes: 611135,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });
