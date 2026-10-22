@@ -101,4 +101,63 @@ void main() {
     expect(result, isTrue);
     expect(find.byType(ClaudeSigninDialog), findsNothing);
   });
+
+  testWidgets('the same sheet signs in a Codex account against the codex routes', (tester) async {
+    final paths = <String>[];
+    var accepted = false;
+    final manage = ManageService(
+      settings: settings,
+      httpClient: MockClient((request) async {
+        paths.add(request.url.path);
+        if (request.url.path == '/api/codex/accounts/$id/login-callback') {
+          accepted = true;
+          return http.Response(jsonEncode({'ok': true, 'accepted': true}), 200);
+        }
+        if (request.url.path == '/api/codex/accounts/$id/login-status') {
+          return http.Response(
+              jsonEncode(accepted ? {'state': 'complete', 'email': 'codex@example.com'} : {'state': 'pending'}), 200);
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => showDialog<bool>(
+              context: context,
+              builder: (_) => ClaudeSigninDialog(
+                  manage: manage,
+                  accountId: id,
+                  oauthUrl: 'https://auth.openai.com/oauth/authorize?state=st',
+                  name: '小号',
+                  vendor: 'codex'),
+            ),
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pump();
+
+    expect(find.text('登录 Codex 账号 · 小号'), findsOneWidget);
+    expect(find.textContaining('127.0.0.1:1455/auth/callback'), findsOneWidget,
+        reason: 'the Codex callback address is the one to paste back');
+
+    await tester.enterText(find.byType(TextField), 'http://127.0.0.1:1455/auth/callback?code=good&state=st');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '完成登录'));
+    await tester.pump();
+    await tester.pump();
+    expect(paths, contains('/api/codex/accounts/$id/login-callback'));
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump();
+    expect(find.text('Codex 账号登录完成：codex@example.com'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1300));
+    await tester.pumpAndSettle();
+    expect(find.byType(ClaudeSigninDialog), findsNothing);
+  });
 }

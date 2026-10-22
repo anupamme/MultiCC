@@ -4,11 +4,11 @@
  *
  * 每种 CLI 只有一个官方 Provider，账号在这里全局切换，新请求使用当前账号。
  *
- * Codex 账号登录走白名单 loginFlow 终端（CODEX_HOME 指向账号目录），添加后
- * 打开该终端页让用户完成浏览器授权；Claude 账号登录走 multicc 自己的 PKCE
- * 流程，添加后不自动打开授权页，而是弹出登录面板（照 Magpie 的做法）：给出完整
- * 授权链接供复制到任意浏览器，再粘贴浏览器最终停留的回调地址，轮询 login-status
- * 直到完成。
+ * 两种账号登录走同一套 multicc 自己的 PKCE 流程（Claude 见
+ * src/claude-auth/official-oauth.js，Codex 见 src/codex-auth/official-oauth.js）：
+ * 添加后不自动打开授权页，而是弹出登录面板（照 Magpie 的做法）：给出完整授权
+ * 链接供复制到任意浏览器，再粘贴浏览器最终停留的回调地址，轮询 login-status
+ * 直到完成。只有「本机 CLI 登录账号」那一行仍走 loginFlow 终端。
  *
  * 依赖 manage.html 已加载的全局：window.MultiCCApi（api-client.js）、
  * window.QuotaBarView（quota-bar-view.js）、escapeHtml / showToast /
@@ -129,12 +129,20 @@
 
   function codexRow(a) {
     if (a.global) return accountRow('codex', a, chip(tr('airOfficialAcctUseLocalCodex'), '#58a6ff'));
-    const chips = a.loggedIn
-      ? chip(tr('airOfficialAcctSignedIn'), '#58a6ff') + (a.email ? ' <span style="font-size:12px;color:var(--muted)">' + esc(a.email) + '</span>' : '')
-      : chip(tr('airOfficialAcctSignedOut'), '#f85149') + ' <span style="font-size:11px;color:var(--faint)">' + esc(a.reason || '') + '</span>';
+    const login = a.login || { state: 'idle' };
+    let chips;
+    if (login.state === 'pending') {
+      chips = chip(tr('airOfficialAcctAwaitingBrowser'), '#d29922');
+    } else if (login.state === 'error') {
+      chips = chip(tr('airOfficialAcctLoginFailed'), '#f85149') + ' <span style="font-size:11px;color:var(--danger)">' + esc(login.error || '') + '</span>';
+    } else if (a.loggedIn) {
+      chips = chip(tr('airOfficialAcctSignedIn'), '#58a6ff') + (a.email ? ' <span style="font-size:12px;color:var(--muted)">' + esc(a.email) + '</span>' : '');
+    } else {
+      chips = chip(tr('airOfficialAcctSignedOut'), '#f85149') + ' <span style="font-size:11px;color:var(--faint)">' + esc(a.reason || '') + '</span>';
+    }
     const refresh = a.refresh && a.refresh.lastError
       ? ' <span style="font-size:11px;color:var(--danger)" title="' + esc(tr('airOfficialAcctRefreshTitle')) + '">' + esc(tr('airOfficialAcctRefreshError', { message: a.refresh.lastError })) + '</span>' : '';
-    return accountRow('codex', a, chips + refresh);
+    return accountRow('codex', a, chips + refresh, login.state === 'pending' ? loginResumeBlock('codex', a) : '');
   }
 
   function claudeRow(a) {
@@ -153,14 +161,15 @@
     const cred = a.credential || {};
     if (cred.lastError) chips += ' <span style="font-size:11px;color:var(--danger)" title="' + esc(tr('airOfficialAcctRefreshTitle')) + '">' + esc(tr('airOfficialAcctRefreshError', { message: cred.lastError })) + '</span>';
     else if (cred.lastRefreshAt) chips += ' <span style="font-size:11px;color:var(--faint)">' + esc(tr('airOfficialAcctLastRefresh', { at: fmtTime(cred.lastRefreshAt) })) + '</span>';
-    return accountRow('claude', a, chips, login.state === 'pending' ? claudeResumeBlock(a) : '');
+    return accountRow('claude', a, chips, login.state === 'pending' ? loginResumeBlock('claude', a) : '');
   }
 
-  // A pending login keeps its link on the server; this reopens the panel for it.
-  function claudeResumeBlock(a) {
+  // A pending login keeps its link on the server; this reopens the panel for it
+  // (both vendors now share the browser + paste flow).
+  function loginResumeBlock(vendor, a) {
     return '<div style="border-top:1px dashed var(--border);padding-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
       + '<span style="flex:1;min-width:200px;font-size:11px;line-height:1.6;color:var(--faint)">' + esc(tr('airOfficialAcctSigninRowHint')) + '</span>'
-      + '<button class="btn btn-green" style="padding:4px 10px;font-size:12px" data-act="open-signin" data-vendor="claude" data-id="' + esc(a.id) + '">' + esc(tr('airOfficialAcctSigninResume')) + '</button>'
+      + '<button class="btn btn-green" style="padding:4px 10px;font-size:12px" data-act="open-signin" data-vendor="' + vendor + '" data-id="' + esc(a.id) + '">' + esc(tr('airOfficialAcctSigninResume')) + '</button>'
       + '</div>';
   }
 
@@ -236,7 +245,9 @@
       // 自动为已登录账号拉一次余量；失败的行保留可点「刷新余量」重试。
       for (const a of state.codex) if (a.loggedIn) fetchQuota('codex', a.id);
       for (const a of state.claude) if (a.loggedIn) fetchQuota('claude', a.id);
-      for (const a of state.claude) if ((a.login || {}).state === 'pending') watchClaudeLogin(a.id);
+      for (const vendor of ['codex', 'claude']) {
+        for (const a of state[vendor]) if ((a.login || {}).state === 'pending') watchLogin(vendor, a.id);
+      }
     } catch (err) {
       state.loading = false;
       const el = bodyEl();
@@ -281,14 +292,11 @@
       try {
         const data = await api().json('/api/' + vendor + '/accounts', { method: 'POST', json: { label } });
         close();
-        if (vendor === 'codex') {
-          if (data.loginSessionId) {
-            toast(tr('airOfficialAcctCreatedOpeningTerminal'));
-            window.open('index.html?id=' + encodeURIComponent(data.loginSessionId), '_blank');
-            watchCodexLogin(data.accountId);
-          } else { toast(tr('airOfficialAcctTerminalOpenFailed', { message: data.error || '' }), true); }
+        if (data.oauthUrl) {
+          openSignin(vendor, data.accountId, data.oauthUrl, label);
+          watchLogin(vendor, data.accountId);
         } else {
-          openClaudeSignin(data.accountId, data.oauthUrl, label);
+          toast(tr('airOfficialAcctLoginUnavailable', { message: data.loginError || data.error || '' }), true);
         }
         loadOfficialAccounts();
         refreshProviders();
@@ -305,12 +313,11 @@
       if (id === 'global') {
         if (data.sessionId) window.open('index.html?id=' + encodeURIComponent(data.sessionId), '_blank');
         toast(tr('airOfficialAcctTerminalOpened'));
-      } else if (vendor === 'codex') {
-        if (data.loginSessionId) window.open('index.html?id=' + encodeURIComponent(data.loginSessionId), '_blank');
-        toast(data.loginSessionId ? tr('airOfficialAcctTerminalOpened') : tr('airOfficialAcctTerminalOpenFailed', { message: data.error || '' }), !data.loginSessionId);
-        if (data.loginSessionId) watchCodexLogin(id);
+      } else if (data.oauthUrl) {
+        openSignin(vendor, id, data.oauthUrl);
+        watchLogin(vendor, id);
       } else {
-        openClaudeSignin(id, data.oauthUrl);
+        setStatus(tr('airOfficialAcctLoginUnavailable', { message: data.error || '' }), true);
       }
       setStatus('');
       loadOfficialAccounts();
@@ -340,55 +347,72 @@
     } catch (err) { setStatus(tr('airOfficialAcctDeleteFailed', { message: err.message }), true); }
   }
 
-  // ── claude browser-login watch ─────────────────────────────────────────────
+  // ── browser-login watch (both vendors) ─────────────────────────────────────
 
-  function watchClaudeLogin(accountId) {
-    if (!accountId || state.loginWatch[accountId]) return;
+  function watchLogin(vendor, accountId) {
+    const key = vendor + ':' + accountId;
+    if (!accountId || state.loginWatch[key]) return;
     const startedAt = Date.now();
-    state.loginWatch[accountId] = setInterval(async () => {
-      if (Date.now() - startedAt > 10 * 60 * 1000) { stopWatch(accountId); return; }
+    state.loginWatch[key] = setInterval(async () => {
+      if (Date.now() - startedAt > 10 * 60 * 1000) { stopWatch(key); return; }
       try {
-        const s = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-status');
+        const s = await api().json('/api/' + vendor + '/accounts/' + encodeURIComponent(accountId) + '/login-status');
         if (s.state === 'pending') return;
-        stopWatch(accountId);
-        const panel = state.signin && state.signin.accountId === accountId ? state.signin : null;
+        stopWatch(key);
+        const panel = state.signin && state.signin.vendor === vendor && state.signin.accountId === accountId ? state.signin : null;
         if (panel) panel.onStatus(s);
         else if (s.state === 'complete') {
-          toast(s.email ? tr('airOfficialAcctClaudeLoginDoneEmail', { email: s.email }) : tr('airOfficialAcctClaudeLoginDone'));
+          toast(s.email ? tr(SIGNIN_TEXT[vendor].doneEmail, { email: s.email }) : tr(SIGNIN_TEXT[vendor].done));
         } else if (s.state === 'error') {
-          toast(tr('airOfficialAcctClaudeLoginFailed', { message: s.error || '' }), true);
+          toast(tr(SIGNIN_TEXT[vendor].failed, { message: s.error || '' }), true);
         }
         loadOfficialAccounts();
         refreshProviders();
       } catch (_) { /* transient — keep polling until the timeout */ }
     }, 2000);
-    state.loginWatch[accountId].unref?.();
+    state.loginWatch[key].unref?.();
   }
 
-  // ── claude sign-in panel ───────────────────────────────────────────────────
+  // ── sign-in panel (both vendors) ──────────────────────────────────────────
   // Magpie's sign-in sheet: nothing opens by itself. The whole link is shown to
   // copy into whichever browser or profile holds the account; that browser ends
   // on its own localhost (unreachable when MultiCC runs on a server), so its
   // address is pasted back here and the server finishes the PKCE exchange.
+  // Codex uses the same sheet — its account login is multicc's own PKCE flow
+  // too (src/codex-auth/official-oauth.js), so only the copy and the endpoint
+  // vendor differ.
 
-  function openClaudeSignin(accountId, oauthUrl, label) {
+  const SIGNIN_TEXT = {
+    claude: {
+      title: 'airOfficialAcctSigninTitle', step1: 'airOfficialAcctSigninStep1', step2: 'airOfficialAcctSigninStep2',
+      done: 'airOfficialAcctClaudeLoginDone', doneEmail: 'airOfficialAcctClaudeLoginDoneEmail', failed: 'airOfficialAcctClaudeLoginFailed',
+    },
+    codex: {
+      title: 'airOfficialAcctCodexSigninTitle', step1: 'airOfficialAcctCodexSigninStep1', step2: 'airOfficialAcctCodexSigninStep2',
+      done: 'airOfficialAcctCodexLoginDone', doneEmail: 'airOfficialAcctCodexLoginDoneEmail', failed: 'airOfficialAcctCodexLoginFailed',
+    },
+  };
+
+  function openSignin(vendor, accountId, oauthUrl, label) {
     closeSignin();
     if (!accountId) return;
-    const account = state.claude.find(a => a.id === accountId);
-    const name = label || (account && account.label) || tr('airOfficialAcctClaudeAccount', { id: accountId.slice(0, 6) });
+    const text = SIGNIN_TEXT[vendor] || SIGNIN_TEXT.claude;
+    const account = (state[vendor] || []).find(a => a.id === accountId);
+    const name = label || (account && account.label)
+      || tr(vendor === 'codex' ? 'airOfficialAcctCodexAccount' : 'airOfficialAcctClaudeAccount', { id: accountId.slice(0, 6) });
     const btn = 'font-size:12px;padding:4px 10px;white-space:nowrap';
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;';
     overlay.innerHTML = '<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:18px;width:540px;max-width:94vw;max-height:90vh;overflow:auto;box-sizing:border-box;display:flex;flex-direction:column;gap:10px">'
-      + '<div style="font-size:14px;color:#c9d1d9;font-weight:600">' + esc(tr('airOfficialAcctSigninTitle', { name })) + '</div>'
+      + '<div style="font-size:14px;color:#c9d1d9;font-weight:600">' + esc(tr(text.title, { name })) + '</div>'
       + '<div data-k="phase" style="font-size:12px;color:#d29922"></div>'
-      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr('airOfficialAcctSigninStep1')) + '</div>'
+      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr(text.step1)) + '</div>'
       + '<div style="display:flex;gap:6px;align-items:center;min-width:0">'
       + '<code data-k="url" style="flex:1;min-width:0;white-space:nowrap;overflow-x:auto;user-select:all;-webkit-user-select:all;font-size:12px;padding:6px 8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9"></code>'
       + '<button class="btn" data-k="copy" style="' + btn + '">' + esc(tr('airOfficialAcctSigninCopy')) + '</button>'
       + '<button class="btn" data-k="open" style="' + btn + '">' + esc(tr('airOfficialAcctSigninOpen')) + '</button>'
       + '</div>'
-      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr('airOfficialAcctSigninStep2')) + '</div>'
+      + '<div style="font-size:12px;color:var(--faint);line-height:1.6">' + esc(tr(text.step2)) + '</div>'
       + '<form data-k="form" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">'
       + '<input data-k="callback" type="text" autocomplete="off" spellcheck="false" aria-label="' + esc(tr('airOfficialAcctSigninCallbackLabel')) + '" placeholder="' + esc(tr('airOfficialAcctPastePlaceholder')) + '" style="flex:1;min-width:220px;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:12px;padding:7px 10px;outline:none">'
       + '<button type="submit" class="btn btn-green" data-k="submit" style="' + btn + '" disabled>' + esc(tr('airOfficialAcctPasteAction')) + '</button>'
@@ -401,7 +425,7 @@
     document.body.appendChild(overlay);
     const q = k => overlay.querySelector('[data-k="' + k + '"]');
     const input = q('callback'), submit = q('submit'), phase = q('phase'), error = q('error'), retry = q('retry');
-    const panel = { accountId, url: oauthUrl || '', submitting: false, finished: false, overlay };
+    const panel = { vendor, accountId, url: oauthUrl || '', submitting: false, finished: false, overlay };
     state.signin = panel;
     const same = () => state.signin === panel;
     const syncSubmit = () => { submit.disabled = panel.submitting || panel.finished || input.disabled || !input.value.trim(); };
@@ -422,14 +446,14 @@
         panel.finished = true;
         input.disabled = true;
         error.textContent = '';
-        phase.textContent = s.email ? tr('airOfficialAcctClaudeLoginDoneEmail', { email: s.email }) : tr('airOfficialAcctClaudeLoginDone');
+        phase.textContent = s.email ? tr(text.doneEmail, { email: s.email }) : tr(text.done);
         phase.style.color = '#3fb950';
         q('close').textContent = tr('airOfficialAcctSigninClose');
         setTimeout(() => { if (same()) closeSignin(); }, 1500);
       } else if (s.state === 'error') {
         input.disabled = true;
         phase.textContent = '';
-        error.textContent = tr('airOfficialAcctClaudeLoginFailed', { message: s.error || '' });
+        error.textContent = tr(text.failed, { message: s.error || '' });
         retry.style.display = '';
       }
       syncSubmit();
@@ -462,11 +486,11 @@
       phase.textContent = tr('airOfficialAcctSigninSubmitting');
       syncSubmit();
       try {
-        const res = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/login-callback', { method: 'POST', json: { callback: raw } });
+        const res = await api().json('/api/' + vendor + '/accounts/' + encodeURIComponent(accountId) + '/login-callback', { method: 'POST', json: { callback: raw } });
         if (!same()) return;
         if (res && res.state === 'complete') { panel.onStatus({ state: 'complete' }); return; }
         phase.textContent = tr('airOfficialAcctPasteAccepted');
-        watchClaudeLogin(accountId);
+        watchLogin(vendor, accountId);
       } catch (err) {
         if (!same()) return;
         panel.submitting = false;
@@ -479,11 +503,12 @@
     retry.onclick = async () => {
       retry.disabled = true;
       try {
-        const data = await api().json('/api/claude/accounts/' + encodeURIComponent(accountId) + '/relogin', { method: 'POST', json: {} });
+        const data = await api().json('/api/' + vendor + '/accounts/' + encodeURIComponent(accountId) + '/relogin', { method: 'POST', json: {} });
         if (!same()) return;
+        if (!data.oauthUrl) throw new Error(data.error || 'login unavailable');
         input.value = '';
         reset(data.oauthUrl);
-        watchClaudeLogin(accountId);
+        watchLogin(vendor, accountId);
       } catch (err) {
         if (same()) error.textContent = tr('airOfficialAcctReloginFailed', { message: err.message });
       } finally { retry.disabled = false; }
@@ -491,7 +516,7 @@
     q('close').onclick = closeSignin;
 
     reset(panel.url);
-    watchClaudeLogin(accountId);
+    watchLogin(vendor, accountId);
     if (input.focus) input.focus();
   }
 
@@ -502,33 +527,17 @@
     panel.overlay.remove();
   }
 
-  function resumeClaudeSignin(accountId) {
-    const account = state.claude.find(a => a.id === accountId);
+  // The pending login's link lives on the server; reopen the sheet for it.
+  function resumeSignin(vendor, accountId) {
+    const account = (state[vendor] || []).find(a => a.id === accountId);
     const url = account && account.login && account.login.oauthUrl;
-    if (url) openClaudeSignin(accountId, url);
-    else relogin('claude', accountId);
+    if (url) openSignin(vendor, accountId, url);
+    else relogin(vendor, accountId);
   }
 
-  function watchCodexLogin(accountId) {
-    if (!accountId || state.loginWatch[accountId]) return;
-    const startedAt = Date.now();
-    state.loginWatch[accountId] = setInterval(async () => {
-      if (Date.now() - startedAt > 10 * 60 * 1000) { stopWatch(accountId); return; }
-      try {
-        const data = await api().json('/api/codex/accounts');
-        const account = (data.accounts || []).find(item => item.id === accountId);
-        if (!account || !account.loggedIn) return;
-        stopWatch(accountId);
-        toast(tr('airOfficialAcctCodexLoginDone'));
-        refreshProviders();
-      } catch (_) { /* transient — keep polling until the timeout */ }
-    }, 2000);
-    state.loginWatch[accountId].unref?.();
-  }
-
-  function stopWatch(accountId) {
-    clearInterval(state.loginWatch[accountId]);
-    delete state.loginWatch[accountId];
+  function stopWatch(key) {
+    clearInterval(state.loginWatch[key]);
+    delete state.loginWatch[key];
   }
 
   // ── wiring ─────────────────────────────────────────────────────────────────
@@ -542,7 +551,7 @@
     else if (btn.dataset.act === 'relogin') relogin(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'activate') activate(vendor, btn.dataset.id);
     else if (btn.dataset.act === 'delete') removeAccount(vendor, btn.dataset.id);
-    else if (btn.dataset.act === 'open-signin') resumeClaudeSignin(btn.dataset.id);
+    else if (btn.dataset.act === 'open-signin') resumeSignin(vendor, btn.dataset.id);
   });
 
   // Provider 视图每次被打开时刷新（账号可能刚在别处登录/删除过）。

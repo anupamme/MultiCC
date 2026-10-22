@@ -450,8 +450,12 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // （插件身份清单、未安装提示、已删除身份占位）。中英各 9 行 = +18 行；
     // 另 +1 双语键（airProviderEgressBindingTag）给线路卡打标 = +2 行，
     // 重跑生成器实测 9566/611135。
-    maxLines: 9566,
-    maxBytes: 611135,
+    // +6 双语键（airOfficialAcctCodexSigninTitle/Step1/Step2、CodexLoginDoneEmail、
+    // CodexLoginFailed、LoginUnavailable）：Codex 账号登录不再委托交互式
+    // `codex login` 终端，改为和 Claude 一样的面板 —— 授权链接 + 粘贴回调，
+    // 中英各 6 行 = +12 行，重跑生成器实测 9578/613035。
+    maxLines: 9578,
+    maxBytes: 613035,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

@@ -79,6 +79,53 @@ pub fn pid_alive(pid: i32) -> bool {
         .unwrap_or(false)
 }
 
+/// 像 ⌘Q 一样让这个 Chrome 实例正常退出，等它把 cookie 等写完盘。
+///
+/// 不能直接 kill：Chrome 把 SIGTERM 当成「系统注销」走快速退出（exit_type
+/// SessionEnded），cookie 库每 30 秒才批量落盘一次，刚登录的会话实测 5 次里
+/// 4 次丢失 —— 这正是「每次打开都要重新登录」的根因。macOS 上按 pid 发标准退出
+/// 事件（NSRunningApplication.terminate，只作用于这一个实例，不会误关用户自己的
+/// Chrome），实测 cookie 全部保留、exit_type=Normal。超时仍未退出才退回 SIGTERM。
+pub fn quit_gracefully(pid: i32) -> Result<(), String> {
+    if !pid_alive(pid) {
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "ObjC.import('AppKit'); var a = $.NSRunningApplication.runningApplicationWithProcessIdentifier({pid}); a.isNil() ? false : a.terminate"
+        );
+        let _ = Command::new("osascript")
+            .args(["-l", "JavaScript", "-e", &script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if wait_exit(pid, Duration::from_secs(15)) {
+            return Ok(());
+        }
+    }
+    terminate_pid(pid)?;
+    if wait_exit(pid, Duration::from_secs(5)) {
+        Ok(())
+    } else {
+        Err(format!("浏览器进程 {pid} 未能在限定时间内退出"))
+    }
+}
+
+fn wait_exit(pid: i32, limit: Duration) -> bool {
+    let step = Duration::from_millis(250);
+    let mut waited = Duration::ZERO;
+    while waited < limit {
+        if !pid_alive(pid) {
+            return true;
+        }
+        thread::sleep(step);
+        waited += step;
+    }
+    !pid_alive(pid)
+}
+
 pub fn terminate_pid(pid: i32) -> Result<(), String> {
     let ok = Command::new("kill")
         .arg(pid.to_string())
@@ -102,6 +149,11 @@ pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str, pin_dns
         "--no-first-run".to_string(),
         "--no-default-browser-check".to_string(),
         "--disable-features=ChromeWhatsNewUI".to_string(),
+        // 每次都接着上次的会话打开：恢复标签页，也保住没勾「记住我」的会话
+        // cookie（不加它 Chrome 启动时会清掉会话 cookie，等于又要重新登录）。
+        // 「启动时继续浏览」那个设置项写进 Preferences 不管用：它受 Secure
+        // Preferences 校验，外部改写会被 Chrome 当作篡改重置。
+        "--restore-last-session".to_string(),
     ];
     // socks5 直连时 Chrome 默认在本地解析 DNS（socks5 而非 socks5h），等于
     // 把访问了哪些域名漏给本地网络栈。压掉本地解析，解析失败宁可不连。
@@ -275,7 +327,15 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
             format!("启动浏览器失败：{err}")
         })?;
     let pid = child.id() as i32;
-    store::write_pid(&profile.id, pid)?;
+    // 这个身份的 Chrome 已经在跑时，新进程只是把参数转交给它（开个新窗口/标签）
+    // 然后立刻退出。保留原来那个主进程的 pid，否则「停止」会找不到它。
+    let pid = match store::read_pid(&profile.id) {
+        Some(existing) if existing != pid && pid_alive(existing) => existing,
+        _ => {
+            store::write_pid(&profile.id, pid)?;
+            pid
+        }
+    };
     let mut result = json!({
         "pid": pid,
         "browser": browser.display().to_string(),
@@ -318,6 +378,7 @@ mod tests {
         );
         assert!(args.iter().any(|a| a == "--proxy-server=http://127.0.0.1:7897"));
         assert!(args.iter().any(|a| a.starts_with("--user-data-dir=")));
+        assert!(args.iter().any(|a| a == "--restore-last-session"));
         assert!(args.iter().any(|a| a == "https://example.com"));
         assert!(!args.iter().any(|a| a.starts_with("--host-resolver-rules")));
     }

@@ -374,27 +374,33 @@ class _ProviderScreenState extends State<ProviderScreen> {
     if (label == null || !mounted) return;
     try {
       final result = await _manage.createProviderAccount(vendor, label: label);
-      if (vendor == 'claude') {
-        final url = result['oauthUrl']?.toString() ?? '';
-        final id = result['accountId']?.toString() ?? '';
-        if (url.isNotEmpty && id.isNotEmpty && mounted) {
-          await showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (_) => ClaudeSigninDialog(
-                manage: _manage, accountId: id, oauthUrl: url, name: label.isEmpty ? 'Claude' : label),
-          );
-        }
+      // Both vendors answer with a sign-in link now (multicc's own PKCE flow);
+      // a terminal session id only survives for the built-in "same CLI" route.
+      final url = result['oauthUrl']?.toString() ?? '';
+      final id = result['accountId']?.toString() ?? '';
+      if (url.isNotEmpty && id.isNotEmpty && mounted) {
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => ClaudeSigninDialog(
+              manage: _manage,
+              accountId: id,
+              oauthUrl: url,
+              vendor: vendor,
+              name: label.isEmpty ? (vendor == 'codex' ? 'Codex' : 'Claude') : label),
+        );
       } else {
-        final id = result['loginSessionId']?.toString() ?? '';
-        if (id.isNotEmpty) {
+        final sessionId = result['loginSessionId']?.toString() ?? '';
+        if (sessionId.isNotEmpty) {
           final uri = Uri.parse(widget.settings.buildHttpUrl('/index.html')).replace(queryParameters: {
-            'id': id,
+            'id': sessionId,
             if (widget.settings.token.isNotEmpty) 'token': widget.settings.token,
           });
           await launchUrl(uri, mode: LaunchMode.externalApplication);
+          _snack('账号已创建，请在打开的页面完成登录');
+        } else {
+          _snack('登录流程启动失败：${result['loginError'] ?? result['error'] ?? ''}');
         }
-        _snack('账号已创建，请在打开的页面完成登录');
       }
       await _refresh();
     } catch (e) {

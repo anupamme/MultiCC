@@ -203,6 +203,18 @@ function createOfficialAccountStore(options = {}) {
     fs.rmSync(codexDir(id), { recursive: true, force: true });
   }
 
+  // The Codex counterpart of writeClaudeCredential: multicc's own PKCE login
+  // (routes/codex-accounts.js) lands the exact auth.json the CLI writes, so
+  // every reader — relay, per-account refresher, quota — is unchanged.
+  function writeCodexCredential(id, auth) {
+    if (!auth || typeof auth !== 'object') throw new TypeError('[official-accounts] auth object is required');
+    const file = codexAuthFile(id);
+    ensurePrivateDir(path.dirname(file));
+    atomicWriteJson(file, auth);
+    secureFile(file);
+    return auth;
+  }
+
   // Same read the relay does, shared so quota/refresh agree on the verdicts.
   function readCodexCredential(id, { now = Date.now } = {}) {
     const auth = readJsonIfExists(codexAuthFile(id));
@@ -305,6 +317,7 @@ function createOfficialAccountStore(options = {}) {
     writeCodexMeta,
     listCodexAccounts,
     deleteCodexAccount,
+    writeCodexCredential,
     readCodexCredential,
     codexDir,
     codexAuthFile,

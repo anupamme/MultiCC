@@ -282,9 +282,7 @@ fn command_remove(input: &Value) -> Result<Value, String> {
     let mut profiles = store::load_profiles()?;
     find_profile(&profiles, &id)?;
     if let Some(pid) = store::read_pid(&id) {
-        if chrome::pid_alive(pid) {
-            let _ = chrome::terminate_pid(pid);
-        }
+        let _ = chrome::quit_gracefully(pid);
     }
     store::clear_pid(&id);
     chrome::stop_relay_if_any(&id);
@@ -314,14 +312,18 @@ fn command_stop(input: &Value) -> Result<Value, String> {
         return Err("缺少身份 id".into());
     }
     let pid = store::read_pid(&id).ok_or_else(|| format!("身份 {id} 没有运行记录"))?;
-    chrome::stop_relay_if_any(&id);
-    core::stop_if_any(&id);
     if !chrome::pid_alive(pid) {
         store::clear_pid(&id);
+        chrome::stop_relay_if_any(&id);
+        core::stop_if_any(&id);
         return Ok(json!({ "stopped": false, "reason": "进程已退出" }));
     }
-    chrome::terminate_pid(pid)?;
+    // 先让 Chrome 正常退出（期间它可能还要经代理收尾），再收中继/内核。
+    let quit = chrome::quit_gracefully(pid);
     store::clear_pid(&id);
+    chrome::stop_relay_if_any(&id);
+    core::stop_if_any(&id);
+    quit?;
     Ok(json!({ "stopped": true, "pid": pid }))
 }
 
@@ -676,6 +678,7 @@ fn command_subscription_remove(input: &Value) -> Result<Value, String> {
 
 fn main() {
     let command = std::env::args().nth(1).unwrap_or_default();
+    store::lock_down();
     let input = read_stdin_json();
     let result = match command.as_str() {
         "detect" => command_detect(&input),
