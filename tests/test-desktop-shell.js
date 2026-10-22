@@ -647,9 +647,16 @@ function dependencyFixture(resources) {
     'exports.parse = () => ({ value: 1 });');
   writeBundleFile(resources, 'app-server/node_modules/cli-provider-router/index.js',
     "require('@iarna/toml'); exports.API_VERSION = '1.1.0';");
-  for (const rel of ['launcher/standalone-cli.js', 'launcher/standalone-launcher.js', 'bundle-manifest.json']) {
+  for (const rel of ['launcher/standalone-cli.js', 'launcher/standalone-launcher.js']) {
     writeBundleFile(resources, rel);
   }
+  // Labelled ELF header for non-executing copier/architecture tests only.
+  // The executing smoke below replaces it with a real host addon.
+  writeBundleFile(resources, 'bundle-manifest.json', JSON.stringify({ platform: 'linux', arch: 'x64' }));
+  const header = Buffer.alloc(32);
+  header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
+  header.writeUInt16LE(0x3e, 18);
+  writeBundleFile(resources, 'app-server/native/prebuilt/linux-x64/multicc_core.node', header);
   const nodeBin = process.platform === 'win32' ? 'runtime/node.exe' : 'runtime/bin/node';
   writeBundleFile(resources, nodeBin);
   return path.join(resources, nodeBin);
@@ -679,6 +686,12 @@ test('packaged dependency gate checks cross-arch trees and detects transitive lo
   t.after(() => fs.rmSync(resources, { recursive: true, force: true }));
   const runtime = dependencyFixture(resources);
   assert.equal(verifyDesktopResources({ resourcesDir: resources, execute: false }).executed, false);
+  writeBundleFile(resources, 'bundle-manifest.json', JSON.stringify({ platform: process.platform, arch: process.arch }));
+  const { stageRustKernels } = require('../scripts/stage-rust-kernels');
+  const rustFile = stageRustKernels({ repoRoot: ROOT, out: path.join(resources, 'app-server'), logger: { log() {} } });
+  for (const name of ['driver.js', 'node-driver.js']) {
+    writeBundleFile(resources, `app-server/src/sqlite/${name}`, fs.readFileSync(path.join(ROOT, 'src/sqlite', name)));
+  }
   if (process.platform === 'win32') fs.copyFileSync(process.execPath, runtime);
   else {
     // Homebrew Node relies on dylibs relative to its real executable; copying
@@ -687,11 +700,46 @@ test('packaged dependency gate checks cross-arch trees and detects transitive lo
     fs.symlinkSync(process.execPath, runtime);
   }
   assert.equal(verifyDesktopResources({ resourcesDir: resources }).executed, true);
+  // A host addon or emergency driver must not mask a broken packaged addon.
+  const binary = fs.readFileSync(rustFile);
+  const hostAddon = path.join(resources, 'host-addon.node');
+  fs.writeFileSync(hostAddon, binary);
+  // Retain the platform/CPU header, but invalidate the loader's file type.
+  const damaged = Buffer.from(binary);
+  if (process.platform === 'darwin') damaged.writeUInt32LE(0, 12);
+  else if (process.platform === 'win32') damaged.writeUInt16LE(0, damaged.readUInt32LE(0x3c) + 24);
+  else damaged.writeUInt16LE(0, 16);
+  fs.writeFileSync(rustFile, damaged);
+  const result = spawnSync(process.execPath, ['-e',
+    'require(process.argv[1]).verifyDesktopResources({resourcesDir:process.argv[2]})',
+    path.join(ROOT, 'scripts/desktop-verify-resources.js'), resources], {
+    encoding: 'utf8', env: { ...process.env, MULTICC_SQLITE_BACKEND: 'node',
+      MULTICC_RUST_ADDON: hostAddon },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /smoke failed:[\s\S]*Rust SQLite/);
+  fs.writeFileSync(rustFile, binary);
   writeBundleFile(resources, 'app-server/node_modules/cli-provider-router/index.js',
     "require('./missing-transitive'); exports.API_VERSION = '1.1.0';");
   assert.throws(() => verifyDesktopResources({ resourcesDir: resources }), /smoke failed:[\s\S]*missing-transitive/);
   fs.rmSync(path.join(resources, 'app-server/node_modules/@iarna/toml'), { recursive: true });
   assert.throws(() => verifyDesktopResources({ resourcesDir: resources, execute: false }), /@iarna\/toml.*missing/);
+});
+
+test('packaged Rust gate rejects missing and wrong-target addons without executing them', t => {
+  const resources = tmpdir('desktop-rust-gate-');
+  t.after(() => fs.rmSync(resources, { recursive: true, force: true }));
+  dependencyFixture(resources);
+  const rustFile = path.join(resources, 'app-server/native/prebuilt/linux-x64/multicc_core.node');
+  fs.rmSync(rustFile);
+  assert.throws(() => verifyDesktopResources({ resourcesDir: resources, execute: false }), /missing Rust SQLite/);
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0); header.writeUInt32LE(0x01000007, 4);
+  fs.writeFileSync(rustFile, header);
+  assert.throws(() => verifyDesktopResources({ resourcesDir: resources, execute: false }), /平台或架构不匹配/);
+  header.fill(0); header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); header.writeUInt16LE(0xb7, 18);
+  fs.writeFileSync(rustFile, header);
+  assert.throws(() => verifyDesktopResources({ resourcesDir: resources, execute: false }), /平台或架构不匹配/);
 });
 
 test('extraResources preserves server dependencies with the real electron-builder copier', async t => {

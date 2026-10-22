@@ -84,7 +84,11 @@ get_pid() {
 }
 
 check_runtime_dependencies() {
-  local check_rc=0
+  local check_rc=0 rust_addon
+  rust_addon="$("$NODE" "$SCRIPT_DIR/scripts/ensure-source-rust.js")" || return 1
+  if [ -n "$rust_addon" ]; then
+    export MULTICC_RUST_ADDON="$rust_addon"
+  fi
   "$NODE" "$SCRIPT_DIR/scripts/check-runtime-deps.js" || check_rc=$?
   if [ "$check_rc" -eq 0 ]; then
     return 0
@@ -92,7 +96,7 @@ check_runtime_dependencies() {
 
   # Exit 10 identifies a missing or incompatible Rust SQLite module.
   if [ "$check_rc" -eq 10 ]; then
-    echo "Rust SQLite is unavailable; install the matching MultiCC package, or build: npm run build:rust (set MULTICC_RUST_PREBUILT_DIR)."
+    echo "Rust SQLite 校验失败；请检查上方的自动构建结果，或指定有效的 MULTICC_RUST_PREBUILT_DIR。"
   fi
   return "$check_rc"
 }
@@ -633,6 +637,9 @@ do_update() {
   echo "  (sessions that are still streaming get up to 65s to save their output)"
   if [ -f "$PLIST" ]; then
     # Installed as a launchd service — reload so the new server.js is picked up
+    if [ -n "${MULTICC_RUST_ADDON:-}" ]; then
+      plutil -replace EnvironmentVariables.MULTICC_RUST_ADDON -string "$MULTICC_RUST_ADDON" "$PLIST" || return 1
+    fi
     launchctl unload "$PLIST" 2>/dev/null
     launchctl load "$PLIST"
     echo "Service reloaded."
@@ -719,6 +726,8 @@ do_install() {
   <dict>
     <key>PATH</key>
     <string>$(dirname "$NODE"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>MULTICC_RUST_ADDON</key>
+    <string>$("$NODE" -e 'process.stdout.write((process.env.MULTICC_RUST_ADDON||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"))')</string>
   </dict>
 </dict>
 </plist>

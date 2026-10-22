@@ -77,6 +77,7 @@ test('generated script survives its launcher exit and completes the real multicc
   fs.chmodSync(path.join(root, 'multicc'), 0o700);
   fs.copyFileSync(path.join(__dirname, '..', 'src', 'server-processes.js'), path.join(root, 'src', 'server-processes.js'));
   fs.writeFileSync(path.join(root, 'scripts', 'check-runtime-deps.js'), 'process.exit(0);');
+  fs.writeFileSync(path.join(root, 'scripts', 'ensure-source-rust.js'), 'process.exit(0);');
   // 只管理临时服务器：禁止调用宿主的 launchd/pm2，也不探测宿主的 3000 端口。
   const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
   for (const name of ['launchctl', 'pm2']) {
