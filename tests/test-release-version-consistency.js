@@ -296,13 +296,17 @@ test('core runner covers every selected path and expands declared variants', () 
   // Rust 接入复核：本次增加原生/Node 差分测试（临时合成文件、隔离子进程，
   // 不访问真账号）；同时纳入主线 912d254b 已登记的 relay-model-catalog，
   // 其请求全部使用注入的 fetch stub。344 + 2 = 346，均为 deterministic。
-  assert.equal(core.length, 346, 'the reviewed core set changed; re-audit the release tier');
-  assert.equal(plan.entries.length, 346);
+  // v2.8.4 复核新增 3 项：Codex 代理追踪使用内存请求/响应替身；
+  // Rust SQLite 使用内存库、临时文件和隔离子进程验证行为兼容；
+  // 源码 Rust 启动使用临时仓库、假编译器和独立假服务，不碰宿主服务。
+  // 无真实凭据或外部服务依赖，保持 core：349 项，326 条执行命令。
+  assert.equal(core.length, 349, 'the reviewed core set changed; re-audit the release tier');
+  assert.equal(plan.entries.length, 349);
   assert.deepEqual(
     [...new Set(plan.entries.map(entry => entry.lane))].sort(),
     [...RELEASE_CORE_LANES].sort(),
   );
-  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 293);
+  assert.equal(core.filter(entry => entry.lane === 'deterministic').length, 296);
   assert.equal(core.filter(entry => entry.lane === 'isolated').length, 27);
   assert.equal(core.filter(entry => entry.lane === 'flutter').length, 26,
     'the reviewed non-UI Flutter core set changed; re-audit it before release');
@@ -312,8 +316,8 @@ test('core runner covers every selected path and expands declared variants', () 
   )).sort();
   const plannedPaths = plan.commands.flatMap(command => command.paths).sort();
   assert.deepEqual(plannedPaths, expectedPaths, 'the runner must neither skip nor add manifest paths');
-  assert.equal(plan.commands.length, 323,
-    '320 Node entries, two extra variant executions, and one batched Flutter command are expected');
+  assert.equal(plan.commands.length, 326,
+    '323 Node entries, two extra variant executions, and one batched Flutter command are expected');
 
   const presentationSuites = new Map([
     ['tests/test-chat-history-ordering.js', 'other'],

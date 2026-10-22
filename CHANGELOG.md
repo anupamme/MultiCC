@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.4 — Rust runtime, safer installation, and account visibility (2026-10-22)
+
+- Ship Rust SQLite as the default database backend, with explicit Node emergency compatibility mode; add native task-search and token-usage kernels with parity coverage.
+- Build and verify target-specific Rust modules for desktop and standalone packages. Source-checkout startup builds missing modules and reuses a cache tied to the source and build configuration.
+- Harden installer and packaged-runtime checks, and improve desktop port selection and stale-process handling.
+- Add workspace deletion from the directory home on Web and App, and clarify external access when sharing links.
+- Show official-account subscription information with refresh and billing-page links on Web and App; improve relay model catalogs and route compatibility.
+- Improve Codex proxy diagnostics, chat error persistence, and Claude Agent SDK routing.
+- Start release gates and builds in parallel; publish only after core, clean-install, and required artifact checks pass.
+- Update the mobile app to 2.36.3 (build 172). Publish desktop and standalone assets first, then mobile OTA, with App Store submission last.
+
 ## v2.8.3 — 桌面优先发布、安装更新与网络可靠性修复（2026-10-21）
 
 - standalone 与桌面安装包先发布到 GitHub Release，官方签名 Android APK 随后追加，移动端不再阻塞桌面发布。
