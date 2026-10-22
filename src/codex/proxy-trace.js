@@ -96,7 +96,7 @@ function createCodexProxyTrace(options = {}) {
       ? Boolean(res.getHeader('x-powered-by')) : null;
     // Only the states that sent someone looking: a miss, a 5xx, a client gone.
     if (!logger) return;
-    if (entry.stage !== 'unmatched' && !entry.aborted && !(entry.status >= 500)) return;
+    if (entry.stage !== 'unmatched' && !entry.aborted && entry.status !== 404 && !(entry.status >= 500)) return;
     try {
       logger.warn('codex_proxy_trace', {
         requestId: entry.requestId, method: entry.method, route: entry.route,
