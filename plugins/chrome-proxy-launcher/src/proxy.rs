@@ -1,8 +1,11 @@
-//! 代理探测：TCP 可达性 + 通过代理取出口 IP。
+//! 代理探测与上游隧道：TCP 可达性 + 通过代理取出口 IP（支持代理认证）。
 //!
-//! 只用 std 的 TcpStream —— http 代理发绝对 URL 的 GET，socks5 手写
-//! 无认证握手（greeting → CONNECT 域名 → HTTP GET），不引 reqwest/tokio。
+//! 只用 std 的 TcpStream —— http 代理发绝对 URL 的 GET（有凭据时带
+//! Proxy-Authorization: Basic），socks5 手写握手（无认证或 RFC 1929 用户名
+//! 密码认证），不引 reqwest/tokio。socks5_connect 同时被 relay.rs 复用：
+//! 中继把客户端流量经认证 socks5 上游隧道送出去。
 
+use crate::store::ProxyConfig;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -14,9 +17,21 @@ const IP_ENDPOINTS: [(&str, &str, &str); 2] = [
 ];
 
 pub fn tcp_reachable(host: &str, port: u16, timeout: Duration) -> bool {
-    let Ok(addr) = format!("{host}:{port}").to_socket_addrs() else { return false };
-    let Some(addr) = addr.into_iter().next() else { return false };
-    TcpStream::connect_timeout(&addr, timeout).is_ok()
+    connect_tcp(host, port, timeout).is_ok()
+}
+
+/// 解析 + 限时连接（探测 / 中继共用的第一步）。
+pub fn connect_tcp(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, String> {
+    let addr: SocketAddr = format!("{host}:{port}")
+        .to_socket_addrs()
+        .map_err(|err| format!("解析代理地址失败：{err}"))?
+        .next()
+        .ok_or("代理地址解析为空")?;
+    let stream = TcpStream::connect_timeout(&addr, timeout)
+        .map_err(|err| format!("连接代理失败：{err}"))?;
+    stream.set_read_timeout(Some(timeout)).ok();
+    stream.set_write_timeout(Some(timeout)).ok();
+    Ok(stream)
 }
 
 fn looks_like_ip(text: &str) -> bool {
@@ -25,6 +40,28 @@ fn looks_like_ip(text: &str) -> bool {
         return false;
     }
     text.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':')
+}
+
+/// 标准字母表 base64（只为 Basic 认证头，不值得为此引 crate）。
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let bytes = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(bytes[0]) << 16) | (u32::from(bytes[1]) << 8) | u32::from(bytes[2]);
+        out.push(TABLE[(n >> 18 & 63) as usize] as char);
+        out.push(TABLE[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6 & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[(n & 63) as usize] as char } else { '=' });
+    }
+    out
+}
+
+pub fn basic_authorization(username: &str, password: &str) -> String {
+    format!(
+        "Proxy-Authorization: Basic {}",
+        base64_encode(format!("{username}:{password}").as_bytes())
+    )
 }
 
 fn http_get_over(mut stream: TcpStream, host: &str, path: &str) -> Result<String, String> {
@@ -50,18 +87,15 @@ fn http_get_over(mut stream: TcpStream, host: &str, path: &str) -> Result<String
     Ok(body.to_string())
 }
 
-/// 通过 http/https 代理取出口 IP（GET 绝对 URL，CONNECT 不需要）。
-fn exit_ip_via_http_proxy(host: &str, port: u16, timeout: Duration) -> Result<String, String> {
-    let addr: SocketAddr = format!("{host}:{port}")
-        .to_socket_addrs()
-        .map_err(|err| format!("解析代理地址失败：{err}"))?
-        .next()
-        .ok_or("代理地址解析为空")?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|err| format!("连接代理失败：{err}"))?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
+/// 通过 http/https 代理取出口 IP（GET 绝对 URL，有凭据时带 Basic 认证）。
+fn exit_ip_via_http_proxy(config: &ProxyConfig, timeout: Duration) -> Result<String, String> {
+    let mut stream = connect_tcp(&config.host, config.port, timeout)?;
+    let auth_line = match (config.has_credentials(), &config.username, &config.password) {
+        (true, Some(user), Some(pass)) => format!("{}\r\n", basic_authorization(user, pass)),
+        _ => String::new(),
+    };
     let request = format!(
-        "GET http://{endpoint}{path} HTTP/1.1\r\nHost: {endpoint}\r\nUser-Agent: multicc-plugin/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+        "GET http://{endpoint}{path} HTTP/1.1\r\nHost: {endpoint}\r\n{auth_line}User-Agent: multicc-plugin/1.0\r\nAccept: */*\r\nConnection: close\r\n\r\n",
         endpoint = IP_ENDPOINTS[0].0, path = IP_ENDPOINTS[0].1
     );
     stream
@@ -72,33 +106,64 @@ fn exit_ip_via_http_proxy(host: &str, port: u16, timeout: Duration) -> Result<St
         .read_to_end(&mut buf)
         .map_err(|err| format!("读取响应失败：{err}"))?;
     let text = String::from_utf8_lossy(&buf);
+    let status = text.lines().next().unwrap_or_default().to_string();
+    if status.contains(" 407 ") {
+        return Err("代理要求认证（407）：账号或密码不对".into());
+    }
     let body = match text.find("\r\n\r\n") {
-        Some(at) => &text[at + 4..],
-        None => "",
+        Some(at) => text[at + 4..].trim().to_string(),
+        None => String::new(),
     };
-    let body = body.trim();
-    if !looks_like_ip(body) {
+    if !looks_like_ip(&body) {
         return Err("代理应答里没有出口 IP".into());
     }
-    Ok(body.to_string())
+    Ok(body)
 }
 
-/// 无认证 socks5：greeting → CONNECT（按域名，DNS 由代理解析）→ 上面跑 HTTP。
-fn socks5_connect(host: &str, port: u16, target: &str, target_port: u16, timeout: Duration) -> Result<TcpStream, String> {
-    let addr: SocketAddr = format!("{host}:{port}")
-        .to_socket_addrs()
-        .map_err(|err| format!("解析代理地址失败：{err}"))?
-        .next()
-        .ok_or("代理地址解析为空")?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|err| format!("连接代理失败：{err}"))?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
+/// socks5 CONNECT：greeting（无认证或 RFC 1929 用户名密码）→ CONNECT 按域名
+/// （DNS 由代理解析）。成功返回已建好的隧道流。
+pub fn socks5_connect(config: &ProxyConfig, target: &str, target_port: u16, timeout: Duration) -> Result<TcpStream, String> {
+    let mut stream = connect_tcp(&config.host, config.port, timeout)?;
 
-    stream.write_all(&[0x05, 0x01, 0x00]).map_err(|err| format!("socks5 握手失败：{err}"))?;
-    let mut greeting = [0u8; 2];
-    stream.read_exact(&mut greeting).map_err(|err| format!("socks5 握手失败：{err}"))?;
-    if greeting[0] != 0x05 || greeting[1] != 0x00 {
-        return Err("socks5 代理要求认证（本插件只支持无认证的本地出口）".into());
+    if config.has_credentials() {
+        // 声明同时接受无认证(0x00)与用户名密码(0x02)，让两种上游都工作。
+        stream.write_all(&[0x05, 0x02, 0x00, 0x02]).map_err(|err| format!("socks5 握手失败：{err}"))?;
+        let mut greeting = [0u8; 2];
+        stream.read_exact(&mut greeting).map_err(|err| format!("socks5 握手失败：{err}"))?;
+        if greeting[0] != 0x05 {
+            return Err("对方不是 socks5 代理".into());
+        }
+        match greeting[1] {
+            0x00 => {}
+            0x02 => {
+                let (user, pass) = (
+                    config.username.as_deref().unwrap_or_default(),
+                    config.password.as_deref().unwrap_or_default(),
+                );
+                if user.len() > 255 || pass.len() > 255 {
+                    return Err("socks5 账号/密码过长（>255 字节）".into());
+                }
+                let mut auth = vec![0x01, user.len() as u8];
+                auth.extend_from_slice(user.as_bytes());
+                auth.push(pass.len() as u8);
+                auth.extend_from_slice(pass.as_bytes());
+                stream.write_all(&auth).map_err(|err| format!("socks5 认证发送失败：{err}"))?;
+                let mut verdict = [0u8; 2];
+                stream.read_exact(&mut verdict).map_err(|err| format!("socks5 认证应答不完整：{err}"))?;
+                if verdict[1] != 0x00 {
+                    return Err("socks5 代理账号或密码不对".into());
+                }
+            }
+            0xFF => return Err("socks5 代理不接受用户名密码认证".into()),
+            other => return Err(format!("socks5 代理要求不支持的认证方式（0x{other:02x}）")),
+        }
+    } else {
+        stream.write_all(&[0x05, 0x01, 0x00]).map_err(|err| format!("socks5 握手失败：{err}"))?;
+        let mut greeting = [0u8; 2];
+        stream.read_exact(&mut greeting).map_err(|err| format!("socks5 握手失败：{err}"))?;
+        if greeting[0] != 0x05 || greeting[1] != 0x00 {
+            return Err("socks5 代理要求认证（请在身份里填账号密码）".into());
+        }
     }
 
     if target.len() > 255 {
@@ -129,10 +194,10 @@ fn socks5_connect(host: &str, port: u16, target: &str, target_port: u16, timeout
     Ok(stream)
 }
 
-fn exit_ip_via_socks5(host: &str, port: u16, timeout: Duration) -> Result<String, String> {
+fn exit_ip_via_socks5(config: &ProxyConfig, timeout: Duration) -> Result<String, String> {
     let mut last_err = String::from("没有可用探测目标");
     for (target, path, _) in IP_ENDPOINTS {
-        match socks5_connect(host, port, target, 80, timeout) {
+        match socks5_connect(config, target, 80, timeout) {
             Ok(stream) => return http_get_over(stream, target, path),
             Err(err) => last_err = err,
         }
@@ -141,12 +206,12 @@ fn exit_ip_via_socks5(host: &str, port: u16, timeout: Duration) -> Result<String
 }
 
 /// 通过指定代理取出口 IP。返回 Err 时消息可直接展示给用户。
-pub fn exit_ip(scheme: &str, host: &str, port: u16, timeout: Duration) -> Result<String, String> {
-    match scheme {
-        "socks5" => exit_ip_via_socks5(host, port, timeout),
+pub fn exit_ip(config: &ProxyConfig, timeout: Duration) -> Result<String, String> {
+    match config.scheme.as_str() {
+        "socks5" => exit_ip_via_socks5(config, timeout),
         // Chrome 对 https:// 代理同样先走 HTTP 语义的绝对 URL 请求可测通；
         // 若代理要求 TLS 而失败，报错文案会带出原因。
-        _ => exit_ip_via_http_proxy(host, port, timeout),
+        _ => exit_ip_via_http_proxy(config, timeout),
     }
 }
 
@@ -160,5 +225,14 @@ mod tests {
         assert!(looks_like_ip("2600::1"));
         assert!(!looks_like_ip("<html>blocked</html>"));
         assert!(!looks_like_ip(""));
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        assert_eq!(base64_encode(b"user:pass"), "dXNlcjpwYXNz");
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"abc"), "YWJj");
+        assert_eq!(base64_encode(b""), "");
     }
 }

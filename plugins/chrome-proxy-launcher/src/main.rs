@@ -10,6 +10,7 @@
 
 mod chrome;
 mod proxy;
+mod relay;
 mod store;
 
 use serde_json::{json, Value};
@@ -56,7 +57,17 @@ fn parse_proxy_input(input: &Value) -> Result<store::ProxyConfig, String> {
     let host = get_str(&raw, "host");
     let port = raw.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
     store::validate_proxy(&scheme, &host, port)?;
-    Ok(store::ProxyConfig { scheme, host, port })
+    let optional = |raw: &Value, key: &str| -> Option<String> {
+        let value = get_str(raw, key);
+        if value.is_empty() { None } else { Some(value) }
+    };
+    Ok(store::ProxyConfig {
+        scheme,
+        host,
+        port,
+        username: optional(&raw, "username"),
+        password: optional(&raw, "password"),
+    })
 }
 
 fn profile_with_runtime(profile: Profile) -> Value {
@@ -162,6 +173,7 @@ fn command_remove(input: &Value) -> Result<Value, String> {
         }
     }
     store::clear_pid(&id);
+    chrome::stop_relay_if_any(&id);
     // 隔离 profile 目录（cookie/历史）保留给用户手动清理：自动删几十上百 MB
     // 的目录不可逆，这里宁可少做一步。
     profiles.retain(|p| p.id != id);
@@ -189,8 +201,10 @@ fn command_stop(input: &Value) -> Result<Value, String> {
     let pid = store::read_pid(&id).ok_or_else(|| format!("身份 {id} 没有运行记录"))?;
     if !chrome::pid_alive(pid) {
         store::clear_pid(&id);
+        chrome::stop_relay_if_any(&id);
         return Ok(json!({ "stopped": false, "reason": "进程已退出" }));
     }
+    chrome::stop_relay_if_any(&id);
     chrome::terminate_pid(pid)?;
     store::clear_pid(&id);
     Ok(json!({ "stopped": true, "pid": pid }))
@@ -205,7 +219,7 @@ fn command_probe(input: &Value) -> Result<Value, String> {
         parse_proxy_input(input)?
     };
     let started = std::time::Instant::now();
-    let ip = proxy::exit_ip(&config.scheme, &config.host, config.port, Duration::from_secs(6))?;
+    let ip = proxy::exit_ip(&config, Duration::from_secs(6))?;
     Ok(json!({
         "exitIp": ip,
         "via": format!("{}://{}:{}", config.scheme, config.host, config.port),
@@ -224,8 +238,16 @@ fn main() {
         "launch" => command_launch(&input),
         "stop" => command_stop(&input),
         "probe" => command_probe(&input),
+        // relay 是 launch 拉起的常驻中继：读 stdin 配置后进入服务循环，
+        // 正常情况下不会走到输出；走到输出即启动失败。
+        "relay" => {
+            let id = get_str(&input, "id");
+            parse_proxy_input(&input).and_then(|config| {
+                relay::run(&id, &config).map(|_| json!({ "started": true }))
+            })
+        }
         _ => Err(format!(
-            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe）"
+            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / relay）"
         )),
     };
     match result {

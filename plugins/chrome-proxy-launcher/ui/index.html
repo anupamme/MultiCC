@@ -60,7 +60,7 @@
 <body>
 <div id="notice" role="status"></div>
 <h1>🌐 Chrome 隔离出口启动器</h1>
-<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口代理。浏览器互不串 cookie，出口互不串 IP；代理不可达时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
+<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口代理。浏览器互不串 cookie，出口互不串 IP；代理不可达时拒绝启动，避免 Chrome 静默直连泄漏真实地址。代理支持账号密码（Chrome 不能直接带认证，插件会自动起一个本地中继代为认证）。</p>
 
 <section class="card">
   <h2>新建 / 编辑身份</h2>
@@ -82,6 +82,16 @@
     <div>
       <label>端口</label>
       <input id="f-port" inputmode="numeric" placeholder="7897">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>代理账号（可选，代理要求认证时填）</label>
+      <input id="f-user" autocomplete="off" placeholder="user">
+    </div>
+    <div>
+      <label>代理密码（可选）</label>
+      <input id="f-pass" type="password" autocomplete="new-password" placeholder="••••">
     </div>
   </div>
   <div class="row">
@@ -130,11 +140,16 @@ async function run(command, input) {
   });
   const payload = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
   if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload.data;
+  // 通道 200 时返回的就是数据本身（{profiles:[…]} / {exitIp:"…"}），没有
+  // {ok,data} 包装 —— 再取 .data 会拿到 undefined，一路崩成
+  // "Cannot read properties of undefined"。
+  return payload;
 }
 
 function proxyText(profile) {
-  return `${profile.proxy.scheme}://${profile.proxy.host}:${profile.proxy.port}`;
+  const user = profile.proxy.username ? `${profile.proxy.username}@` : '';
+  const lock = profile.proxy.username ? ' 🔑' : '';
+  return `${profile.proxy.scheme}://${user}${profile.proxy.host}:${profile.proxy.port}${lock}`;
 }
 
 function fillForm(profile) {
@@ -142,6 +157,8 @@ function fillForm(profile) {
   $('f-scheme').value = profile ? profile.proxy.scheme : 'http';
   $('f-host').value = profile ? profile.proxy.host : '127.0.0.1';
   $('f-port').value = profile ? profile.proxy.port : '';
+  $('f-user').value = (profile && profile.proxy.username) || '';
+  $('f-pass').value = (profile && profile.proxy.password) || '';
   $('f-chrome').value = (profile && profile.chromePath) || '';
   $('btn-save').dataset.editing = profile ? profile.id : '';
   $('btn-save').textContent = profile ? `更新「${profile.name}」` : '保存身份';
@@ -299,6 +316,8 @@ $('btn-test').onclick = async event => {
         scheme: $('f-scheme').value,
         host: $('f-host').value.trim(),
         port: Number($('f-port').value),
+        username: $('f-user').value.trim(),
+        password: $('f-pass').value,
       },
     });
     notice(`这个出口的 IP 是 ${result.exitIp}（${result.latencyMs}ms）`);
@@ -320,6 +339,8 @@ $('btn-save').onclick = async event => {
         scheme: $('f-scheme').value,
         host: $('f-host').value.trim(),
         port: Number($('f-port').value),
+        username: $('f-user').value.trim(),
+        password: $('f-pass').value,
       },
       chromePath: $('f-chrome').value.trim(),
     };

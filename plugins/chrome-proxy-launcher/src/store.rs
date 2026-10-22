@@ -19,6 +19,29 @@ pub struct ProxyConfig {
     pub scheme: String, // http | https | socks5
     pub host: String,
     pub port: u16,
+    // 代理要求认证时填（Chrome 自己带不了代理凭据，launch 会起本地中继代认证）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+}
+
+impl ProxyConfig {
+    /// 仅测试构造用（生产路径一律从 manifest/input 解析）。
+    #[cfg(test)]
+    pub fn new(scheme: &str, host: &str, port: u16) -> Self {
+        Self {
+            scheme: scheme.into(),
+            host: host.into(),
+            port,
+            username: None,
+            password: None,
+        }
+    }
+
+    pub fn has_credentials(&self) -> bool {
+        self.username.as_deref().is_some_and(|u| !u.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +85,23 @@ pub fn profiles_file() -> PathBuf {
 
 pub fn pid_file(id: &str) -> PathBuf {
     data_dir().join("run").join(format!("{id}.pid"))
+}
+
+/// 带凭据代理的本地中继：relay 进程把 {pid, port} 写这里，launch 轮询等它就绪。
+pub fn relay_file(id: &str) -> PathBuf {
+    data_dir().join("run").join(format!("{id}.relay.json"))
+}
+
+pub fn read_relay(id: &str) -> Option<(i32, u16)> {
+    let text = fs::read_to_string(relay_file(id)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let pid = value.get("pid")?.as_i64()? as i32;
+    let port = value.get("port")?.as_u64()? as u16;
+    Some((pid, port))
+}
+
+pub fn clear_relay(id: &str) {
+    let _ = fs::remove_file(relay_file(id));
 }
 
 pub fn user_data_dir(id: &str) -> PathBuf {
@@ -170,7 +210,7 @@ mod tests {
     fn allocate_id_falls_back_and_dedupes() {
         let existing = vec![Profile {
             id: "shop".into(), name: "Shop".into(),
-            proxy: ProxyConfig { scheme: "http".into(), host: "127.0.0.1".into(), port: 7897 },
+            proxy: ProxyConfig::new("http", "127.0.0.1", 7897),
             note: String::new(), chrome_path: None, created_at: 0, updated_at: 0,
         }];
         assert_eq!(allocate_id("Shop", &existing), "shop-2");
