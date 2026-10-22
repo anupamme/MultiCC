@@ -57,12 +57,27 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 | --- | --- | --- |
 | `detect` | – | 找浏览器 + 探测本机常见代理端口 |
 | `list` | – | 身份清单（含 running/pid） |
-| `save` | `{id?, name, proxy:{scheme,host,port}, note?, chromePath?}` | 新建 / 更新 |
+| `save` | `{id?, name, proxy:{scheme,host,port,username?,password?}, note?, chromePath?}` | 新建 / 更新 |
 | `remove` | `{id}` | 删除（运行中先停；磁盘 profile 保留） |
 | `launch` | `{id, url?, checkProxy?=true}` | 启动隔离实例 |
-| `stop` | `{id}` | 停止实例 |
+| `stop` | `{id}` | 停止实例（连带收割本地中继） |
 | `probe` | `{id}` 或 `{proxy:{…}}` | 经该出口取外网 IP + 延迟 |
+| `relay` | `{id, proxy:{…}}` | 内部命令：launch 自动拉起的本地中继，不单独使用 |
 
-代理类型支持 `http` / `https` / `socks5`（无认证；本地 VPN 客户端端口均为
-无认证）。带用户名密码的远程代理暂不支持——Chrome 的 `--proxy-server` 不认
-内联凭据，需要本地转发（后续可在插件里加）。
+代理类型支持 `http` / `https` / `socks5`，可选用户名密码。
+
+**带账号密码的代理**：Chrome 的 `--proxy-server` 带不了代理凭据（只认无认证
+代理），所以只要身份里填了账号，launch 会先在本机起一个中继进程：
+
+```
+Chrome --proxy-server=http://127.0.0.1:<随机端口>  →  中继  →  真实上游
+                                        (http Basic / socks5 RFC1929 认证)
+```
+
+凭据只存在于插件进程中，从不进入 Chrome 的命令行。中继端口随机、只听
+127.0.0.1，stop / remove 时一并收割；兜底是连续 30 分钟无流量自杀。中继状态
+写在 `~/.multicc/plugins-data/chrome-proxy-launcher/run/<id>.relay.json`。
+
+带凭据的身份在 launch 前会做一次**认证探测**（而不是仅 TCP 可达）：凭据错了
+直接拒绝启动，不会让 Chrome 挂在一个永远 407 的中继上。
+
