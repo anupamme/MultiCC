@@ -339,3 +339,21 @@ test('core runner covers every selected path and expands declared variants', () 
     .map(command => command.args.slice(1));
   assert.deepEqual(taskFirstVariants, [[], ['--no-token']]);
 });
+
+
+test('desktop Rust paths are initialized after runner allocation', () => {
+  const workflow = read('.github/workflows/desktop-release.yml');
+  for (const job of ['build', 'standalone']) {
+    const start = workflow.indexOf('  ' + job + ':\n');
+    assert.ok(start >= 0);
+    const remainder = workflow.slice(start);
+    const nextJob = remainder.slice(1).search(/^  [a-zA-Z][\w-]*:\s*$/m);
+    const block = nextJob < 0 ? remainder : remainder.slice(0, nextJob + 1);
+    const steps = block.indexOf('    steps:');
+    assert.ok(steps >= 0);
+    assert.doesNotMatch(block.slice(0, steps), /\$\{\{\s*runner\./,
+      'runner context is unavailable in job-level env; GitHub rejects the whole workflow');
+    assert.match(block.slice(steps), /MULTICC_RUST_PREBUILT_DIR=\$RUNNER_TEMP\/multicc-rust-prebuilt/);
+    assert.match(block.slice(steps), /CARGO_TARGET_DIR=\$RUNNER_TEMP\/multicc-rust-target/);
+  }
+});

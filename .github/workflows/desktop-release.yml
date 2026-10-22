@@ -46,9 +46,7 @@ jobs:
     name: build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
-      MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
       MULTICC_REQUIRE_RUST_BUNDLE: '1'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/multicc-rust-target
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +67,12 @@ jobs:
             archs: "x64"
     steps:
       - uses: actions/checkout@v4
+
+      - name: 配置 Rust 构建目录
+        shell: bash
+        run: |
+          echo "MULTICC_RUST_PREBUILT_DIR=$RUNNER_TEMP/multicc-rust-prebuilt" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multicc-rust-target" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -273,9 +277,7 @@ jobs:
     name: standalone package (${{ matrix.platform }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     env:
-      MULTICC_RUST_PREBUILT_DIR: ${{ runner.temp }}/multicc-rust-prebuilt
       MULTICC_REQUIRE_RUST_BUNDLE: '1'
-      CARGO_TARGET_DIR: ${{ runner.temp }}/multicc-rust-target
     strategy:
       fail-fast: false
       matrix:
@@ -297,6 +299,12 @@ jobs:
             arch: x64
     steps:
       - uses: actions/checkout@v4
+
+      - name: 配置 Rust 构建目录
+        shell: bash
+        run: |
+          echo "MULTICC_RUST_PREBUILT_DIR=$RUNNER_TEMP/multicc-rust-prebuilt" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/multicc-rust-target" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
