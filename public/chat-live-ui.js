@@ -910,6 +910,7 @@
       const { fab, badge } = danmakuDockElements();
       const running = runningDanmakuCount();
       if (fab) {
+        fab.classList.toggle('dm-running', running > 0);
         const label = `后台任务 · ${running} 个进行中`;
         fab.setAttribute('aria-label', label);
         fab.setAttribute('title', label);
