@@ -280,6 +280,15 @@ function mountSystemRoutes(app, rawDeps) {
   // sits against its source-line budget.
   createDeveloperToolsRoutes().mountRoutes(app);
   createMacosPrivacyRoutes().mountRoutes(app);
+  // A CLI that reports `404 …/codex-proxy/…` cannot say which stage answered,
+  // and an intermediary answers without this process ever seeing the request.
+  // The prefix trace keeps the last requests that did reach the app; an empty
+  // window proves the host was not the responder (src/codex/proxy-trace.js).
+  app.get('/api/debug/codex-proxy-trace', (req, res) => {
+    const requested = Number(req.query && req.query.limit);
+    const limit = Number.isInteger(requested) && requested > 0 ? Math.min(requested, 200) : 100;
+    res.json({ entries: require('../codex/proxy-trace').codexProxyTrace().snapshot(limit) });
+  });
 }
 
 module.exports = {

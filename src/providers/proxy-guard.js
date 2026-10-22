@@ -1,6 +1,7 @@
 'use strict';
 
 const { withModelConnectWatch } = require('./model-connect-watch');
+const { markStage } = require('../codex/proxy-trace');
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const { observeProxyRequest } = require('./proxy-outcome');
@@ -60,6 +61,9 @@ function classifyProviderProxyRoute(protocol, segments = []) {
 const QUOTA_GUARD_PREFIX = 'quota_guard:';
 
 function reject(res, code = '') {
+  // The 409 is the one answer a caller can get without any proxy route having
+  // run. Name the stage so the prefix trace can tell it apart from a miss.
+  markStage(res, 'guard');
   const guarded = clean(code).startsWith(QUOTA_GUARD_PREFIX);
   const body = JSON.stringify({
     error: guarded

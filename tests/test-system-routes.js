@@ -475,6 +475,7 @@ test('zero-byte, directory, malformed manifest, and invalid package versions fai
 
 test('system route mount owns the app-binary metadata and canonical download routes', async () => {
   const paths = [];
+  const handlers = new Map();
   const apkDistribution = {
     async info() { return { exists: false, localExists: false, source: null }; },
     async downloadHandler() {},
@@ -484,7 +485,7 @@ test('system route mount owns the app-binary metadata and canonical download rou
     manifestHandler() {},
   };
   mountSystemRoutes({
-    get(route, handler) { paths.push(['GET', route, typeof handler]); },
+    get(route, handler) { paths.push(['GET', route, typeof handler]); handlers.set(route, handler); },
     post(route, handler) { paths.push(['POST', route, typeof handler]); },
   }, {
     fs,
@@ -524,7 +525,20 @@ test('system route mount owns the app-binary metadata and canonical download rou
     ['GET', '/api/system/agent-permissions', 'function'],
     ['POST', '/api/system/agent-permissions/open', 'function'],
     ['POST', '/api/system/agent-permissions/restart', 'function'],
+    // Read-only diagnostics: the last /codex-proxy requests this process
+    // actually served, so a CLI-reported 404 can be matched to a stage or
+    // shown to have never reached the host (src/codex/proxy-trace.js).
+    ['GET', '/api/debug/codex-proxy-trace', 'function'],
   ]);
+
+  // The trace route is the readable surface for a CLI-reported prefix 404: it
+  // answers with whatever this process actually served, and an empty window is
+  // itself the finding (nothing here answered that request).
+  require('../src/codex/proxy-trace').setSharedCodexProxyTrace(
+    require('../src/codex/proxy-trace').createCodexProxyTrace());
+  const traceResponse = { json(value) { this.body = value; } };
+  handlers.get('/api/debug/codex-proxy-trace')({ query: { limit: '5' } }, traceResponse);
+  assert.deepEqual(traceResponse.body, { entries: [] });
 
   const response = { json(value) { this.body = value; } };
   await createApkInfoHandler({ apkDistribution })({}, response, error => { throw error; });

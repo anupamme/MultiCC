@@ -19,6 +19,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { officialAccountIdFromProvider } = require('../official-accounts');
+const { markStage } = require('./proxy-trace');
 const {
   normalizeResponsesHistory,
   repairRejectedResponsesHistory,
@@ -429,7 +430,12 @@ function createCodexOfficialRelayHandler(options = {}) {
   return async function codexOfficialRelay(req, res, next) {
     const providerId = String(req.params && req.params.providerId || '');
     const provider = getProvider('codex', providerId);
-    if (!isOfficialCodexOAuthProvider(provider)) {
+    const official = isOfficialCodexOAuthProvider(provider);
+    // Stage label for the prefix trace (src/codex/proxy-trace.js): proves THIS
+    // hop answered, as opposed to the guard, the generic router proxy, or
+    // nothing in this process at all.
+    if (official) markStage(res, 'official-relay');
+    if (!official) {
       // Every Codex route is store:false at the source: the CLI itself puts
       // `store: false` on each request (verified against codex-cli 0.154 with a
       // capture probe), so no upstream — third-party gateway, ChatGPT official,
