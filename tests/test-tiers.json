@@ -2727,6 +2727,15 @@
       ]
     },
     {
+      "path": "tests/test-codex-proxy-trace.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:core",
+      "entrypoints": [
+        "npm:test:core"
+      ]
+    },
+    {
       "path": "tests/test-codex-resident-route.js",
       "tier": "core",
       "lane": "deterministic",

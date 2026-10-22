@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
+const { createCodexProxyTrace } = require('../src/codex/proxy-trace');
 const {
   REQUIRED_CAPABILITIES,
   createProviderRouterPort,
@@ -425,4 +427,58 @@ test('a router without request hooks keeps the relay pre-proxy normalization', a
   assert.deepEqual(forwarded.input, [
     { type: 'message', id: 'msg_keep', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
   ]);
+});
+
+class FakeResponse extends EventEmitter {
+  constructor() {
+    super();
+    this.statusCode = 200;
+    this.writableFinished = true;
+    this.locals = {};
+    this.headers = {};
+  }
+  getHeader(name) { return this.headers[name]; }
+  status(code) { this.statusCode = code; return this; }
+  json(body) { this.body = body; return this; }
+}
+
+// A CLI-reported 404 on the prefix used to be unattributable: the guard, the
+// official relay and the router's generic proxy share it, and an answer that
+// never touched this process looks identical. The trace must bracket the whole
+// mount — before the guard, after every route — so each answer names a stage.
+test('the codex prefix trace brackets guard, proxy routes and misses', () => {
+  const uses = [];
+  const port = createCprPort(fakeRouter({ calls: [] }));
+  const trace = createCodexProxyTrace();
+  port.mountProtocolProxies({
+    use(prefix, handler) { uses.push({ prefix, handler }); },
+    post() {},
+  }, {
+    protocols: ['codex'],
+    authorizeProxyRequest: () => ({ ok: false, code: 'attempt_not_active' }),
+    codexProxyTrace: trace,
+  });
+  assert.deepEqual(uses.map(item => item.prefix), ['/codex-proxy', '/codex-proxy', '/codex-proxy']);
+  const [opened, guard, closed] = uses.map(item => item.handler);
+
+  // The guard answers a retired attempt: the entry names the guard, not "proxy".
+  const guarded = new FakeResponse();
+  opened({ method: 'POST', originalUrl: '/codex-proxy/provider-1/session-1/main/responses' }, guarded, () => {});
+  guard({ method: 'POST', url: '/codex-proxy/provider-1/session-1/main/responses' }, guarded, () => {});
+  assert.equal(guarded.statusCode, 409);
+  guarded.emit('finish');
+  assert.equal(trace.snapshot(1)[0].stage, 'guard');
+
+  // No mounted route accepts the request: Express still answers, and the trace
+  // records the miss instead of leaving an anonymous 404 behind.
+  const miss = new FakeResponse();
+  opened({ method: 'GET', originalUrl: '/codex-proxy/provider-1/not-a-route' }, miss, () => {});
+  let expressSawIt = false;
+  closed({ method: 'GET', url: '/codex-proxy/provider-1/not-a-route' }, miss, () => { expressSawIt = true; });
+  assert.equal(expressSawIt, true, 'the trace never answers the request itself');
+  miss.statusCode = 404;
+  miss.emit('finish');
+  const [recorded] = trace.snapshot(1);
+  assert.equal(recorded.stage, 'unmatched');
+  assert.equal(recorded.status, 404);
 });

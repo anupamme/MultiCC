@@ -8,6 +8,7 @@ const {
   toLegacyProviderView,
 } = require('./binding');
 const { mountCodexOfficialRelay } = require('../codex/official-relay');
+const { codexProxyTrace } = require('../codex/proxy-trace');
 const { createCodexHistoryHooks } = require('./codex-history-hooks');
 const { createClaudeOAuthProxyRecovery } = require('../claude-auth/proxy-recovery');
 const {
@@ -18,6 +19,11 @@ const { createUsageObserved } = require('../usage-observed');
 
 const PORT_API_VERSION = '1.0.0';
 const PORT_MODES = Object.freeze(['legacy', 'shadow', 'cpr']);
+// Marks live on the Express app, not on the trace: mountProtocolProxies runs
+// once per protocol set, and a second codex mount must not stack a second
+// trace pair on the same prefix.
+const CODEX_TRACE_ENTRY = Symbol.for('multicc.codexProxyTrace.entry');
+const CODEX_TRACE_EXIT = Symbol.for('multicc.codexProxyTrace.exit');
 const REQUIRED_CAPABILITIES = Object.freeze({
   providerStore: 1,
   spawnEnvironment: 1,
@@ -478,13 +484,24 @@ function createProviderRouterPort(options = {}) {
       mounted.claude = requireMethod(backend, 'mountClaudeProxy', mode === 'cpr' ? 'router' : 'legacy')(recovery.app, recovery.options);
     }
     if (protocols.includes('codex')) {
+      const codexPrefix = `/${String(mountOptions.codexProxyPath || '/codex-proxy').replace(/^\/+|\/+$/g, '')}`;
+      // Opened first and answered last, so every request that reaches the
+      // prefix — including one no mounted route accepts — is attributable to a
+      // stage. A CLI-reported 404 that has no entry here never reached the app.
+      // Diagnostics only: no response is written or altered by the trace.
+      const trace = mountOptions.codexProxyTrace === false ? null
+        : mountOptions.codexProxyTrace || codexProxyTrace({ ...(logger ? { logger } : {}) });
+      if (trace && !app[CODEX_TRACE_ENTRY]) {
+        app[CODEX_TRACE_ENTRY] = true;
+        app.use(codexPrefix, trace.middleware);
+      }
       const admission = authorizeProxyRequest ? createProviderProxyAdmission({
         protocol: 'codex', app, getProvider, authorizeProxyRequest,
         onActivity: mountOptions.onActivity, onUsageEvent: common.onUsageEvent, onDelta: common.onDelta, onOutcome: mountOptions.onProxyOutcome,
         ...(onRejected ? { onRejected } : {}),
       }) : null;
       if (authorizeProxyRequest) app.use(
-        `/${String(mountOptions.codexProxyPath || '/codex-proxy').replace(/^\/+|\/+$/g, '')}`,
+        codexPrefix,
         createProviderProxyGuard({ protocol: 'codex', authorizeProxyRequest, ...(onRejected ? { onRejected } : {}) }),
       );
       // MultiCC's cross-upstream history correction runs INSIDE the router, at
@@ -518,6 +535,10 @@ function createProviderRouterPort(options = {}) {
         admission ? admission.app : app,
         { ...common, ...(historyHooks || {}), ...(admission ? { getProvider: admission.getProvider, onActivity: admission.onActivity, onUsageEvent: admission.onUsageEvent, onDelta: admission.onDelta } : {}), ...(mountOptions.codexProxyPath ? { codexProxyPath: String(mountOptions.codexProxyPath) } : {}), ...(mountOptions.codexProxy || {}) },
       );
+      if (trace && !app[CODEX_TRACE_EXIT]) {
+        app[CODEX_TRACE_EXIT] = true;
+        app.use(codexPrefix, trace.unmatched);
+      }
     }
     return Object.freeze(mounted);
   }
