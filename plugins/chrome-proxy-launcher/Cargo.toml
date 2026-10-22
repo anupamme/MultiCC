@@ -1,6 +1,6 @@
 [package]
 name = "chrome-proxy-launcher"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "MultiCC plugin: launch isolated Chrome profiles, each pinned to its own proxy / VPN egress"
 license = "MIT"
@@ -9,6 +9,11 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 订阅可能是 Clash 的 YAML，也可能是它的 JSON 形态；serde_yaml 两种都吃
+# （JSON 是 YAML 子集），用 Value 往返可原样保留节点里的任意协议字段。
+serde_yaml = "0.9"
+# 拉订阅需要 https；ureq 的 tls feature 走 rustls，不依赖系统 OpenSSL。
+ureq = { version = "2.12", features = ["tls"] }
 
 [profile.release]
 strip = true

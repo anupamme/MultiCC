@@ -3,15 +3,15 @@
   "id": "chrome-proxy-launcher",
   "name": "Chrome 隔离出口启动器",
   "nameEn": "Chrome Isolated Proxy Launcher",
-  "version": "1.1.0",
-  "description": "为每个身份维护一份完全隔离的 Chrome profile，并强制绑定各自的 VPN / 出口代理（支持账号密码认证），一键启动互不串号的浏览器。",
-  "descriptionEn": "One isolated Chrome profile per identity, each pinned to its own VPN / proxy egress (auth supported). Launch browsers that never share cookies or IPs.",
+  "version": "1.2.0",
+  "description": "为每个身份维护一份完全隔离的 Chrome profile，并强制绑定各自的出口：本机 VPN / http(s)・socks5 代理（支持账号密码），或 Clash 订阅节点（可经跳板链到上游住宅代理）。",
+  "descriptionEn": "One isolated Chrome profile per identity, each pinned to its own egress: local VPN / http(s)/socks5 proxies with auth, or Clash subscription nodes (optionally chained through a jump node to a residential upstream).",
   "icon": "🌐",
   "engine": {
     "type": "command",
     "binary": "bin/chrome-proxy-launcher",
     "binaryPlatformDir": "bin"
   },
-  "commands": ["detect", "list", "save", "remove", "launch", "stop", "probe", "relay"],
+  "commands": ["detect", "list", "save", "remove", "launch", "stop", "probe", "subscription-save", "subscription-refresh", "subscription-remove", "relay"],
   "ui": "ui/index.html"
 }
