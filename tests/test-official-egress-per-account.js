@@ -84,6 +84,64 @@ test('allowlist override records never surface as duplicate providers', () => {
   assert.equal(ids.indexOf(ACCOUNT_PROVIDER_ID), -1);
 });
 
+// ── 专用出口（每个账号一条 VPN 出口）────────────────────────────────────────
+//
+// The binding rides on the same per-entry override record as the allowlist, and
+// it is what makes the routing view hand that entry a local base URL (the
+// /claude-egress hop). Both must stay scoped to the edited entry: a shared
+// record would silently move every account onto one exit IP.
+
+const claudeEgressRoute = require('../src/providers/claude-egress-route');
+const BINDING = { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' };
+
+test('a dedicated egress binding stays on its own entry and rewrites only that route view', () => {
+  providers.updateProvider('claude', ACCOUNT_PROVIDER_ID, { egressBinding: BINDING });
+
+  assert.deepEqual(providers.getProvider('claude', ACCOUNT_PROVIDER_ID).egressBinding, BINDING);
+  assert.equal(providers.getProvider('claude', TERMINAL_ID).egressBinding, undefined,
+    'the terminal alias is not moved onto this account\'s exit');
+  const record = storeRecords().find(p => p.id === ACCOUNT_PROVIDER_ID);
+  assert.deepEqual(record.egressBinding, BINDING);
+
+  // The stored record stays base-less (that shape is what keeps it recognized
+  // as an official entry); only the hop's view gets the loopback base URL.
+  claudeEgressRoute.setPort(4321);
+  const view = providers.routingProviderView('claude', ACCOUNT_PROVIDER_ID);
+  assert.equal(view.settingsConfig.env.ANTHROPIC_BASE_URL,
+    `http://127.0.0.1:4321/claude-egress/${ACCOUNT_PROVIDER_ID}`);
+  assert.equal(providers.getProvider('claude', ACCOUNT_PROVIDER_ID).settingsConfig.env.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(providers.routingProviderView('claude', TERMINAL_ID).settingsConfig.env.ANTHROPIC_BASE_URL, undefined);
+});
+
+test('binding-only patches never clear the allowlist, and clearing the binding spares the rest', () => {
+  providers.updateProvider('claude', ACCOUNT_PROVIDER_ID, { egressIpAllowlist: ['9.9.9.9'] });
+  // A PATCH that only carries the binding (no egressIpAllowlist key) must leave
+  // the allowlist alone.
+  providers.updateProvider('claude', ACCOUNT_PROVIDER_ID, { egressBinding: BINDING });
+  assert.deepEqual(providers.getProvider('claude', ACCOUNT_PROVIDER_ID).egressIpAllowlist, ['9.9.9.9']);
+
+  providers.updateProvider('claude', ACCOUNT_PROVIDER_ID, { egressBinding: null });
+  const account = providers.getProvider('claude', ACCOUNT_PROVIDER_ID);
+  assert.equal(account.egressBinding, undefined);
+  assert.deepEqual(account.egressIpAllowlist, ['9.9.9.9'], 'the allowlist override survives');
+  assert.ok(storeRecords().find(p => p.id === ACCOUNT_PROVIDER_ID),
+    'the record stays because it still carries the allowlist');
+});
+
+test('a dedicated egress cannot be bound to a non-official line', () => {
+  providers.createProvider({
+    appType: 'claude', name: 'Local relay', baseUrl: 'https://relay.test',
+    authToken: 'sk-test', apiFormat: 'anthropic',
+  });
+  const local = providers.listProviders('claude').find(p => p.name === 'Local relay');
+  assert.throws(() => providers.updateProvider('claude', local.id, { egressBinding: BINDING }),
+    /官方账号/);
+  assert.throws(() => providers.createProvider({
+    appType: 'claude', name: 'Another relay', baseUrl: 'https://relay.test',
+    authToken: 'sk-test', egressBinding: BINDING,
+  }), /官方账号/);
+});
+
 test('deleting the account drops its override record along with it', () => {
   assert.equal(providers.deleteProvider('claude', ACCOUNT_PROVIDER_ID), true);
   assert.equal(storeRecords().find(p => p.id === ACCOUNT_PROVIDER_ID), undefined,

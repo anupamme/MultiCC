@@ -196,6 +196,24 @@ fn command_list(_input: &Value) -> Result<Value, String> {
     }))
 }
 
+/// 出口配置的指纹：只用来判断「这次保存是否改了出口」。
+fn egress_signature(proxy: &Option<ProxyConfig>, subscription: &Option<SubscriptionEgress>) -> String {
+    format!(
+        "{}|{}",
+        serde_json::to_string(proxy).unwrap_or_default(),
+        serde_json::to_string(subscription).unwrap_or_default()
+    )
+}
+
+/// 收割某个身份名下的内核 / 中继（不动 Chrome 本身）。
+/// 出口配置一变就得调用：内核没有空闲自杀，中继也只在 30 分钟无流量后退出，
+/// 留着旧进程会让 `egress` 继续复用旧节点 —— 改了出口却不换 IP，正是最坏
+/// 的那种「以为换了、其实没换」。
+fn drop_runtime(id: &str) {
+    chrome::stop_relay_if_any(id);
+    core::stop_if_any(id);
+}
+
 fn command_save(input: &Value) -> Result<Value, String> {
     let name = get_str(input, "name");
     if name.is_empty() {
@@ -217,14 +235,19 @@ fn command_save(input: &Value) -> Result<Value, String> {
             .iter_mut()
             .find(|p| p.id == id)
             .ok_or_else(|| format!("身份 {id} 不存在"))?;
+        let before = egress_signature(&existing.proxy, &existing.subscription);
         existing.name = name;
         existing.proxy = proxy_config;
         existing.subscription = subscription;
         existing.note = note;
         existing.chrome_path = chrome_path;
         existing.updated_at = now;
+        let egress_changed = egress_signature(&existing.proxy, &existing.subscription) != before;
         let snapshot = existing.clone();
         store::save_profiles(&profiles)?;
+        if egress_changed {
+            drop_runtime(&id);
+        }
         return Ok(json!({ "profile": profile_with_runtime(snapshot, &subscriptions) }));
     }
     let new_id = store::allocate_id(&name, &profiles);
@@ -397,6 +420,120 @@ fn command_probe(input: &Value) -> Result<Value, String> {
     }))
 }
 
+/// `http://127.0.0.1:8080` / `socks5://host:1080` → ProxyConfig（只给 check 用）。
+fn parse_proxy_url(url: &str) -> Result<ProxyConfig, String> {
+    let (scheme, rest) = url
+        .split_once("://")
+        .ok_or_else(|| format!("出口地址 {url} 缺少协议头"))?;
+    let authority = rest.split('/').next().unwrap_or_default();
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (
+            host.to_string(),
+            port.parse::<u16>().map_err(|_| format!("出口地址 {url} 的端口不合法"))?,
+        ),
+        None => (authority.to_string(), 80),
+    };
+    let scheme = scheme.to_lowercase();
+    store::validate_proxy(&scheme, &host, port)?;
+    Ok(ProxyConfig { scheme, host, port, username: None, password: None })
+}
+
+/// 给外部调用方（multicc 的 claude-egress 转发器）准备一条「现在就可用」的
+/// 出口：订阅出口确保内核在跑（有上游再加中继），带凭据直连确保中继在跑，
+/// 无凭据直连直接回原地址。返回的 proxyUrl 是标准代理 URL，http 或 socks5。
+///
+/// 幂等：已在跑的组件复用，不为每次解析重启内核（冷启一次要 1-6 秒）。
+/// 出口配置变化时由 save / subscription-refresh 收割旧进程，不靠这里猜。
+fn command_egress(input: &Value) -> Result<Value, String> {
+    let id = get_str(input, "id");
+    if id.is_empty() {
+        return Err("缺少身份 id".into());
+    }
+    let profiles = store::load_profiles()?;
+    let profile = find_profile(&profiles, &id)?;
+    let subscriptions = store::load_subscriptions()?;
+    let mut result = json!({
+        "profileId": id,
+        "name": profile.name,
+        "egressText": egress_text(&profile, &subscriptions),
+        "kind": "direct",
+    });
+    let proxy_url = if let Some(egress) = &profile.subscription {
+        let subscription = subscriptions
+            .iter()
+            .find(|item| item.id == egress.id)
+            .ok_or_else(|| format!("身份「{}」引用的订阅「{}」不存在，先到订阅管理里刷新", profile.name, egress.id))?;
+        let raw = store::read_subscription_config(&egress.id)?;
+        let node = if egress.node.trim().is_empty() {
+            subscription.nodes.first().cloned().unwrap_or_default()
+        } else {
+            egress.node.clone()
+        };
+        let core_port = match core::running_port(&id) {
+            Some(port) => port,
+            None => core::start(&id, &raw, &node)?.mixed_port,
+        };
+        result["corePort"] = json!(core_port);
+        result["node"] = json!(node);
+        result["subscription"] = json!(subscription.name);
+        match &egress.via {
+            Some(via) => {
+                let port = match store::read_relay(&id) {
+                    Some((pid, port)) if chrome::pid_alive(pid) => port,
+                    _ => {
+                        let hop = ProxyConfig {
+                            scheme: "socks5".into(),
+                            host: "127.0.0.1".into(),
+                            port: core_port,
+                            username: None,
+                            password: None,
+                        };
+                        chrome::spawn_relay(&id, via, Some(hop))?
+                    }
+                };
+                result["relayPort"] = json!(port);
+                result["kind"] = json!("relay");
+                format!("http://127.0.0.1:{port}")
+            }
+            None => {
+                result["kind"] = json!("core");
+                format!("http://127.0.0.1:{core_port}")
+            }
+        }
+    } else if let Some(proxy) = &profile.proxy {
+        if proxy.has_credentials() {
+            let port = match store::read_relay(&id) {
+                Some((pid, port)) if chrome::pid_alive(pid) => port,
+                _ => chrome::spawn_relay(&id, proxy, None)?,
+            };
+            result["relayPort"] = json!(port);
+            result["kind"] = json!("relay");
+            format!("http://127.0.0.1:{port}")
+        } else {
+            format!("{}://{}:{}", proxy.scheme, proxy.host, proxy.port)
+        }
+    } else {
+        return Err("这个身份还没有配置出口".into());
+    };
+    result["proxyUrl"] = json!(proxy_url);
+    if get_bool(input, "check", false) {
+        // 显式要判据时才测：解析本身要快，不能每次都替调用方多跑一趟外网。
+        let config = parse_proxy_url(&proxy_url)?;
+        let ip = proxy::exit_ip(&config, Duration::from_secs(8))?;
+        result["exitIp"] = json!(ip);
+    }
+    Ok(result)
+}
+
+fn command_egress_stop(input: &Value) -> Result<Value, String> {
+    let id = get_str(input, "id");
+    if id.is_empty() {
+        return Err("缺少身份 id".into());
+    }
+    drop_runtime(&id);
+    Ok(json!({ "stopped": true, "id": id }))
+}
+
 fn allocate_subscription_id(name: &str, existing: &[Subscription]) -> String {
     let base = {
         let slug = store::slugify(name);
@@ -506,6 +643,13 @@ fn command_subscription_refresh(input: &Value) -> Result<Value, String> {
         item.clone()
     };
     store::save_subscriptions(&subscriptions)?;
+    // 配置原文换过了：引用它的身份必须重起内核，否则会一直用旧节点（内核
+    // 没有空闲退出）。中继的跳板端口也随内核换，一并收割。
+    for profile in store::load_profiles()? {
+        if profile.subscription.as_ref().is_some_and(|item| item.id == id) {
+            drop_runtime(&profile.id);
+        }
+    }
     Ok(json!({ "subscription": updated }))
 }
 
@@ -541,6 +685,8 @@ fn main() {
         "launch" => command_launch(&input),
         "stop" => command_stop(&input),
         "probe" => command_probe(&input),
+        "egress" => command_egress(&input),
+        "egress-stop" => command_egress_stop(&input),
         "subscription-save" => command_subscription_save(&input),
         "subscription-refresh" => command_subscription_refresh(&input),
         "subscription-remove" => command_subscription_remove(&input),
@@ -561,7 +707,7 @@ fn main() {
                 })
         }
         _ => Err(format!(
-            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / subscription-save / subscription-refresh / subscription-remove / relay）"
+            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / egress / egress-stop / subscription-save / subscription-refresh / subscription-remove / relay）"
         )),
     };
     match result {
@@ -586,6 +732,27 @@ mod tests {
         assert_eq!(parse_proxy_input(&flat).unwrap().port, 8080);
         let bad = json!({ "scheme": "socks5", "host": "", "port": 1080 });
         assert!(parse_proxy_input(&bad).is_err());
+    }
+
+    #[test]
+    fn parse_proxy_url_reads_scheme_host_port() {
+        let http = parse_proxy_url("http://127.0.0.1:41000").unwrap();
+        assert_eq!((http.scheme.as_str(), http.host.as_str(), http.port), ("http", "127.0.0.1", 41000));
+        let socks = parse_proxy_url("socks5://10.0.0.2:1080").unwrap();
+        assert_eq!((socks.scheme.as_str(), socks.port), ("socks5", 1080));
+        assert!(parse_proxy_url("127.0.0.1:8080").is_err());
+        assert!(parse_proxy_url("http://127.0.0.1:notaport").is_err());
+    }
+
+    #[test]
+    fn egress_signature_tracks_proxy_and_subscription_changes() {
+        let proxy = Some(ProxyConfig::new("http", "127.0.0.1", 7897));
+        let base = egress_signature(&proxy, &None);
+        assert_eq!(base, egress_signature(&proxy, &None));
+        let moved = Some(ProxyConfig::new("http", "127.0.0.1", 7898));
+        assert_ne!(base, egress_signature(&moved, &None));
+        let sub = Some(SubscriptionEgress { id: "s1".into(), node: "US".into(), via: None });
+        assert_ne!(base, egress_signature(&proxy, &sub));
     }
 
     #[test]

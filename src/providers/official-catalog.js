@@ -96,6 +96,15 @@ function createOfficialCatalog({ readRecords, readSelection, writeSelection, lis
     if (override && Array.isArray(override.egressIpAllowlist) && override.egressIpAllowlist.length) {
       result.egressIpAllowlist = override.egressIpAllowlist;
     }
+    // Per-account dedicated egress (which plugin profile this account leaves
+    // through). Same override record, same per-entry scoping as the allowlist
+    // above: binding one account must never move another.
+    const binding = override && override.egressBinding;
+    if (binding && typeof binding === 'object'
+      && typeof binding.pluginId === 'string' && binding.pluginId
+      && typeof binding.profileId === 'string' && binding.profileId) {
+      result.egressBinding = { pluginId: binding.pluginId, profileId: binding.profileId };
+    }
     return result;
   }
   // What a reference should be persisted as. The bare alias stays the alias —

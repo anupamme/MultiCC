@@ -32,6 +32,9 @@ const { createCodexAttemptHome } = require('../codex/attempt-home');
 const { createCodexSessionHomeRuntime } = require('../codex/session-home');
 const { isOfficialCodexOAuthProvider } = require('../codex/official-relay');
 const { normalizeAllowlist: normalizeEgressIpAllowlist } = require('./egress-ip-policy');
+// 专用出口的本机跳：形状（路径 + 端口）由这个无依赖模块统一，转发器在
+// src/claude-auth/egress-forwarder.js 里服务同一个前缀。
+const claudeEgressRoute = require('./claude-egress-route');
 // Resident lanes hold their route across turns, so they own the codex home that
 // bakes it (see the module). It reaches back here for the physical
 // materialization, which is why it is required from this side.
@@ -668,6 +671,11 @@ function summarize(p, opts = {}) {
     // the host's current public IP exactly matches one of these addresses
     // (see providers/egress-ip-policy.js). Empty/absent = unrestricted.
     egressIpAllowlist: normalizeEgressIpAllowlist(p.egressIpAllowlist),
+    // Dedicated egress binding (official accounts only): {pluginId, profileId}.
+    egressBinding: (p.egressBinding && typeof p.egressBinding === 'object'
+      && typeof p.egressBinding.pluginId === 'string' && typeof p.egressBinding.profileId === 'string')
+      ? { pluginId: p.egressBinding.pluginId, profileId: p.egressBinding.profileId }
+      : null,
     source: p.source || 'local', // 'local' | 'ccswitch'
     baseUrl,
     model,
@@ -865,9 +873,29 @@ function resolveCodexDirectHttp(providerId) {
     : { ...target, canDirect: false };
 }
 
-function createProvider({ appType, name, baseUrl, authToken, model, models, apiFormat, settingsConfig, aliasMap, egressIpAllowlist }) {
+// Dedicated egress binding: which plugin profile this Claude ACCOUNT leaves
+// through. Only the identity is stored — the endpoint/credentials stay inside the
+// plugin's own data dir, and the URL is resolved per request (see
+// src/claude-auth/egress-forwarder.js). `null` clears, `undefined` leaves as is.
+const EGRESS_PLUGIN_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+const EGRESS_PROFILE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+function normalizeEgressBinding(value) {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('egressBinding must be an object');
+  const pluginId = String(value.pluginId || '').trim();
+  const profileId = String(value.profileId || '').trim();
+  if (!EGRESS_PLUGIN_PATTERN.test(pluginId) || !EGRESS_PROFILE_PATTERN.test(profileId)) {
+    throw new Error('egressBinding needs a valid pluginId and profileId');
+  }
+  return { pluginId, profileId };
+}
+
+function createProvider({ appType, name, baseUrl, authToken, model, models, apiFormat, settingsConfig, aliasMap, egressIpAllowlist, egressBinding }) {
   if (!APP_TYPES.includes(appType)) throw new Error('appType must be claude or codex');
   if (!name || !String(name).trim()) throw new Error('name required');
+  // Official entries are never created here (they come from the account
+  // catalog), so a brand-new provider can't own a dedicated egress.
+  if (egressBinding !== undefined) throw new Error('专用出口只能绑在 Claude 官方账号线路上');
   // Generate id first so buildSettingsConfig can embed it in the proxy base_url.
   const id = crypto.randomUUID();
   const cfg = (settingsConfig && typeof settingsConfig === 'object')
@@ -892,7 +920,7 @@ function createProvider({ appType, name, baseUrl, authToken, model, models, apiF
   return { id: p.id, appType, name: p.name };
 }
 
-function updateProvider(appType, id, { name, baseUrl, authToken, model, models, apiFormat, settingsConfig, aliasMap, egressIpAllowlist }) {
+function updateProvider(appType, id, { name, baseUrl, authToken, model, models, apiFormat, settingsConfig, aliasMap, egressIpAllowlist, egressBinding }) {
   if (officialCatalog && (isOfficialProviderId(appType, id) || isOfficialProviderId(appType, officialCatalog.normalize(appType, id)))) {
     // Login/account identity is OAuth-managed and not editable here. Advanced
     // settings (currently: egress-IP allowlist) are the one thing an official
@@ -905,31 +933,45 @@ function updateProvider(appType, id, { name, baseUrl, authToken, model, models, 
     // The allowlist override belongs to the entry being edited: the terminal
     // alias keeps its own record, each account entry gets its own — never a
     // vendor-wide shared one (an unrestricted account must stay unrestricted).
+    // The dedicated-egress binding is per entry for the same reason: binding one
+    // account to an egress profile must never move the others.
     const targetId = isOfficialProviderId(appType, id)
       ? id
       : officialCatalog.normalize(appType, id);
     const list = loadStore();
     const normalized = normalizeEgressIpAllowlist(egressIpAllowlist);
+    const binding = normalizeEgressBinding(egressBinding);
     let p = list.find(x => x.appType === appType && x.id === targetId);
-    if (!p && normalized.length) {
+    if (!p && (normalized.length || binding)) {
       p = { id: targetId, appType, source: 'builtin-override' };
       list.push(p);
     }
     if (p) {
-      if (normalized.length) p.egressIpAllowlist = normalized;
-      else {
-        delete p.egressIpAllowlist;
-        // Drop the record only when it is a pure allowlist stub; a record that
-        // carries anything else (e.g. a legacy import with a name) keeps its
-        // identity and just loses the restriction.
-        if (p.source === 'builtin-override') {
-          const idx = list.indexOf(p);
-          if (idx !== -1) list.splice(idx, 1);
-        }
+      // `undefined` = this PATCH didn't touch the allowlist (e.g. the UI only
+      // sent an egress binding); only an explicit list or `[]` rewrites it.
+      if (egressIpAllowlist !== undefined) {
+        if (normalized.length) p.egressIpAllowlist = normalized;
+        else delete p.egressIpAllowlist;
+      }
+      if (binding) p.egressBinding = binding;
+      else if (binding === null) delete p.egressBinding;
+      // Drop the record only when it is a pure override stub; a record that
+      // carries anything else (e.g. a legacy import with a name) keeps its
+      // identity and just loses the settings.
+      if (p.source === 'builtin-override' && !p.egressIpAllowlist && !p.egressBinding) {
+        const idx = list.indexOf(p);
+        if (idx !== -1) list.splice(idx, 1);
       }
     }
     saveStore(list);
     return { id: targetId, appType };
+  }
+  // A dedicated egress only means something for an OAuth-managed official entry:
+  // any other line already names its own upstream, and routing it through the
+  // loopback hop would need a different pipeline. Reject instead of storing a
+  // binding that silently does nothing.
+  if (egressBinding !== undefined) {
+    throw new Error('专用出口只能绑在 Claude 官方账号线路上');
   }
   const list = loadStore();
   const p = list.find(x => x.appType === appType && x.id === id);
@@ -2304,6 +2346,24 @@ function claudeProviderTokenEnv(provider) {
 function claudeRoutingProviderView(provider) {
   if (!provider) return provider;
   const { env, token, bearerOnly } = claudeProviderTokenEnv(provider);
+  // Official entry bound to a dedicated egress (per Claude account): give it a
+  // base URL pointing at the local forwarder. That single change moves the route
+  // off the proxy's official branch and onto its generic one, so the hop stops
+  // replaying the host login and instead forwards to us — the forwarder attaches
+  // THIS account's OAuth credential and dials api.anthropic.com through the
+  // plugin's egress (src/claude-auth/egress-forwarder.js). Nothing is persisted:
+  // the stored record stays base-less, which is what keeps it recognized as an
+  // official entry everywhere else.
+  if (!token && provider.egressBinding && !String(env.ANTHROPIC_BASE_URL || '').trim()) {
+    const next = {
+      ...parseConfig(provider.settingsConfig),
+      env: { ...env, ANTHROPIC_BASE_URL: claudeEgressRoute.baseUrlFor(provider.id) },
+    };
+    return {
+      ...provider,
+      settingsConfig: typeof provider.settingsConfig === 'string' ? JSON.stringify(next) : next,
+    };
+  }
   if (!token) return provider;
   const hasBase = !!String(env.ANTHROPIC_BASE_URL || '').trim();
   if (hasBase && !bearerOnly) return provider;

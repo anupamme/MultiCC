@@ -30,6 +30,19 @@ function parseEgressIpAllowlist(body) {
   return list;
 }
 
+// Dedicated egress binding (official accounts only): `{pluginId, profileId}`.
+// Absent leaves the stored binding untouched (PATCH), `null` clears it. Shape
+// validation lives in providers/core.js — the last stop before disk — so this
+// only normalizes the JSON envelope.
+function parseEgressBinding(body) {
+  const value = body.egressBinding;
+  if (value === undefined || value === null) return value;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('egressBinding must be an object with pluginId and profileId');
+  }
+  return { pluginId: value.pluginId, profileId: value.profileId };
+}
+
 function publicError(error, fallback) {
   return sanitizePublicText(error && error.message, fallback);
 }
@@ -277,6 +290,7 @@ function createProviderRoutes(rawDeps) {
     app.post('/api/providers', (req, res) => {
       try {
         const egressIpAllowlist = parseEgressIpAllowlist(req.body);
+        const egressBinding = parseEgressBinding(req.body);
         const result = deps.providers.createProvider({
           appType: (req.body.appType || '').trim(),
           name: req.body.name,
@@ -288,6 +302,7 @@ function createProviderRoutes(rawDeps) {
           settingsConfig: req.body.settingsConfig,
           aliasMap: req.body.aliasMap,
           ...(egressIpAllowlist !== undefined ? { egressIpAllowlist } : {}),
+          ...(egressBinding !== undefined ? { egressBinding } : {}),
         });
         res.json({ ok: true, ...result });
       } catch (error) {
@@ -298,6 +313,7 @@ function createProviderRoutes(rawDeps) {
     app.patch('/api/providers/:appType/:id', (req, res) => {
       try {
         const egressIpAllowlist = parseEgressIpAllowlist(req.body);
+        const egressBinding = parseEgressBinding(req.body);
         deps.providers.updateProvider(req.params.appType, req.params.id, {
           name: req.body.name,
           baseUrl: req.body.baseUrl,
@@ -308,6 +324,7 @@ function createProviderRoutes(rawDeps) {
           settingsConfig: req.body.settingsConfig,
           aliasMap: req.body.aliasMap,
           ...(egressIpAllowlist !== undefined ? { egressIpAllowlist } : {}),
+          ...(egressBinding !== undefined ? { egressBinding } : {}),
         });
         res.json({ ok: true });
       } catch (error) {

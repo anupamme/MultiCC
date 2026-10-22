@@ -25,6 +25,11 @@
   let context = null;
   let data = null;
   let activeProtocol = 'all';
+  // 官方账号的「专用出口」来自这个插件里的身份（每个身份一套隔离的代理出口）。
+  const EGRESS_PLUGIN_ID = 'chrome-proxy-launcher';
+  // 每次打开编辑框都自增：异步拉回来的身份清单只能填进「当前这一次」打开的框，
+  // 否则快速连点两条线路时会拿 A 的清单覆盖 B 的下拉。
+  let egressLoadToken = 0;
   const requestedConnection = (() => {
     try {
       const value = new URLSearchParams(root.location?.search || '').get('providerConnection') || '';
@@ -76,6 +81,7 @@
         <label>${t('airProviderOptionalModels')}<textarea name="models" rows="3" placeholder="${t('airProviderModelsPlaceholder')}"></textarea></label>
         <details id="air-provider-aliases"><summary>${t('airProviderAliasSummary')}</summary><div class="provider-alias-grid"><span>${t('airProviderTierColumn')}</span><span>${t('airProviderDisplayNameColumn')}</span><span>${t('airProviderRealModelColumn')}</span></div></details>
         <details id="air-provider-egress-ip"><summary>${t('airProviderEgressIpSummary')}</summary><p>${t('airProviderEgressIpBody')}</p><textarea name="egressIpAllowlist" rows="3" placeholder="${t('airProviderEgressIpPlaceholder')}"></textarea></details>
+        <details id="air-provider-egress-binding"><summary>${t('airProviderEgressBindingSummary')}</summary><p>${t('airProviderEgressBindingBody')}</p><p id="air-provider-egress-binding-hint" class="air-migration-note" hidden></p><label>${t('airProviderEgressBindingLabel')}<select name="egressBinding"><option value="">${t('airProviderEgressBindingOff')}</option></select></label></details>
         <p id="air-provider-form-error" role="alert"></p>
         <div class="schedule-form-actions"><button type="button" id="air-provider-cancel">${t('airProviderCancel')}</button><button type="submit" id="air-provider-save" class="primary">${t('airProviderCreate')}</button></div>
         </div>
@@ -150,6 +156,79 @@
     }
   }
 
+  // 「专用出口」下拉：插件里的身份清单是活的（用户可能刚在插件页面里改名、
+  // 删除），所以每次打开编辑框都重新拉一次。插件不在 / 二进制缺失 / 还没有
+  // 身份，都停在说明文案上；已保存但插件里已经删掉的身份保留成一个占位项，
+  // 保存时不会因为「下拉里没有它」被静默清掉。
+  async function fillEgressBinding(binding) {
+    const form = el('air-provider-form');
+    const select = form && form.elements.egressBinding;
+    const hint = el('air-provider-egress-binding-hint');
+    if (!select || !hint) return;
+    const token = ++egressLoadToken;
+    const saved = binding && binding.profileId;
+    // 只有真正读到了身份清单才算「可写」：插件缺失/二进制不可用时保存不提交
+    // egressBinding（PATCH 里缺省=不动），免得出一次故障就把绑定清掉。
+    form.dataset.egressBindingState = 'unavailable';
+    const off = make('option', t('airProviderEgressBindingOff'));
+    off.value = '';
+    select.replaceChildren(off);
+    select.value = '';
+    select.disabled = true;
+    hint.hidden = false;
+    hint.textContent = t('airProviderEgressBindingLoading');
+    let entry = null;
+    try {
+      const payload = await context.api('/api/plugins');
+      entry = (payload.plugins || []).find(item => item && item.id === EGRESS_PLUGIN_ID) || null;
+    } catch (error) {
+      if (token !== egressLoadToken) return;
+      hint.textContent = t('airProviderEgressBindingLoadFailed', { message: error.message });
+      return;
+    }
+    if (token !== egressLoadToken) return;
+    if (!entry) {
+      hint.textContent = t('airProviderEgressBindingNoPlugin');
+      return;
+    }
+    if (!entry.engine || !entry.engine.available) {
+      hint.textContent = (entry.engine && entry.engine.reason) || t('airProviderEgressBindingNoPlugin');
+      return;
+    }
+    let profiles = [];
+    try {
+      const listed = await context.api(`/api/plugins/${EGRESS_PLUGIN_ID}/run`, { command: 'list', input: {} });
+      profiles = Array.isArray(listed && listed.profiles) ? listed.profiles : [];
+    } catch (error) {
+      if (token !== egressLoadToken) return;
+      hint.textContent = t('airProviderEgressBindingLoadFailed', { message: error.message });
+      return;
+    }
+    if (token !== egressLoadToken) return;
+    const seen = new Set();
+    const options = [off];
+    for (const profile of profiles) {
+      if (!profile || typeof profile.id !== 'string' || !profile.id) continue;
+      seen.add(profile.id);
+      const option = make('option', `${profile.name || profile.id}${profile.egressText ? ` · ${profile.egressText}` : ''}`);
+      option.value = profile.id;
+      options.push(option);
+    }
+    // 已绑定但插件里找不到：保留占位项并标出来，别把配置悄悄改掉。
+    if (saved && !seen.has(saved)) {
+      const missing = make('option', t('airProviderEgressBindingSaved', { id: saved }));
+      missing.value = saved;
+      options.push(missing);
+    }
+    select.replaceChildren(...options);
+    select.value = saved || '';
+    // 清单读到了就算「可写」—— 没有身份也允许把已有绑定清成「不使用」。
+    form.dataset.egressBindingState = 'ready';
+    select.disabled = !profiles.length && !saved;
+    hint.hidden = !!profiles.length;
+    hint.textContent = profiles.length ? '' : t('airProviderEgressBindingNoProfiles');
+  }
+
   function openEditor(provider = null) {
     const dialog = ensureDialog();
     const form = el('air-provider-form');
@@ -170,6 +249,12 @@
     const egressIpAllowlist = provider?.egressIpAllowlist || [];
     form.elements.egressIpAllowlist.value = egressIpAllowlist.join('\n');
     el('air-provider-egress-ip').open = egressIpAllowlist.length > 0;
+    // 专用出口只对官方账号线路开放（别的线路自己就指明了上游）。
+    const binding = locked && provider?.egressBinding ? provider.egressBinding : null;
+    el('air-provider-egress-binding').hidden = !locked;
+    el('air-provider-egress-binding').open = !!(binding && binding.profileId);
+    if (locked) void fillEgressBinding(binding);
+    else form.dataset.egressBindingState = '';
     syncDialogProtocol();
     // Official providers are OAuth-managed: identity/credential fields are read-only
     // here (login/account switching lives in the dedicated official-account flow),
@@ -206,6 +291,12 @@
     if (form.dataset.official === '1') {
       // OAuth-managed identity: only the advanced settings below are ours to write.
       body = { egressIpAllowlist };
+      // 身份清单没读到（插件缺失/二进制不可用）就别提交绑定字段：PATCH 里缺省
+      // 表示「不动」，提交一个空值反而会把已有绑定清掉。
+      if (form.dataset.egressBindingState === 'ready') {
+        const profileId = form.elements.egressBinding.value.trim();
+        body.egressBinding = profileId ? { pluginId: EGRESS_PLUGIN_ID, profileId } : null;
+      }
     } else {
       const model = form.elements.model.value.trim();
       body = {
@@ -257,6 +348,12 @@
     if (terminal) tags.append(make('span', t('airProviderTerminalTag')));
     else if (account) tags.append(make('span', t('airProviderAccountTag')));
     if (provider.hasToken) tags.append(make('span', t('airProviderKeyConfigured')));
+    // 专用出口：卡片上标出来，免得要逐个点开编辑框才知道这个账号从哪个 IP 出去。
+    if (provider.egressBinding && provider.egressBinding.profileId) {
+      const tag = make('span', t('airProviderEgressBindingTag'));
+      tag.title = provider.egressBinding.profileId;
+      tags.append(tag);
+    }
     head.append(title, tags);
     const endpoint = make('p', provider.baseUrl || (terminal
       ? t('airProviderTerminalRoute', { cli: cliName(provider.appType) })

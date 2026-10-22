@@ -602,6 +602,11 @@
       aliasOnly: value.aliasOnly === true,
       aliasMap: Object.freeze(normalizeAliasMap(value.aliasMap)),
         tokenMask: safeTokenMask(value.tokenMask),
+      // 官方账号的高级设置（编辑框要回填）：专用出口绑定的是插件里的哪个身份，
+      // 以及限定出口 IP 白名单。两者都是逐条目存在服务端的数据。
+      egressBinding: normalizeEgressBinding(value.egressBinding),
+      egressIpAllowlist: Object.freeze((Array.isArray(value.egressIpAllowlist) ? value.egressIpAllowlist : [])
+        .map(item => text(item, 64)).filter(Boolean)),
       hasToken: value.hasToken === true,
       isOfficial: value.isOfficial === true,
       // 内置官方线路（每个已登录账号一条，或一个都没登录时的「选此登录」占位）。
@@ -613,6 +618,13 @@
       subscription: value.subscription && typeof value.subscription === 'object' ? value.subscription : null,
       limit: normalizeProviderLimit(value.limit),
     });
+  }
+
+  function normalizeEgressBinding(value) {
+    if (!value || typeof value !== 'object') return null;
+    const pluginId = text(value.pluginId, 128);
+    const profileId = text(value.profileId, 128);
+    return pluginId && profileId ? Object.freeze({ pluginId, profileId }) : null;
   }
 
   function normalizeProviderLimit(value) {
