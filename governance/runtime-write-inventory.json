@@ -533,6 +533,19 @@
           "anchor": "return process.env.MULTICC_PRICING_CACHE_DIR || path.join(os.homedir(), '.multicc', 'pricing');"
         }
       ]
+    },
+    {
+      "id": "plugins-data",
+      "classification": "external-owner",
+      "owner": "plugin binaries (plugins/*/plugin.json engine)",
+      "rationale": "~/.multicc/plugins-data/<plugin-id>/ is per-plugin runtime state (identity manifests, pid files, isolated Chrome user-data-dirs) written by the plugins' own binaries; the Node server only bridges stdin/stdout and never writes this tree.",
+      "migrationStrategy": "Subtree ownership stays with each plugin; when the plugin host moves to Rust the root moves with it. Server-side code must not write here.",
+      "sources": [
+        {
+          "file": "plugins/chrome-proxy-launcher/src/store.rs",
+          "anchor": "home_dir().join(\".multicc\").join(\"plugins-data\").join(\"chrome-proxy-launcher\")"
+        }
+      ]
     }
   ]
 }

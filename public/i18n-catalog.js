@@ -4585,7 +4585,7 @@ window.MULTICC_I18N_CATALOG = {
     "airGuideTaskHint": "用一句话描述你想完成的事，任务会出现在左侧最近任务中。",
     "airGuideLater": "稍后再做，可从侧栏继续",
     "airRecentAll": "全部 ›",
-    "airMaterials": "资料",
+    "airMaterials": "资料与插件",
     "airAllProjects": "全部项目",
     "airManageProjects": "管理项目",
     "airProjectSearch": "搜索项目名称或路径",
@@ -4758,7 +4758,18 @@ window.MULTICC_I18N_CATALOG = {
     "subscriptionFetchFailed": "暂时无法更新",
     "subscriptionLoginSnapshot": "日期来自该账号的登录信息快照，以官方账单为准",
     "subscriptionDateHint": "订阅日期与额度重置时间、登录有效期分别计算",
-    "subscriptionLoading": "查询中…"
+    "subscriptionLoading": "查询中…",
+    "airPlugins": "插件",
+    "airPluginsBack": "‹ 返回插件列表",
+    "airPluginsDesc": "复制进 plugins/ 目录即完成安装的自包含扩展",
+    "airPluginsEmptyHintA": "把带 ",
+    "airPluginsEmptyHintB": " 的插件文件夹复制进 plugins/ 目录即可完成安装；第一个插件「Chrome 隔离出口启动器」随 MultiCC 一起发布。",
+    "airPluginsEmptyTitle": "还没有安装插件",
+    "airPluginsEngineMissing": "插件引擎不可用",
+    "airPluginsFrameHint": "插件面板由插件自带，经插件通道运行",
+    "airPluginsLoadFail": "插件清单加载失败",
+    "airPluginsLoading": "正在读取插件清单…",
+    "airPluginsOpen": "打开"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9345,7 +9356,7 @@ window.MULTICC_I18N_CATALOG = {
     "airGuideTaskHint": "Describe what you want to achieve. Your task will appear in Recent tasks.",
     "airGuideLater": "Do this later — resume from the sidebar",
     "airRecentAll": "View all ›",
-    "airMaterials": "Resources",
+    "airMaterials": "Docs & Plugins",
     "airAllProjects": "All projects",
     "airManageProjects": "Manage projects",
     "airProjectSearch": "Search project name or path",
@@ -9518,6 +9529,17 @@ window.MULTICC_I18N_CATALOG = {
     "subscriptionFetchFailed": "Unable to update right now",
     "subscriptionLoginSnapshot": "Date from this account’s login snapshot; check official billing for the latest date",
     "subscriptionDateHint": "Subscription dates are separate from quota resets and login expiry",
-    "subscriptionLoading": "Checking…"
+    "subscriptionLoading": "Checking…",
+    "airPlugins": "Plugins",
+    "airPluginsBack": "‹ All plugins",
+    "airPluginsDesc": "Self-contained extensions; drop a folder into plugins/ to install",
+    "airPluginsEmptyHintA": "Drop a plugin folder containing ",
+    "airPluginsEmptyHintB": " into the plugins/ directory to install it. The first plugin, the Chrome Isolated Proxy Launcher, ships with MultiCC.",
+    "airPluginsEmptyTitle": "No plugins installed yet",
+    "airPluginsEngineMissing": "Plugin engine unavailable",
+    "airPluginsFrameHint": "Panel provided by the plugin; runs through the plugin channel",
+    "airPluginsLoadFail": "Failed to load plugin list",
+    "airPluginsLoading": "Loading plugins…",
+    "airPluginsOpen": "Open"
   }
 };

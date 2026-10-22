@@ -120,6 +120,16 @@ const MIGRATION_DEBT = Object.freeze({
     target: 3000,
     reason: 'macOS desktop agent single-file implementation; split screen capture / input injection / permission probing next',
   }),
+  // server.js 在「移除迁移例外」（见上方注释）之后又被官方账号/额度与主机电源
+  // 那一族抬起且没回来登记 —— 2026-10-22 插件通道接线时实测 3020/158444
+  //（本轮零行变更，仅合并 require 与挂载同行）。按棘轮补登记存量高水位；
+  // 下一次动 server.js 该拆的仍是账号/额度路由那一族，落回 <= 3000 就删掉这条。
+  'server.js': Object.freeze({
+    ceiling: 3020,
+    byteCeiling: 158444,
+    target: 3000,
+    reason: 'split account/quota and host-power route families out of server.js to return under 3k',
+  }),
 });
 
 // Reviewed third-party/generated assets are not first-party maintainability
@@ -431,8 +441,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // main 上另有 +8 双语键（airOfficialAcctPaste*，粘贴回调登录）未登记、已到 9504 行；
     // 随后 Claude 账号登录改为 Magpie 式登录面板：+15 双语键（airOfficialAcctSignin*），
     // 删 5 个随旧「自动打开授权页」与行内粘贴框退场的键，实测 9524/607173。
-    maxLines: 9524,
-    maxBytes: 607173,
+    // +11 双语键（airPlugins*）：插件面板（air-plugins.js）与侧栏「资料」更名
+    // 「资料与插件」（airMaterials 改值，行数不变），实测 9546/608607。
+    maxLines: 9546,
+    maxBytes: 608607,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

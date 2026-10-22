@@ -4583,7 +4583,7 @@
   "airGuideTaskHint": "用一句话描述你想完成的事，任务会出现在左侧最近任务中。",
   "airGuideLater": "稍后再做，可从侧栏继续",
   "airRecentAll": "全部 ›",
-  "airMaterials": "资料",
+  "airMaterials": "资料与插件",
   "airAllProjects": "全部项目",
   "airManageProjects": "管理项目",
   "airProjectSearch": "搜索项目名称或路径",
@@ -4756,5 +4756,16 @@
   "subscriptionFetchFailed": "暂时无法更新",
   "subscriptionLoginSnapshot": "日期来自该账号的登录信息快照，以官方账单为准",
   "subscriptionDateHint": "订阅日期与额度重置时间、登录有效期分别计算",
-  "subscriptionLoading": "查询中…"
+  "subscriptionLoading": "查询中…",
+  "airPlugins": "插件",
+  "airPluginsBack": "‹ 返回插件列表",
+  "airPluginsDesc": "复制进 plugins/ 目录即完成安装的自包含扩展",
+  "airPluginsEmptyHintA": "把带 ",
+  "airPluginsEmptyHintB": " 的插件文件夹复制进 plugins/ 目录即可完成安装；第一个插件「Chrome 隔离出口启动器」随 MultiCC 一起发布。",
+  "airPluginsEmptyTitle": "还没有安装插件",
+  "airPluginsEngineMissing": "插件引擎不可用",
+  "airPluginsFrameHint": "插件面板由插件自带，经插件通道运行",
+  "airPluginsLoadFail": "插件清单加载失败",
+  "airPluginsLoading": "正在读取插件清单…",
+  "airPluginsOpen": "打开"
 }

@@ -60,6 +60,8 @@
     push: { module: 'MultiCCAirPush' },
     bridges: { module: 'MultiCCAirBridges' },
     resources: { module: 'MultiCCAirResources' },
+    // plugins：侧栏「资料与插件」区的一员（不在设置中心摆卡），面板在 air-plugins.js。
+    plugins: { module: 'MultiCCAirPlugins' },
     skillsync: { module: 'MultiCCAirSkillsync' },
     storage: { module: 'MultiCCAirStorage' },
     workspaces: { module: 'MultiCCAirWorkspaces' },

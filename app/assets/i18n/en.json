@@ -4583,7 +4583,7 @@
   "airGuideTaskHint": "Describe what you want to achieve. Your task will appear in Recent tasks.",
   "airGuideLater": "Do this later — resume from the sidebar",
   "airRecentAll": "View all ›",
-  "airMaterials": "Resources",
+  "airMaterials": "Docs & Plugins",
   "airAllProjects": "All projects",
   "airManageProjects": "Manage projects",
   "airProjectSearch": "Search project name or path",
@@ -4756,5 +4756,16 @@
   "subscriptionFetchFailed": "Unable to update right now",
   "subscriptionLoginSnapshot": "Date from this account’s login snapshot; check official billing for the latest date",
   "subscriptionDateHint": "Subscription dates are separate from quota resets and login expiry",
-  "subscriptionLoading": "Checking…"
+  "subscriptionLoading": "Checking…",
+  "airPlugins": "Plugins",
+  "airPluginsBack": "‹ All plugins",
+  "airPluginsDesc": "Self-contained extensions; drop a folder into plugins/ to install",
+  "airPluginsEmptyHintA": "Drop a plugin folder containing ",
+  "airPluginsEmptyHintB": " into the plugins/ directory to install it. The first plugin, the Chrome Isolated Proxy Launcher, ships with MultiCC.",
+  "airPluginsEmptyTitle": "No plugins installed yet",
+  "airPluginsEngineMissing": "Plugin engine unavailable",
+  "airPluginsFrameHint": "Panel provided by the plugin; runs through the plugin channel",
+  "airPluginsLoadFail": "Failed to load plugin list",
+  "airPluginsLoading": "Loading plugins…",
+  "airPluginsOpen": "Open"
 }

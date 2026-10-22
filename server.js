@@ -62,7 +62,7 @@ const crypto = require('crypto');
 const bus = require('./src/bus');
 const services = require('./src/services');
 const state = require('./src/state/container');
-const artifacts = require('./src/artifacts'), docsRegistry = require('./src/docs-registry'), secretsVault = require('./src/secrets-vault'), annotationLive = require('./src/annotation-live'), remoteScreen = require('./src/remote-screen');
+const artifacts = require('./src/artifacts'), docsRegistry = require('./src/docs-registry'), secretsVault = require('./src/secrets-vault'), annotationLive = require('./src/annotation-live'), remoteScreen = require('./src/remote-screen'), pluginsRoutes = require('./src/routes/plugins');
 const providers = require('./src/providers/core');
 providers.enableUnifiedOfficialProviders();
 const { executeAuxHttp } = require('./src/aux-http');
@@ -2883,7 +2883,7 @@ const startupRepoReady = Promise.resolve().then(providers.migrateLegacyProviderP
 
 // Scheduled tasks (定时任务): every rule owns one fixed Air task and enters it through the
 // task-shell receipt protocol, complementing the lower-level per-session triggers.
-cronTasks.mount(app); docsRegistry.mount(app, { resolveTaskTitle: id => taskShellHost.artifactTaskTitle(id), resolveTaskId: id => taskShellHost.artifactTaskId(id), resolveDir: id => directories.get(persistedSessions.get(id)?.dirId)?.path || null }); secretsVault.mount(app); annotationLive.mount(app); remoteScreen.mount(app); // docs-registry/secrets-vault/annotation-live = 管理表/保险箱/标注实时操作通道（同行以守 3000 行预算）
+cronTasks.mount(app); docsRegistry.mount(app, { resolveTaskTitle: id => taskShellHost.artifactTaskTitle(id), resolveTaskId: id => taskShellHost.artifactTaskId(id), resolveDir: id => directories.get(persistedSessions.get(id)?.dirId)?.path || null }); secretsVault.mount(app); annotationLive.mount(app); remoteScreen.mount(app); pluginsRoutes.createPluginsRoutes({ pluginsDir: path.join(__dirname, 'plugins'), platform: process.platform, arch: process.arch, logger }).mount(app); // docs-registry/secrets-vault/annotation-live = 管理表/保险箱/标注实时操作通道；plugins = plugins/ 目录自包含插件的通道（Rust 二进制，Node 只桥接）。同行以守 3000 行预算
 cronTasks.init({
   directories,
   clis: SUPPORTED_CHAT_CLIS,

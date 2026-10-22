@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chrome 隔离出口启动器</title>
+<style>
+  :root {
+    --bg: #f6f8fa; --card: #ffffff; --ink: #1f2328; --muted: #6a737d;
+    --line: #d8dee4; --accent: #1f6feb; --accent-ink: #ffffff;
+    --ok: #1a7f37; --bad: #cf222e; --chip: #eaeef2; --shadow: 0 1px 3px rgba(31,35,40,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --card: #161b22; --ink: #e6edf3; --muted: #8b949e;
+      --line: #30363d; --accent: #388bfd; --accent-ink: #ffffff;
+      --ok: #3fb950; --bad: #f85149; --chip: #21262d; --shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, "PingFang SC", "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+  section.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--shadow); }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input, select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--ink); font-size: 14px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 120px; }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--card); color: var(--ink); font-size: 13px; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.primary:hover { opacity: .88; color: var(--accent-ink); }
+  button.danger:hover { border-color: var(--bad); color: var(--bad); }
+  button:disabled { opacity: .45; cursor: default; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { border: 1px dashed var(--line); border-radius: 999px; padding: 3px 10px;
+    font-size: 12px; cursor: pointer; background: var(--chip); }
+  ul.profiles { list-style: none; margin: 0; padding: 0; }
+  ul.profiles li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .p-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .p-name { font-weight: 600; }
+  .p-proxy { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
+  .badge { font-size: 11px; border-radius: 999px; padding: 1px 8px; }
+  .badge.run { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+  .badge.ip { background: var(--chip); color: var(--muted); font-family: ui-monospace, monospace; }
+  .p-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  #notice { position: sticky; top: 0; z-index: 5; border-radius: 8px; padding: 8px 12px;
+    margin-bottom: 12px; font-size: 13px; display: none; }
+  #notice.ok { display: block; background: color-mix(in srgb, var(--ok) 12%, var(--card)); color: var(--ok); }
+  #notice.bad { display: block; background: color-mix(in srgb, var(--bad) 12%, var(--card)); color: var(--bad); }
+  .empty { color: var(--muted); text-align: center; padding: 18px 0; }
+</style>
+</head>
+<body>
+<div id="notice" role="status"></div>
+<h1>🌐 Chrome 隔离出口启动器</h1>
+<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口代理。浏览器互不串 cookie，出口互不串 IP；代理不可达时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
+
+<section class="card">
+  <h2>新建 / 编辑身份</h2>
+  <label>身份名称（如「美区店铺」「运营 A」）</label>
+  <input id="f-name" placeholder="必填">
+  <div class="row">
+    <div>
+      <label>出口类型</label>
+      <select id="f-scheme">
+        <option value="http">HTTP 代理（Clash 混合端口等）</option>
+        <option value="socks5">SOCKS5 代理</option>
+        <option value="https">HTTPS 代理</option>
+      </select>
+    </div>
+    <div>
+      <label>代理地址</label>
+      <input id="f-host" value="127.0.0.1" placeholder="127.0.0.1">
+    </div>
+    <div>
+      <label>端口</label>
+      <input id="f-port" inputmode="numeric" placeholder="7897">
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label>浏览器路径（留空 = 自动找 Chrome）</label>
+      <input id="f-chrome" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome">
+    </div>
+    <div>
+      <label>启动时打开的网址（可选）</label>
+      <input id="f-url" placeholder="https://example.com">
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button type="button" id="btn-detect">探测本机代理端口</button>
+    <button type="button" id="btn-test">测这个出口</button>
+    <button type="button" class="primary" id="btn-save">保存身份</button>
+  </div>
+  <div class="chips" id="chips"></div>
+</section>
+
+<section class="card">
+  <h2>身份列表</h2>
+  <ul class="profiles" id="list"></ul>
+  <p class="empty" id="empty" hidden>还没有身份。上面填好名称与出口，点「保存身份」。</p>
+</section>
+
+<script>
+'use strict';
+// 插件 UI 与宿主只通过一条通道说话：POST /api/plugins/chrome-proxy-launcher/run，
+// body {command, input}。同源 cookie 由浏览器自动携带；所有动态文本走
+// textContent，不拼 innerHTML。
+const PLUGIN_ID = 'chrome-proxy-launcher';
+const $ = id => document.getElementById(id);
+const notice = (text, kind) => {
+  const box = $('notice');
+  box.className = kind || 'ok';
+  box.textContent = text;
+  if (!kind) setTimeout(() => { box.className = ''; }, 4000);
+};
+
+async function run(command, input) {
+  const response = await fetch(`/api/plugins/${PLUGIN_ID}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, input: input || {} }),
+  });
+  const payload = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+  if (!response.ok || payload.ok === false) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload.data;
+}
+
+function proxyText(profile) {
+  return `${profile.proxy.scheme}://${profile.proxy.host}:${profile.proxy.port}`;
+}
+
+function fillForm(profile) {
+  $('f-name').value = profile ? profile.name : '';
+  $('f-scheme').value = profile ? profile.proxy.scheme : 'http';
+  $('f-host').value = profile ? profile.proxy.host : '127.0.0.1';
+  $('f-port').value = profile ? profile.proxy.port : '';
+  $('f-chrome').value = (profile && profile.chromePath) || '';
+  $('btn-save').dataset.editing = profile ? profile.id : '';
+  $('btn-save').textContent = profile ? `更新「${profile.name}」` : '保存身份';
+}
+
+function makeButton(text, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = text;
+  if (className) button.className = className;
+  button.onclick = onClick;
+  return button;
+}
+
+const probeResults = new Map(); // id -> {exitIp, via, latencyMs} 本地缓存展示
+
+async function refresh() {
+  const list = $('list');
+  const data = await run('list');
+  const profiles = data.profiles || [];
+  $('empty').hidden = profiles.length > 0;
+  list.replaceChildren();
+  for (const profile of profiles) {
+    const item = document.createElement('li');
+
+    const head = document.createElement('div');
+    head.className = 'p-head';
+    const name = document.createElement('span');
+    name.className = 'p-name';
+    name.textContent = profile.name;
+    const proxy = document.createElement('span');
+    proxy.className = 'p-proxy';
+    proxy.textContent = proxyText(profile);
+    head.append(name, proxy);
+    if (profile.running) {
+      const badge = document.createElement('span');
+      badge.className = 'badge run';
+      badge.textContent = `运行中 · ${profile.pid}`;
+      head.append(badge);
+    }
+    const probe = probeResults.get(profile.id);
+    if (probe) {
+      const badge = document.createElement('span');
+      badge.className = 'badge ip';
+      badge.title = `经 ${probe.via} · ${probe.latencyMs}ms`;
+      badge.textContent = `出口 ${probe.exitIp}`;
+      head.append(badge);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'p-actions';
+    actions.append(
+      makeButton(profile.running ? '再开一个窗口' : '启动浏览器', 'primary', async event => {
+        event.target.disabled = true;
+        try {
+          const url = $('f-url').value.trim();
+          const result = await run('launch', { id: profile.id, url });
+          notice(`已启动「${profile.name}」（pid ${result.pid}），出口强制走 ${proxyText(profile)}`);
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          event.target.disabled = false;
+          await refresh();
+        }
+      }),
+      makeButton('测出口', '', async event => {
+        event.target.disabled = true;
+        try {
+          const result = await run('probe', { id: profile.id });
+          probeResults.set(profile.id, result);
+          notice(`「${profile.name}」当前出口 IP：${result.exitIp}`);
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          event.target.disabled = false;
+          await refresh();
+        }
+      }),
+    );
+    if (profile.running) {
+      actions.append(makeButton('停止', 'danger', async event => {
+        event.target.disabled = true;
+        try {
+          const result = await run('stop', { id: profile.id });
+          notice(result.stopped ? `已停止「${profile.name}」` : '进程本来就已退出');
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          event.target.disabled = false;
+          await refresh();
+        }
+      }));
+    }
+    actions.append(
+      makeButton('编辑', '', () => fillForm(profile)),
+      makeButton('删除', 'danger', async event => {
+        if (!confirm(`删除身份「${profile.name}」？运行中的浏览器会被关闭。磁盘上的隔离 profile 目录会保留，可手动清理。`)) return;
+        event.target.disabled = true;
+        try {
+          await run('remove', { id: profile.id });
+          probeResults.delete(profile.id);
+          if ($('btn-save').dataset.editing === profile.id) fillForm(null);
+          notice(`已删除「${profile.name}」`);
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          await refresh();
+        }
+      }),
+    );
+
+    item.append(head, actions);
+    list.append(item);
+  }
+}
+
+$('btn-detect').onclick = async event => {
+  event.target.disabled = true;
+  try {
+    const data = await run('detect');
+    const chips = $('chips');
+    chips.replaceChildren();
+    if (data.browser) notice(`浏览器：${data.browser}`);
+    else notice('没找到 Chrome，身份里需要手动填浏览器路径', 'bad');
+    const found = data.proxies || [];
+    if (!found.length) {
+      const hint = document.createElement('span');
+      hint.className = 'chip';
+      hint.textContent = '本机没探到常见代理端口';
+      chips.append(hint);
+    }
+    for (const item of found) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = `:${item.port} ${item.label}`;
+      chip.onclick = () => {
+        $('f-port').value = item.port;
+        if ($('f-host').value === '') $('f-host').value = '127.0.0.1';
+      };
+      chips.append(chip);
+    }
+  } catch (error) {
+    notice(error.message, 'bad');
+  } finally {
+    event.target.disabled = false;
+  }
+};
+
+$('btn-test').onclick = async event => {
+  event.target.disabled = true;
+  try {
+    const result = await run('probe', {
+      proxy: {
+        scheme: $('f-scheme').value,
+        host: $('f-host').value.trim(),
+        port: Number($('f-port').value),
+      },
+    });
+    notice(`这个出口的 IP 是 ${result.exitIp}（${result.latencyMs}ms）`);
+  } catch (error) {
+    notice(error.message, 'bad');
+  } finally {
+    event.target.disabled = false;
+  }
+};
+
+$('btn-save').onclick = async event => {
+  event.target.disabled = true;
+  try {
+    const input = {
+      id: event.target.dataset.editing || '',
+      name: $('f-name').value.trim(),
+      note: '',
+      proxy: {
+        scheme: $('f-scheme').value,
+        host: $('f-host').value.trim(),
+        port: Number($('f-port').value),
+      },
+      chromePath: $('f-chrome').value.trim(),
+    };
+    const result = await run('save', input);
+    fillForm(null);
+    notice(`已保存「${result.profile.name}」`);
+  } catch (error) {
+    notice(error.message, 'bad');
+  } finally {
+    event.target.disabled = false;
+    await refresh();
+  }
+};
+
+fillForm(null);
+refresh().catch(error => notice(error.message, 'bad'));
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "chrome-proxy-launcher"
+version = "1.0.0"
+edition = "2021"
+description = "MultiCC plugin: launch isolated Chrome profiles, each pinned to its own proxy / VPN egress"
+license = "MIT"
+
+# 独立 crate：刻意不进 native/ 的 workspace，插件目录整体复制即可安装。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+lto = true
