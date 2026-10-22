@@ -251,13 +251,11 @@
   const grokCatalog = createLiveCatalog('multicc.grok.models.v1', '/api/grok/models');
 
   // ── Codex account model list ───────────────────────────────────────────
-  // GET /api/codex/models calls the supported Codex app-server `model/list`
-  // method. Unlike a static table, it carries this account's rollout and
-  // display-name decisions. Keep only a short in-memory mirror: localStorage
-  // would preserve a revoked/rolled-back entitlement across browser restarts.
-  const CODEX_MODELS_TTL_MS = 60 * 1000;
-  let codexCatalog = null; // { at, models, source, stale, diagnostic, cliVersion }
-  let codexModelsPromise = null;
+  // 服务端按账号持久缓存一天，并检查 CLI 升级；浏览器只镜像结果，
+  // 不按时间拦截请求，否则升级后会继续显示旧目录。
+  const codexCatalogs = new Map();
+  const codexModelsPromises = new Map();
+  const codexCatalogKey = options => String((options && options.providerId) || 'codex-official');
 
   function normalizeCodexCatalog(data) {
     const models = [];
@@ -272,6 +270,8 @@
     }
     return {
       at: Date.now(),
+      fetchedAt: data && data.fetchedAt || null,
+      refreshing: !!(data && data.refreshing),
       models,
       source: String(data && data.source || 'fallback'),
       stale: data && data.stale === true,
@@ -282,54 +282,80 @@
             code: String(data.diagnostic.code || '').slice(0, 60),
             message: String(data.diagnostic.message || '').slice(0, 300),
           }
-        : { code: 'unavailable', message: '' },
+        : { code: models.length ? 'ok' : 'unavailable', message: '' },
     };
   }
 
-  function readCodexModelCatalogSync() {
-    return codexCatalog;
+  function readCodexModelCatalogSync(options = {}) {
+    return codexCatalogs.get(codexCatalogKey(options)) || null;
   }
 
   async function loadCodexModels(options = {}) {
-    const forceRefresh = options === true || options.forceRefresh === true;
-    if (!forceRefresh && codexCatalog && Date.now() - codexCatalog.at < CODEX_MODELS_TTL_MS) {
-      return codexCatalog;
-    }
-    if (codexModelsPromise) return codexModelsPromise;
-    codexModelsPromise = (async () => {
+    const key = codexCatalogKey(options);
+    const requestKey = key + (options.poll ? ':poll' : ':open');
+    if (codexModelsPromises.has(requestKey)) return codexModelsPromises.get(requestKey);
+    const promise = (async () => {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      let timeout;
       try {
-        const suffix = forceRefresh ? '?refresh=1' : '';
-        const data = await window.fetch(`/api/codex/models${suffix}`, { credentials: 'same-origin' })
-          .then(r => (r && r.ok ? r.json() : null));
-        if (!data) return codexCatalog || normalizeCodexCatalog(null);
-        codexCatalog = normalizeCodexCatalog(data);
-        return codexCatalog;
+        const suffix = `?providerId=${encodeURIComponent(key)}${options.poll ? '&poll=1' : ''}`;
+        const data = await Promise.race([
+          window.fetch(`/api/codex/models${suffix}`, {
+            credentials: 'same-origin', ...(controller ? { signal: controller.signal } : {}),
+          }).then(response => {
+            if (!response || !response.ok) throw new Error('model_catalog_unavailable');
+            return response.json();
+          }),
+          new Promise((_, reject) => { timeout = setTimeout(() => {
+            if (controller) controller.abort();
+            reject(new Error('model_catalog_timeout'));
+          }, 5000); }),
+        ]);
+        const catalog = normalizeCodexCatalog(data);
+        codexCatalogs.set(key, catalog);
+        return catalog;
       } catch (_) {
-        return codexCatalog || normalizeCodexCatalog(null);
-      } finally { codexModelsPromise = null; }
+        return { ...(codexCatalogs.get(key) || normalizeCodexCatalog(null)), refreshing: false,
+          diagnostic: { code: 'request_failed', message: '模型列表获取失败，请重新打开后重试。' } };
+      } finally { clearTimeout(timeout); codexModelsPromises.delete(requestKey); }
     })();
-    return codexModelsPromise;
+    codexModelsPromises.set(requestKey, promise);
+    return promise;
   }
 
-  // Picker-open nudge: ask the server to let Codex re-fetch its account
-  // catalog (~/.codex/models_cache.json, which the provider picker reads). The
-  // server throttles to once an hour; this local gate only stops every render
-  // of the same dropdown from posting.
-  let codexSyncAt = 0;
-  function syncCodexModelsIfDue() {
-    if (Date.now() - codexSyncAt < 5 * 60 * 1000) return;
-    codexSyncAt = Date.now();
-    try {
-      window.fetch('/api/codex/models/sync', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
-    } catch (_) { /* best-effort */ }
+  // 一次打开只启动一次刷新；后续有界轮询只查询进度，不再次触发刷新。
+  // 返回取消函数：关闭弹框或切换线路后，旧响应不能重绘当前选择器。
+  function watchCodexModels(options, onUpdate) {
+    let cancelled = false;
+    let timer = null;
+    let remaining = 20;
+    const deadline = Date.now() + 20000;
+    async function read(poll) {
+      const catalog = await loadCodexModels({ ...options, poll });
+      if (cancelled) return;
+      const timedOut = catalog.refreshing && (remaining === 0 || Date.now() >= deadline);
+      onUpdate(timedOut ? { ...catalog, refreshing: false,
+        diagnostic: { code: 'refresh_pending', message: '模型仍在后台加载，请稍后重新打开查看。' } } : catalog);
+      if (catalog.refreshing && !timedOut && remaining-- > 0 && !cancelled) {
+        timer = window.setTimeout(() => read(true), 1000);
+      }
+    }
+    void read(false);
+    return () => { cancelled = true; if (timer !== null) window.clearTimeout(timer); };
   }
 
-  function codexModelOptions() {
-    return codexCatalog ? codexCatalog.models.slice() : [];
+  function syncCodexModelsIfDue(options = {}) {
+    return loadCodexModels(options);
   }
 
-  function codexModelLabel(model) {
-    const entry = codexCatalog && codexCatalog.models.find(item => item.model === model);
+  function codexModelOptions(options = {}) {
+    const catalog = readCodexModelCatalogSync(options);
+    return catalog ? catalog.models.slice() : [];
+  }
+
+  function codexModelLabel(model, options = {}) {
+    const catalog = readCodexModelCatalogSync(options);
+    const entry = catalog && catalog.models.find(item => item.model === model);
     return entry ? entry.label : model;
   }
 
@@ -416,6 +442,7 @@
   window.loadGrokModels = grokCatalog.load;
   window.readCodebuddyModelsSync = readCodebuddyModelsSync;
   window.loadCodexModels = loadCodexModels;
+  window.watchCodexModels = watchCodexModels;
   window.readCodexModelCatalogSync = readCodexModelCatalogSync;
   window.codexModelOptions = codexModelOptions;
   window.syncCodexModelsIfDue = syncCodexModelsIfDue;

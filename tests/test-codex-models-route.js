@@ -15,6 +15,64 @@ const {
   normalizeModels,
 } = require('../src/routes/codex-models');
 
+function accountRouteFixture() {
+  const routes = new Map();
+  const provider = { id: 'codex-official-account', appType: 'codex',
+    settingsConfig: { auth: { auth_mode: 'chatgpt' }, officialAccount: { id: '0123456789abcdef' } } };
+  const custom = { id: 'relay', appType: 'codex', settingsConfig: {
+    auth: { OPENAI_API_KEY: 'test-fixture' }, config: 'base_url = "https://relay.invalid/v1"' } };
+  let refreshing = false;
+  let calls = 0;
+  let complete;
+  let snapshot = { models: [], source: 'none', diagnostic: { code: 'not_loaded' } };
+  const accountRuntime = {
+    resolveProvider: id => id === provider.id ? provider : id === custom.id ? custom : null,
+    peekProvider: () => snapshot,
+    isRefreshing: () => refreshing,
+    refreshProvider: () => {
+      calls += 1;
+      refreshing = true;
+      return new Promise(resolve => { complete = () => {
+        snapshot = { models: [{ model: 'account-only', label: 'Account only' }], source: 'account_cache' };
+        refreshing = false;
+        resolve(snapshot);
+      }; });
+    },
+  };
+  mountCodexModelRoutes({ get: (p, fn) => routes.set(`GET ${p}`, fn),
+    post: (p, fn) => routes.set(`POST ${p}`, fn) }, undefined, accountRuntime);
+  async function request(query, method = 'GET') {
+    const res = { statusCode: 200, status(code) { this.statusCode = code; return this; },
+      set() {}, json(body) { this.body = body; return this; } };
+    await routes.get(`${method} /api/codex/models${method === 'POST' ? '/sync' : ''}`)({ query }, res);
+    return res;
+  }
+  return { request, calls: () => calls, complete: () => complete(), id: provider.id };
+}
+
+test('账号模型接口立即返回，轮询读取完成结果而不重复启动刷新', async () => {
+  const f = accountRouteFixture();
+  const initial = await f.request({ providerId: f.id });
+  assert.equal(initial.body.refreshing, true);
+  assert.deepEqual(initial.body.models, []);
+  const pending = await f.request({ providerId: f.id, poll: '1' });
+  assert.equal(pending.body.refreshing, true);
+  assert.equal(f.calls(), 1);
+  f.complete();
+  const ready = await f.request({ providerId: f.id, poll: '1' });
+  assert.equal(ready.body.refreshing, false);
+  assert.equal(ready.body.available, true);
+  assert.equal(ready.body.models[0].model, 'account-only');
+  assert.equal(f.calls(), 1);
+});
+
+test('账号模型接口拒绝不存在或借道线路，不回落到全局账号', async () => {
+  const f = accountRouteFixture();
+  assert.equal((await f.request({ providerId: 'missing' })).statusCode, 404);
+  assert.equal((await f.request({ providerId: 'relay' })).statusCode, 400);
+  assert.equal(f.calls(), 0);
+});
+
 function model(id, displayName = id, extra = {}) {
   return { id, model: id, displayName, hidden: false, ...extra };
 }
@@ -279,14 +337,14 @@ test('route supports explicit refresh without exposing process diagnostics', asy
   assert.equal(JSON.stringify(body).includes('token'), false);
 });
 
-test('Web picker keeps only a short memory catalog and explicit refresh replaces it', async () => {
+test('Web 每次打开让服务端判断缓存，不让浏览器时间缓存遮蔽 CLI 升级', async () => {
   const responses = [
     { available: true, source: 'cli', models: [{ model: 'gpt-old', label: 'GPT Old' }] },
     { available: true, source: 'cli', models: [{ model: 'gpt-new', label: 'GPT New' }] },
   ];
   const calls = [];
   const context = {
-    Date, Promise, String, Set,
+    Date, Promise, String, Set, setTimeout, clearTimeout,
     tt: value => value,
     window: {
       localStorage: {
@@ -309,13 +367,12 @@ test('Web picker keeps only a short memory catalog and explicit refresh replaces
   assert.deepEqual(JSON.parse(JSON.stringify(first.models)), [
     { model: 'gpt-old', label: 'GPT Old', isDefault: false },
   ]);
-  await context.window.loadCodexModels();
-  assert.equal(calls.length, 1, 'warm one-minute memory cache should coalesce picker reads');
-  const refreshed = await context.window.loadCodexModels({ forceRefresh: true });
+  const refreshed = await context.window.loadCodexModels();
+  assert.equal(calls.length, 2, '每次打开都让服务端核对 CLI 版本和一天缓存');
   assert.deepEqual(JSON.parse(JSON.stringify(refreshed.models)), [
     { model: 'gpt-new', label: 'GPT New', isDefault: false },
   ]);
-  assert.deepEqual(calls, ['/api/codex/models', '/api/codex/models?refresh=1']);
+  assert.deepEqual(calls, ['/api/codex/models?providerId=codex-official', '/api/codex/models?providerId=codex-official']);
   assert.equal(context.window.codexModelLabel('gpt-new'), 'GPT New');
 });
 

@@ -640,7 +640,9 @@ function summarize(p, opts = {}) {
       // Official Codex (ChatGPT OAuth): account-scoped CLI discovery always
       // outranks a provider row's old static modelCatalog. Keep `model` itself
       // untouched so a user-saved unknown/new id remains editable as Custom.
-      modelOptions = readCodexOfficialModels(opts.codexCachePath);
+      modelOptions = opts.codexCachePath ? readCodexOfficialModels(opts.codexCachePath)
+        : (opts.codexModelCatalogRuntime || require('../codex/model-catalog').defaultRuntime)
+          .peekProvider(p).models.map(item => item.model);
     }
   }
   return {

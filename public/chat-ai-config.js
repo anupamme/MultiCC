@@ -290,14 +290,13 @@
     return model;
   }
 
-  // Every model dropdown builds its list through buildModelChoices, so this is
-  // the "picker opened" hook: keep the live catalogs from going stale without a
-  // manual /model. Both calls are throttled and never block the render.
+  // Claude 的共享目录仍可在构造选项时后台预热。Codex 目录按账号隔离，
+  // 由选择器生命周期启动刷新与回填，不能在纯渲染中请求全局目录。
   function nudgeModelCatalog(state) {
     const cli = state && state.cli;
     try {
-      if (isCodexCli(cli) && typeof window.syncCodexModelsIfDue === 'function') window.syncCodexModelsIfDue();
-      else if (isClaudeCli(cli) && typeof loadClaudeModels === 'function') void loadClaudeModels();
+      // Codex 由选择器生命周期启动账号级刷新；纯渲染不能请求全局目录。
+      if (isClaudeCli(cli) && typeof loadClaudeModels === 'function') void loadClaudeModels();
     } catch (_) { /* best-effort */ }
   }
 

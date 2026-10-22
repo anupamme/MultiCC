@@ -381,17 +381,46 @@ function createCodexModelsRuntime(options = {}) {
 
 const defaultRuntime = createCodexModelsRuntime();
 
-function mountCodexModelRoutes(app, runtime = defaultRuntime) {
+function mountCodexModelRoutes(app, runtime, accountRuntime) {
   if (!app || typeof app.get !== 'function') return;
+  // Existing embedders may inject the legacy single-account runtime. The
+  // production API uses the Rust account catalog; Express only projects its
+  // snapshot and schedules work, never waits for a CLI discovery.
+  if (!runtime) accountRuntime ||= require('../codex/model-catalog').defaultRuntime;
+  function accountResponse(req, res, pollOnly = false) {
+    const providerId = String(req.query?.providerId || req.body?.providerId || 'codex-official');
+    const provider = accountRuntime.resolveProvider(providerId);
+    if (!provider) return res.status(404).json({ error: '账号线路不存在' });
+    if (provider.appType !== 'codex') return res.status(400).json({ error: '该线路不是 Codex 官方账号' });
+    const { isOfficialCodexOAuthProvider } = require('../codex/official-relay');
+    if (!isOfficialCodexOAuthProvider(provider)) return res.status(400).json({ error: '该线路不是 Codex 官方账号' });
+    if (!pollOnly) {
+      // No force flag here: opening a picker must respect the one-day cache.
+      // Only successful login explicitly requests a new-identity refresh.
+      void accountRuntime.refreshProvider(provider).catch(() => {});
+    }
+    const result = accountRuntime.peekProvider(provider);
+    res.set?.('Cache-Control', 'no-store');
+    return res.json({ ...result, available: !!result?.models?.length,
+      refreshing: accountRuntime.isRefreshing(provider) });
+  }
   app.get('/api/codex/models', async (req, res) => {
+    // 老版客户端没有进度轮询协议，保留其等待全局目录的响应契约。
+    // 新选择器总会携带 providerId，走下方立即响应的后台刷新路径。
+    if (accountRuntime && !req.query?.providerId && !req.query?.poll) {
+      await accountRuntime.refreshProvider('codex-official');
+      return accountResponse(req, res, true);
+    }
+    if (accountRuntime) return accountResponse(req, res, /^(?:1|true)$/i.test(String(req.query?.poll || '')));
     const forceRefresh = /^(?:1|true)$/i.test(String(req.query && req.query.refresh || ''));
     const result = await runtime.list({ forceRefresh });
     res.json(result);
   });
-  // POST /api/codex/models/sync — fired by the model pickers on open; the
-  // server throttles to once an hour, so clients can call it freely.
+  // Compatibility endpoint for older clients. Rust owns cache age/version
+  // checks; this request cannot bypass them.
   if (typeof app.post === 'function') {
     app.post('/api/codex/models/sync', (req, res) => {
+      if (accountRuntime) return accountResponse(req, res);
       res.json({ ok: true, ...runtime.syncIfDue() });
     });
   }

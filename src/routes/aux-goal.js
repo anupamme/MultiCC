@@ -720,13 +720,13 @@ function mountAuxGoalRoutes(app, dependencies) {
         } catch (_) { /* cache must never break the catalog */ }
       }
       let modelOptions = target.modelOptions || provider.modelOptions || [];
-      // The Codex official disk catalog (~/.codex/models_cache.json) only exists
-      // after the CLI logged in once, so a fresh host shows an empty aux picker
-      // even when the account catalog was already verified elsewhere (chat
-      // picker refresh). Sync that catalog in; never spawn the CLI here.
+      // 只补入同账号已经发现的目录；此处不启动 CLI，也不借用全局账号目录。
       if (!modelOptions.length && provider.appType === 'codex' && provider.isOfficial
-        && codexModelsRuntime && typeof codexModelsRuntime.peek === 'function') {
-        const cached = codexModelsRuntime.peek();
+        && codexModelsRuntime) {
+        const globalAccount = provider.activeAccountId === 'global' || provider.id === 'codex-official';
+        const cached = typeof codexModelsRuntime.peekProvider === 'function'
+          ? codexModelsRuntime.peekProvider(provider.id)
+          : globalAccount && typeof codexModelsRuntime.peek === 'function' ? codexModelsRuntime.peek() : null;
         const cachedModels = cached && Array.isArray(cached.models)
           ? cached.models.map(m => m && m.model).filter(Boolean)
           : [];

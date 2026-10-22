@@ -235,7 +235,14 @@ test('the account routes hand out a link and land the credential from a pasted c
     };
     return listener;
   };
-  mountCodexAccountRoutes(app, { accounts, providers, waitForCallback, fetch: fetchImpl });
+  const refreshes = [];
+  mountCodexAccountRoutes(app, { accounts, providers, waitForCallback, fetch: fetchImpl,
+    modelCatalogRuntime: { refreshAccount(id, options) {
+      assert.equal(written.length, 1, '先保存凭据，再刷新模型');
+      refreshes.push({ id, options });
+      return Promise.reject(new Error('模拟 CLI 刷新失败'));
+    } },
+  });
 
   const created = await call(app, 'POST', '/api/codex/accounts', { body: { label: '小号' } });
   assert.equal(created.statusCode, 201);
@@ -278,6 +285,7 @@ test('the account routes hand out a link and land the credential from a pasted c
   const done = await call(app, 'GET', '/api/codex/accounts/:id/login-status', { params: { id: ACCOUNT } });
   assert.equal(done.body.state, 'complete');
   assert.equal(done.body.email, 'me@example.com');
+  assert.deepEqual(refreshes, [{ id: ACCOUNT, options: { force: true } }]);
 
   const again = await call(app, 'POST', '/api/codex/accounts/:id/login-callback', {
     params: { id: ACCOUNT },
