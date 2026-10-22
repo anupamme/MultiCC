@@ -14,6 +14,8 @@ serde_json = "1"
 serde_yaml = "0.9"
 # 拉订阅需要 https；ureq 的 tls feature 走 rustls，不依赖系统 OpenSSL。
 ureq = { version = "2.12", features = ["tls"] }
+# 自带内核以 .gz 分发（19MB → 解压 54MB），首次使用时解压到本机缓存。
+flate2 = "1"
 
 [profile.release]
 strip = true

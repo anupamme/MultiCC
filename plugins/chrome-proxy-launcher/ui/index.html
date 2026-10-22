@@ -44,6 +44,7 @@
   .chip { border: 1px dashed var(--line); border-radius: 999px; padding: 3px 10px;
     font-size: 12px; cursor: pointer; background: var(--chip); }
   .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  .hint.bad { color: var(--bad); }
   ul.profiles, ul.subs { list-style: none; margin: 0; padding: 0; }
   ul.profiles li, ul.subs li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
   .p-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
@@ -410,8 +411,7 @@ function renderSubscriptions() {
 
 async function refresh() {
   const data = await run('list');
-  subscriptions = data.subscriptions || [];
-  const profiles = data.profiles || [];
+  subscriptions = data.subscriptions || [];  const profiles = data.profiles || [];
   renderSubscriptions();
   // 表单里的订阅下拉跟着最新清单走（保留当前选择）。
   fillSubscriptionOptions($('f-sub').value);
@@ -529,8 +529,12 @@ $('btn-detect').onclick = async event => {
     const bits = [];
     if (data.browser) bits.push(`浏览器：${data.browser}`);
     else bits.push('没找到 Chrome，身份里需要手动填浏览器路径');
-    if (data.core) bits.push(`内核：${data.core}`);
-    else bits.push('没找到 mihomo 内核，订阅出口暂时不可用');
+    if (data.core) {
+      const label = { bundled: '插件自带内核', 'clash-verge': 'Clash Verge 内核', system: '系统内核' }[data.coreSource] || '内核';
+      bits.push(`${label}：${data.core}`);
+    } else {
+      bits.push(`没找到 mihomo 内核${data.coreError ? `（${data.coreError}）` : ''}`);
+    }
     notice(bits.join(' · '), data.browser && data.core ? 'ok' : 'bad');
     const found = data.proxies || [];
     if (!found.length) {
@@ -624,6 +628,23 @@ $('btn-sub-add').onclick = async event => {
 
 fillForm(null);
 refresh().catch(error => notice(error.message, 'bad'));
+// 打开面板时顺带确认内核在不在（自带内核会在首次使用时解压）。
+(async () => {
+  try {
+    const data = await run('detect');
+    const hint = $('node-hint');
+    if (data.core) {
+      const label = { bundled: '插件自带内核', 'clash-verge': 'Clash Verge 内核', system: '系统内核' }[data.coreSource] || 'mihomo 内核';
+      hint.textContent = `订阅里的 vmess/trojan 等协议由${label}运行；每个身份一个独立实例与端口。`;
+      hint.className = 'hint';
+    } else {
+      hint.textContent = `没找到 mihomo 内核，订阅出口不可用：${data.coreError || '请把内核放进插件 bin 目录'}`;
+      hint.className = 'hint bad';
+    }
+  } catch (_) {
+    // detect 失败不影响直连代理的使用。
+  }
+})();
 </script>
 </body>
 </html>
