@@ -1,12 +1,13 @@
-//! mihomo 内核：把「一份订阅 + 一个节点」变成只属于某个身份的本地出口。
+//! meow 内核（mihomo 的 Rust 重实现）：把「一份订阅 + 一个节点」变成只属于
+//! 某个身份的本地出口。
 //!
 //! 为什么不自己实现 vmess/vless/trojan/ss：这些协议的握手、TLS、REALITY、
-//! ws/grpc 传输由 mihomo 维护得远比插件里手写可靠。插件只做三件事：
+//! ws/grpc 传输由内核维护得远比插件里手写可靠。插件只做三件事：
 //!   1. 拉订阅原文并解析（JSON / YAML / base64 包裹都吃）
 //!   2. 改写出一份「只含选中节点、只听 127.0.0.1 随机端口」的配置
 //!   3. 每个身份起一个独立内核实例，Chrome 指向它的 mixed-port
 //!
-//! 链式出口（家宽/住宅代理的常态）：上游代理写成 mihomo 的 proxy，并用
+//! 链式出口（家宽/住宅代理的常态）：上游代理写成内核的 proxy，并用
 //! `dialer-proxy` 指到跳板节点 —— 本机 → 跳板 → 上游 → 目标站。
 
 use crate::store::{self, ProxyConfig};
@@ -29,60 +30,8 @@ pub struct CoreRun {
     pub core_path: PathBuf,
 }
 
-pub fn candidate_cores() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if cfg!(target_os = "macos") {
-        out.push(PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo"));
-        out.push(PathBuf::from("/Applications/Clash Verge.app/Contents/MacOS/verge-mihomo-alpha"));
-        out.push(PathBuf::from("/Applications/Clash Nyanpasu.app/Contents/MacOS/verge-mihomo"));
-        out.push(PathBuf::from("/opt/homebrew/bin/mihomo"));
-        out.push(PathBuf::from("/usr/local/bin/mihomo"));
-        out.push(PathBuf::from("/opt/homebrew/bin/clash"));
-        out.push(PathBuf::from("/usr/local/bin/clash"));
-        let home = store::home_dir();
-        out.push(home.join(".config/clash/mihomo"));
-        out.push(home.join(".config/mihomo/mihomo"));
-    } else if cfg!(target_os = "windows") {
-        out.push(PathBuf::from(r"C:\Program Files\Clash Verge\verge-mihomo.exe"));
-        out.push(PathBuf::from(r"C:\Program Files\mihomo\mihomo.exe"));
-    } else {
-        out.push(PathBuf::from("/usr/bin/mihomo"));
-        out.push(PathBuf::from("/usr/local/bin/mihomo"));
-        out.push(PathBuf::from("/usr/bin/clash"));
-        out.push(PathBuf::from("/usr/local/bin/clash"));
-        out.push(PathBuf::from("/snap/bin/clash"));
-    }
-    out
-}
-
-fn find_in_path(names: &[&str]) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        for name in names {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-            #[cfg(windows)]
-            {
-                let exe = dir.join(format!("{name}.exe"));
-                if exe.is_file() {
-                    return Some(exe);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// 找到的内核 + 来源（UI/detect 用来区分「自带」还是「系统」）。
-pub struct Core {
-    pub path: PathBuf,
-    pub source: &'static str,
-}
-
-/// 插件自带的内核：和插件二进制同目录的 `mihomo`，或压缩包 `mihomo.gz`。
-/// 自带优先，这样用户不需要另装 Clash 客户端。
+/// 插件自带的 meow 内核：和插件二进制同目录的 `meow`，或压缩包 `meow.gz`。
+/// 只认自带的，不依赖用户另装任何客户端。
 fn bundled_core() -> Result<Option<PathBuf>, String> {
     let exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -98,9 +47,9 @@ fn bundled_core() -> Result<Option<PathBuf>, String> {
         }
     }
     let plain_names: &[&str] = if cfg!(windows) {
-        &["mihomo.exe", "mihomo"]
+        &["meow.exe", "meow"]
     } else {
-        &["mihomo", "mihomo.exe"]
+        &["meow", "meow.exe"]
     };
     for dir in &dirs {
         for name in plain_names {
@@ -111,7 +60,7 @@ fn bundled_core() -> Result<Option<PathBuf>, String> {
         }
     }
     for dir in &dirs {
-        for name in ["mihomo.gz", "mihomo.exe.gz", "verge-mihomo.gz"] {
+        for name in ["meow.gz", "meow.exe.gz"] {
             let archive = dir.join(name);
             if archive.is_file() {
                 return ensure_extracted(&archive).map(Some);
@@ -121,12 +70,12 @@ fn bundled_core() -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-/// 把自带 `.gz` 解到 `plugins-data/.../runtime/mihomo`，存在且比压缩包新就复用。
+/// 把自带 `.gz` 解到 `plugins-data/.../runtime/meow`，存在且比压缩包新就复用。
 /// 先写临时文件再 rename：两个身份同时首次启动也不会互相写坏。
 fn ensure_extracted(archive: &std::path::Path) -> Result<PathBuf, String> {
     let runtime = store::data_dir().join("runtime");
     std::fs::create_dir_all(&runtime).map_err(|err| format!("创建 runtime 目录失败：{err}"))?;
-    let target = runtime.join(if cfg!(windows) { "mihomo.exe" } else { "mihomo" });
+    let target = runtime.join(if cfg!(windows) { "meow.exe" } else { "meow" });
     let up_to_date = match (std::fs::metadata(archive), std::fs::metadata(&target)) {
         (Ok(source), Ok(done)) => {
             done.len() > 0
@@ -140,7 +89,7 @@ fn ensure_extracted(archive: &std::path::Path) -> Result<PathBuf, String> {
     if up_to_date {
         return Ok(target);
     }
-    let tmp = runtime.join(format!(".mihomo.{}.tmp", std::process::id()));
+    let tmp = runtime.join(format!(".meow.{}.tmp", std::process::id()));
     let unpack = || -> Result<(), String> {
         let file = File::open(archive).map_err(|err| format!("打开自带内核失败：{err}"))?;
         let mut decoder = flate2::read::GzDecoder::new(std::io::BufReader::new(file));
@@ -163,26 +112,13 @@ fn ensure_extracted(archive: &std::path::Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-pub fn find_core() -> Result<Core, String> {
+pub fn find_core() -> Result<PathBuf, String> {
     if let Some(path) = bundled_core()? {
-        return Ok(Core { path, source: "bundled" });
+        return Ok(path);
     }
-    for path in candidate_cores() {
-        if path.is_file() {
-            let source = if path.to_string_lossy().contains("Clash") {
-                "clash-verge"
-            } else {
-                "system"
-            };
-            return Ok(Core { path, source });
-        }
-    }
-    if let Some(path) = find_in_path(&["mihomo", "clash", "verge-mihomo"]) {
-        return Ok(Core { path, source: "system" });
-    }
-    Err("没找到 mihomo 内核：插件自带的 bin/ 内核缺失，系统里也没有。\
-把官方 mihomo 的 darwin/linux/windows 二进制（或 .gz）放进插件 bin/<平台>-<架构>/，\
-或 `brew install mihomo` 后重试"
+    Err("插件自带的 meow 内核缺失（应为 bin/<平台>-<架构>/meow.gz）。\
+从 https://github.com/meow-rs/meow-rs/releases 下载对应平台的单文件，\
+压缩成 meow.gz（或直接放未压缩的 meow）到该目录后重试"
         .into())
 }
 
@@ -345,14 +281,8 @@ pub fn build_config(
     );
 
     // tun 必须关：它在全局接管路由，要 root，且会和用户自己的 Clash 打架。
-    let mut tun = obj.get("tun").cloned().unwrap_or_else(|| json!({}));
-    if let Some(tun) = tun.as_object_mut() {
-        tun.insert("enable".into(), json!(false));
-        tun.remove("auto-route");
-        tun.remove("auto-redirect");
-        tun.remove("auto-detect-interface");
-    }
-    obj.insert("tun".into(), tun);
+    // 只留 enable 一个键：订阅里的 tun.stack / strict-route 等字段 meow 会警告“不支持”。
+    obj.insert("tun".into(), json!({ "enable": false }));
 
     // dns.listen 会额外占 53 端口（常要 root），交给内核内部 DNS。
     if let Some(dns) = obj.get_mut("dns").and_then(Value::as_object_mut) {
@@ -393,8 +323,7 @@ fn write_core_info(id: &str, pid: i32, port: u16) -> Result<(), String> {
 /// 起一个身份专属内核，等 mixed-port 可连后返回。
 pub fn start(profile_id: &str, raw: &str, node: &str, via: Option<&ProxyConfig>) -> Result<CoreRun, String> {
     stop_if_any(profile_id);
-    let core = find_core()?;
-    let core_path = core.path;
+    let core_path = find_core()?;
     let mixed_port = free_port()?;
     let config = build_config(raw, node, via, mixed_port)?;
     let text = serde_yaml::to_string(&config).map_err(|err| format!("生成内核配置失败：{err}"))?;
