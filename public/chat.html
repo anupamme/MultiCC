@@ -2158,6 +2158,17 @@
       box-shadow:var(--chat-shadow);
       pointer-events: none;          /* the outer box owns the gestures */
     }
+    #danmaku-fab.dm-running .dm-fab-circle::before {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border: 2px solid rgba(35, 134, 54, 0.2);
+      border-top-color: var(--chat-success);
+      border-right-color: var(--chat-success);
+      border-radius: 50%;
+      pointer-events: none;
+      animation: danmakuSpin 1.2s linear infinite;
+    }
     #danmaku-fab.dm-dragging { cursor: grabbing; }
     #danmaku-fab:focus-visible { outline: 2px solid var(--chat-blue); outline-offset: 2px; }
     #danmaku-fab-badge {
@@ -2260,6 +2271,7 @@
       .dm-row { animation: none; }
       .dm-spin { animation-duration: 1.6s; }
       .dm-dot-running { animation: none; }
+      #danmaku-fab.dm-running .dm-fab-circle::before { animation: none; }
     }
   </style>
   <!-- Loaded after the inline styles so the shared tone tokens win same-specificity ties. -->
