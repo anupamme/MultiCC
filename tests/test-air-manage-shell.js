@@ -52,7 +52,7 @@ test('every former panel has one home in settings or sidebar resources', () => {
   const resources = [...html.slice(html.indexOf('id="sidebar-resources"'), html.indexOf('class="side-bottom"')).matchAll(/data-air-view="([a-z]+)"/g)].map(item => item[1]);
   const all = settings.concat(resources);
   assert.equal(new Set(all).size, all.length, 'no duplicated panel entry');
-  assert.deepEqual(all.sort(), ['aux', 'bridges', 'docs', 'global', 'goal', 'memory', 'provider', 'push', 'resources', 'secrets', 'skillsync', 'storage', 'taskgraph', 'tunnel', 'voice', 'workspaces']);
+  assert.deepEqual(all.sort(), ['aux', 'bridges', 'docs', 'global', 'goal', 'memory', 'plugins', 'provider', 'push', 'resources', 'secrets', 'skillsync', 'storage', 'taskgraph', 'tunnel', 'voice', 'workspaces']);
 });
 
 test('native Air registry and compatibility panels preserve every former manage child', () => {

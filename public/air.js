@@ -1503,6 +1503,7 @@
       docs: [t('airCrumbTools'), t('airDocs'), t('airAdminDocsHint')],
       memory: [t('airCrumbTools'), t('airMemoryGraph'), t('airAdminMemoryHint')],
       taskgraph: [t('airCrumbTools'), t('airTaskGraph'), t('airAdminTaskGraphHint')],
+      plugins: [t('airCrumbTools'), t('airPlugins'), t('airPluginsDesc')],
       workspaces: [t('airCrumbSettings'), t('airAdminPanelWorkspaces'), t('airAdminPanelWorkspacesDesc')],
       settings: [t('airCrumbSystemSettings'), t('airSettingsCenter'), t('airAdminSettingsHint')],
       voice: [t('airCrumbSettings'), t('airAdminVoice'), t('airAdminVoiceHint')],

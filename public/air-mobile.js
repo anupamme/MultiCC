@@ -67,7 +67,7 @@
     let resources = content.querySelector('.mobile-resources');
     if (!resources) {
       resources = make('details', null, 'mobile-resources'); resources.append(make('summary', root.t('airMaterials')));
-      for (const [mode, key] of [['docs', 'airDocs'], ['memory', 'airMemoryGraph'], ['taskgraph', 'airTaskGraph']]) resources.append(button(root.t(key), () => ctx.setMode(mode)));
+      for (const [mode, key] of [['docs', 'airDocs'], ['memory', 'airMemoryGraph'], ['taskgraph', 'airTaskGraph'], ['plugins', 'airPlugins']]) resources.append(button(root.t(key), () => ctx.setMode(mode)));
     }
     const slot = document.getElementById('console-mobile-slot');
     if (slot) slot.replaceChildren(resources); else content.append(resources);

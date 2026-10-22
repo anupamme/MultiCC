@@ -152,6 +152,9 @@
       <button type="button" data-air-view="docs" data-i18n="airAdminPanelDocs">服务与文档</button>
       <button type="button" data-air-view="memory" data-i18n="airAdminPanelMemory">记忆</button>
       <button type="button" data-air-view="taskgraph" data-i18n="airAdminPanelTaskgraph">任务关系</button>
+      <!-- 插件入口：plugins/ 目录的自包含扩展（第一个 = Chrome 隔离出口启动器）。
+           面板本体在 air-plugins.js，与 docs/memory/taskgraph 同一 data-air-view 路由。 -->
+      <button type="button" data-air-view="plugins" data-i18n="airPlugins">插件</button>
     </details>
     <div class="side-bottom">
       <div class="side-version-line">
@@ -771,6 +774,7 @@
   <script src="air-push.js"></script>
   <script src="air-bridges.js"></script>
   <script src="air-resources.js"></script>
+  <script src="air-plugins.js"></script>
   <script src="air-skillsync.js"></script>
   <script src="air-storage.js"></script>
 <script src="air-workspaces.js"></script>
