@@ -3,7 +3,7 @@
 //! 给每个「身份」绑定一份完全隔离的 Chrome profile（独立 user-data-dir）
 //! 和一个强制出口，一键启动互不串号的浏览器。出口有两种：
 //!   - 直连代理：本地 VPN 端口 / 任意 http(s)/socks5（支持账号密码，走本地中继）
-//!   - 订阅节点：Clash 订阅里的某个节点，由身份专属 mihomo 内核承接；可再经
+//!   - 订阅节点：Clash 订阅里的某个节点，由身份专属 meow 内核承接；可再经
 //!     该节点跳板到上游住宅代理（家宽代理的常见链路）
 //!
 //! 调用约定（Node 通道 src/routes/plugins.js 只做协议桥接，业务全在这里）：
@@ -316,15 +316,40 @@ fn probe_via_core(profile_id: &str, egress: &SubscriptionEgress, allow_running: 
     } else {
         egress.node.clone()
     };
-    let (port, temporary) = match if allow_running { core::running_port(profile_id) } else { None } {
-        Some(port) => (port, false),
-        None => (
-            core::start(profile_id, &raw, &node, egress.via.as_ref())?.mixed_port,
-            true,
-        ),
+    let mut temporary_core = false;
+    let core_port = match if allow_running { core::running_port(profile_id) } else { None } {
+        Some(port) => port,
+        None => {
+            temporary_core = true;
+            core::start(profile_id, &raw, &node)?.mixed_port
+        }
     };
-    let outcome = core::verify_exit(port, Duration::from_secs(10));
-    if temporary {
+    // 有上游时真实出口在中继上（内核只当跳板），所以测中继端口。
+    let mut temporary_relay = false;
+    let test_port = if let Some(via) = &egress.via {
+        let running = if allow_running { store::read_relay(profile_id) } else { None };
+        match running {
+            Some((pid, port)) if chrome::pid_alive(pid) => port,
+            _ => {
+                temporary_relay = true;
+                let hop = crate::store::ProxyConfig {
+                    scheme: "socks5".into(),
+                    host: "127.0.0.1".into(),
+                    port: core_port,
+                    username: None,
+                    password: None,
+                };
+                chrome::spawn_relay(profile_id, via, Some(hop))?
+            }
+        }
+    } else {
+        core_port
+    };
+    let outcome = core::verify_exit(test_port, Duration::from_secs(10));
+    if temporary_relay {
+        chrome::stop_relay_if_any(profile_id);
+    }
+    if temporary_core {
         core::stop_if_any(profile_id);
     }
     outcome
@@ -511,9 +536,17 @@ fn main() {
         // 正常情况下不会走到输出；走到输出即启动失败。
         "relay" => {
             let id = get_str(&input, "id");
-            parse_proxy_input(&input).and_then(|config| {
-                relay::run(&id, &config).map(|_| json!({ "started": true }))
-            })
+            input
+                .get("hop")
+                .filter(|value| !value.is_null())
+                .map(parse_proxy_input)
+                .transpose()
+                .and_then(|hop| {
+                    parse_proxy_input(&input).and_then(|upstream| {
+                        relay::run(&id, &relay::Route { upstream, hop })
+                            .map(|_| json!({ "started": true }))
+                    })
+                })
         }
         _ => Err(format!(
             "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / subscription-save / subscription-refresh / subscription-remove / relay）"

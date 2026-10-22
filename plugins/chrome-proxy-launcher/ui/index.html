@@ -65,7 +65,7 @@
 <body>
 <div id="notice" role="status"></div>
 <h1>🌐 Chrome 隔离出口启动器</h1>
-<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口。出口可以是本机代理端口，也可以是 Clash 订阅里的节点（由身份专属 mihomo 内核承接）；家宽/住宅代理常需要先经节点跳板，填在「上游」里就是 本机 → 跳板节点 → 住宅代理 → 目标站。出口不可用时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
+<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口。出口可以是本机代理端口，也可以是 Clash 订阅里的节点（由插件自带的 meow 内核承接）；家宽/住宅代理常需要先经节点跳板，填在「上游」里就是 本机 → 跳板节点 → 住宅代理 → 目标站。出口不可用时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
 
 <section class="card">
   <h2>新建 / 编辑身份</h2>
@@ -154,7 +154,7 @@
         </div>
       </div>
     </div>
-    <p class="hint" id="node-hint">订阅里的 vmess/trojan 等协议由本机 mihomo 内核运行；每个身份一个独立实例与端口。</p>
+    <p class="hint" id="node-hint">订阅里的 vmess/trojan 等协议由插件自带的 meow 内核运行；每个身份一个独立实例与端口。</p>
   </div>
 
   <div class="row" style="margin-top:10px">

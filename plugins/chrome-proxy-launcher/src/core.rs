@@ -7,8 +7,8 @@
 //!   2. 改写出一份「只含选中节点、只听 127.0.0.1 随机端口」的配置
 //!   3. 每个身份起一个独立内核实例，Chrome 指向它的 mixed-port
 //!
-//! 链式出口（家宽/住宅代理的常态）：上游代理写成内核的 proxy，并用
-//! `dialer-proxy` 指到跳板节点 —— 本机 → 跳板 → 上游 → 目标站。
+//! 链式出口（家宽/住宅代理的常态）：内核只跑跳板节点，插件自己的中继
+//! （relay.rs）经跳板连上游代理 —— 本机 → 跳板 → 上游 → 目标站。
 
 use crate::store::{self, ProxyConfig};
 use serde_json::{json, Value};
@@ -19,8 +19,6 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-/// 链式出口里上游代理的固定名（与订阅节点重名时自动加后缀）。
-const UPSTREAM_NAME: &str = "MCC-Upstream";
 const GROUP_NAME: &str = "MCC-Egress";
 
 pub struct CoreRun {
@@ -183,39 +181,15 @@ pub fn node_names(config: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 上游代理 → mihomo 的 proxy 条目。
-/// mihomo 没有 `https` 这个 type：TLS 代理写成 type: http + tls: true。
-fn upstream_proxy(config: &ProxyConfig, name: &str, dialer: &str) -> Value {
-    let mut entry = json!({
-        "name": name,
-        "type": if config.scheme == "socks5" { "socks5" } else { "http" },
-        "server": config.host,
-        "port": config.port,
-        "dialer-proxy": dialer,
-        "udp": true,
-    });
-    if config.scheme == "https" {
-        entry["tls"] = json!(true);
-    }
-    if config.has_credentials() {
-        entry["username"] = json!(config.username.clone().unwrap_or_default());
-        entry["password"] = json!(config.password.clone().unwrap_or_default());
-    }
-    entry
-}
-
 /// 把订阅原文改写成「只走选中节点」的独立配置。
 ///
 /// 改写点（其余字段原样保留，尊重订阅自己的 DNS / 分组习惯）：
 ///   - 只留 mixed-port（随机），去掉它可能抢占的其它监听端口
 ///   - tun 关闭、external-controller/secret 去掉（不让内核开额外控制面）
-///   - proxies 只保留选中节点（+ 可选上游），规则改成 MATCH 到唯一分组
-pub fn build_config(
-    raw: &str,
-    node_name: &str,
-    via: Option<&ProxyConfig>,
-    mixed_port: u16,
-) -> Result<Value, String> {
+///   - proxies 只保留选中节点，规则改成 MATCH 到唯一分组
+///
+/// 上游住宅代理不进内核：链式出口由 relay 自己串（内核只负责跳板节点）。
+pub fn build_config(raw: &str, node_name: &str, mixed_port: u16) -> Result<Value, String> {
     let mut config = parse_config(raw)?;
     let proxies = config
         .get("proxies")
@@ -240,19 +214,8 @@ pub fn build_config(
         .unwrap_or("node")
         .to_string();
 
-    let mut kept = vec![selected];
-    let mut group_members = vec![json!(jump)];
-    if let Some(via) = via {
-        // 上游与节点重名时换一个不冲突的名字，否则 mihomo 会拿错对象。
-        let upstream_name = if jump == UPSTREAM_NAME {
-            format!("{UPSTREAM_NAME}-2")
-        } else {
-            UPSTREAM_NAME.to_string()
-        };
-        kept.push(upstream_proxy(via, &upstream_name, &jump));
-        // 默认出口 = 上游（跳板只是通路）。
-        group_members.insert(0, json!(upstream_name));
-    }
+    let kept = vec![selected];
+    let group_members = vec![json!(jump)];
 
     let obj = config.as_object_mut().expect("ensure_object 已保证");
     for key in [
@@ -321,11 +284,11 @@ fn write_core_info(id: &str, pid: i32, port: u16) -> Result<(), String> {
 }
 
 /// 起一个身份专属内核，等 mixed-port 可连后返回。
-pub fn start(profile_id: &str, raw: &str, node: &str, via: Option<&ProxyConfig>) -> Result<CoreRun, String> {
+pub fn start(profile_id: &str, raw: &str, node: &str) -> Result<CoreRun, String> {
     stop_if_any(profile_id);
     let core_path = find_core()?;
     let mixed_port = free_port()?;
-    let config = build_config(raw, node, via, mixed_port)?;
+    let config = build_config(raw, node, mixed_port)?;
     let text = serde_yaml::to_string(&config).map_err(|err| format!("生成内核配置失败：{err}"))?;
 
     let dir = store::core_dir(profile_id);
@@ -436,7 +399,7 @@ rules:
 
     #[test]
     fn rewrite_keeps_only_selected_node_and_closes_side_channels() {
-        let config = build_config(sample(), "JP-Relay", None, 41000).unwrap();
+        let config = build_config(sample(), "JP-Relay", 41000).unwrap();
         let obj = config.as_object().unwrap();
         assert_eq!(obj["mixed-port"], 41000);
         assert_eq!(obj["allow-lan"], false);
@@ -455,36 +418,8 @@ rules:
     }
 
     #[test]
-    fn chain_puts_upstream_behind_jump_node() {
-        let via = ProxyConfig {
-            scheme: "http".into(),
-            host: "residential.example.com".into(),
-            port: 8080,
-            username: Some("u".into()),
-            password: Some("p".into()),
-        };
-        let config = build_config(sample(), "US-Home", Some(&via), 41001).unwrap();
-        let proxies = config["proxies"].as_array().unwrap();
-        assert_eq!(proxies.len(), 2);
-        let upstream = &proxies[1];
-        assert_eq!(upstream["type"], "http");
-        assert_eq!(upstream["dialer-proxy"], "US-Home");
-        assert_eq!(upstream["username"], "u");
-        // 默认出口是上游，跳板只留在组里备选。
-        assert_eq!(config["proxy-groups"][0]["proxies"], json!(["MCC-Upstream", "US-Home"]));
-    }
-
-    #[test]
-    fn socks_upstream_maps_to_socks5_type() {
-        let via = ProxyConfig::new("socks5", "10.0.0.2", 1080);
-        let config = build_config(sample(), "US-Home", Some(&via), 41002).unwrap();
-        assert_eq!(config["proxies"][1]["type"], "socks5");
-        assert!(config["proxies"][1].get("username").is_none());
-    }
-
-    #[test]
     fn unknown_node_is_reported() {
-        let err = build_config(sample(), "Nope", None, 41003).unwrap_err();
+        let err = build_config(sample(), "Nope", 41003).unwrap_err();
         assert!(err.contains("没有名为「Nope」的节点"));
     }
 
@@ -507,7 +442,7 @@ rules:
 
     #[test]
     fn subscription_without_static_nodes_is_rejected() {
-        let err = build_config("proxies: []\n", "", None, 41004).unwrap_err();
+        let err = build_config("proxies: []\n", "", 41004).unwrap_err();
         assert!(err.contains("没有静态节点"));
     }
 }

@@ -153,8 +153,13 @@ fn exit_ip_via_http_proxy(config: &ProxyConfig, timeout: Duration) -> Result<Str
 /// socks5 CONNECT：greeting（无认证或 RFC 1929 用户名密码）→ CONNECT 按域名
 /// （DNS 由代理解析）。成功返回已建好的隧道流。
 pub fn socks5_connect(config: &ProxyConfig, target: &str, target_port: u16, timeout: Duration) -> Result<TcpStream, String> {
-    let mut stream = connect_tcp(&config.host, config.port, timeout)?;
+    let stream = connect_tcp(&config.host, config.port, timeout)?;
+    socks5_over(stream, config, target, target_port)
+}
 
+/// 在「已经连到 socks5 服务器」的流上完成握手 + CONNECT。链式出口里这条流
+/// 往往是经跳板内核建立的（不是本机直连），所以握手要能单独复用。
+pub fn socks5_over(mut stream: TcpStream, config: &ProxyConfig, target: &str, target_port: u16) -> Result<TcpStream, String> {
     if config.has_credentials() {
         // 声明同时接受无认证(0x00)与用户名密码(0x02)，让两种上游都工作。
         stream.write_all(&[0x05, 0x02, 0x00, 0x02]).map_err(|err| format!("socks5 握手失败：{err}"))?;
