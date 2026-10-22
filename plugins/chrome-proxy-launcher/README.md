@@ -100,7 +100,13 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 | `subscription-remove` | `{id}` | 删除订阅（仍被身份引用时拒绝） |
 | `relay` | `{id, proxy:{…}, hop?:{…}}` | 内部命令：launch 自动拉起的本地中继；带 `hop`（socks5）时经跳板连上游，不单独使用 |
 
-代理类型支持 `http` / `https` / `socks5`，可选用户名密码。
+代理类型支持 `http` / `https` / `socks5`，可选用户名密码。注意两处边界：
+
+- **`https`（TLS 到代理）只支持无账号密码**：直接交给 Chrome 原生处理；
+  带账号密码会拒绝启动（插件内中继没有做 TLS 到代理），测出口对 https
+  代理也不可用。需要认证请用 `http` 或 `socks5`。
+- **跳板目前只支持「订阅节点」**：想让本机 Clash / 普通 VPN 的端口当跳板
+  （再到家宽代理）暂未提供入口。
 
 **带账号密码的代理**：Chrome 的 `--proxy-server` 带不了代理凭据（只认无认证
 代理），所以只要身份里填了账号，launch 会先在本机起一个中继进程：
