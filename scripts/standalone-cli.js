@@ -183,6 +183,17 @@ async function currentState(layout, env) {
 
 async function cmdStart(layout, env, args) {
   const state = await currentState(layout, env);
+  if (state.running && args.port) {
+    // Reusing the running instance must not swallow an explicit --port: the
+    // caller would walk away believing MultiCC listens where it does not.
+    let runningPort = null;
+    try { runningPort = Number.parseInt(new URL(state.origin).port, 10); } catch (_) {}
+    if (runningPort !== args.port) {
+      process.stderr.write(`MultiCC 已在 ${state.origin} 运行，--port ${args.port} 未生效。\n`);
+      process.stderr.write(`请先执行 multicc stop，或改用 multicc restart --port ${args.port}。\n`);
+      return 1;
+    }
+  }
   if (state.running) {
     process.stdout.write(`MultiCC is already running at ${state.origin} (pid ${state.pid})\n`);
     // `start` is the one user-facing verb used by the installer and all wrapper
@@ -378,13 +389,22 @@ function cmdConfig(layout, env, args) {
   }
   if (action === 'set') {
     if (!key || value === undefined) { process.stderr.write('usage: multicc config set <KEY> <VALUE>\n'); return 2; }
+    if (key === 'PORT' && (!/^\d+$/.test(String(value)) || Number(value) < 1 || Number(value) > 65535)) {
+      process.stderr.write(`invalid PORT: ${value} (expected 1-65535)\n`);
+      return 2;
+    }
     configSet(file, key, value);
+    // Setting PORT here is a deliberate choice, not a suggestion: mark it so
+    // the launcher uses it verbatim and fails when it is taken instead of
+    // walking to the next port. `config unset PORT` clears both.
+    if (key === 'PORT') configSet(file, 'PORT_PINNED', '1');
     process.stdout.write(`${key} updated in ${file}\n`);
     return 0;
   }
   if (action === 'unset') {
     if (!key) { process.stderr.write('usage: multicc config unset <KEY>\n'); return 2; }
-    const entries = readConfigEntries(file).filter(entry => entry.key !== key);
+    const drop = key === 'PORT' ? new Set(['PORT', 'PORT_PINNED']) : new Set([key]);
+    const entries = readConfigEntries(file).filter(entry => !drop.has(entry.key));
     fs.writeFileSync(file, `${entries.map(entry => (entry.raw !== undefined ? entry.raw : `${entry.key}=${entry.value}`)).filter(Boolean).join('\n')}\n`, { mode: 0o600 });
     process.stdout.write(`${key} removed from ${file}\n`);
     return 0;
@@ -964,7 +984,14 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (takesValue.has(arg)) {
       const value = argv[++i];
-      if (arg === '--port') args.port = Number.parseInt(value, 10);
+      if (arg === '--port') {
+        const port = Number.parseInt(value, 10);
+        if (!/^\d+$/.test(String(value)) || port < 1 || port > 65535) {
+          process.stderr.write(`invalid --port: ${value} (expected 1-65535)\n`);
+          process.exit(2);
+        }
+        args.port = port;
+      }
       else if (arg === '--data') args.data = value;
       else if (arg === '--lines') args.lines = Number.parseInt(value, 10);
       else if (arg === '--wait-pid') args.waitPid = value;

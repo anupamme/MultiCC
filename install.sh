@@ -26,7 +26,7 @@
 #   --target <kind>     standalone or desktop (desktop uses its own installer)
 #   --version <v>       Release to install: v2.8.3 (default) or "latest"
 #   --token <xxx>       Pre-set ACCESS_TOKEN (default: auto-generate)
-#   --port <port>       Server port (default: 3000)
+#   --port <port>       Server port (default: 3000; pinned when given)
 #   --from <path|url>   Install from a local archive/directory or URL instead
 #                       of GitHub Releases (offline / air-gapped installs)
 #   --no-service        Skip the start-on-login setup
@@ -99,7 +99,10 @@ INSTALLER_VERSION="2.8.3"
 INSTALL_DIR=""
 INSTALL_TARGET=""
 ACCESS_TOKEN=""
-PORT="3000"
+# PORT in the environment is as explicit as --port; assigning 3000 over it made
+# `PORT=8080 ./install.sh` silently install on 3000.
+ENV_PORT="${PORT:-}"
+PORT="${ENV_PORT:-3000}"
 PORT_GIVEN=false
 ASSUME_YES=false
 NO_SERVICE=false
@@ -158,7 +161,8 @@ Options:
   --target <kind>     standalone or desktop; desktop opens download instructions
   --version <v>       Release to install: v${INSTALLER_VERSION} (default) or "latest"
   --token <xxx>       Pre-set ACCESS_TOKEN (default: auto-generate)
-  --port <port>       Server port (default: 3000)
+  --port <port>       Server port (default: 3000). When given, it is pinned:
+                      a taken port fails startup instead of moving to the next one.
   --from <path|url>   Install from a local archive/directory or URL instead of GitHub
   --yes               Upgrade an older installation without asking first
   --no-data           Keep an older installation's data in the backup instead of
@@ -192,6 +196,12 @@ HELP
   esac
 done
 
+# Environment PORT counts as a specification; --port still wins over it.
+if [ -n "$ENV_PORT" ] && [ "$PORT_GIVEN" = false ]; then
+  PORT="$ENV_PORT"
+  PORT_GIVEN=true
+fi
+
 case "$INSTALL_TARGET" in
   ''|standalone|desktop) ;;
   *) err "--target must be standalone or desktop"; exit 1 ;;
@@ -204,10 +214,14 @@ fi
 RELEASES_URL="https://github.com/lsjwzh/MultiCC/releases"
 API_LATEST="https://api.github.com/repos/lsjwzh/MultiCC/releases/latest"
 
-# Validate --port early so we never write a non-numeric PORT into the config.
+# Validate the port early so we never write a non-numeric PORT into the config.
 case "$PORT" in
-  ''|*[!0-9]*) err "Invalid --port: '$PORT' (must be a number, e.g. 3000)"; exit 1 ;;
+  ''|*[!0-9]*) err "Invalid port: '$PORT' (must be a number, e.g. 3000)"; exit 1 ;;
 esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  err "Invalid port: '$PORT' (must be between 1 and 65535)"
+  exit 1
+fi
 
 banner() {
   local channel_label
@@ -1471,12 +1485,28 @@ if [ -z "$ACCESS_TOKEN" ] && [ -n "$LEGACY_TOKEN" ]; then
   ACCESS_TOKEN="$LEGACY_TOKEN"
 fi
 if [ "$PORT_GIVEN" = false ] && [ -n "$LEGACY_PORT" ]; then
-  PORT="$LEGACY_PORT"
+  # A pre-standalone .env was written by an installer that always recorded a
+  # port, so its value is a starting point, not proof the user chose it.
+  case "$LEGACY_PORT" in
+    ''|*[!0-9]*) ;;
+    *) if [ "$LEGACY_PORT" -ge 1 ] && [ "$LEGACY_PORT" -le 65535 ]; then PORT="$LEGACY_PORT"; fi ;;
+  esac
 elif [ "$PORT_GIVEN" = false ] && [ "$TARGET_HAD_INSTALL" = true ]; then
   existing_port="$("${MULTICC_CMD[@]}" config get PORT 2>/dev/null || true)"
   case "$existing_port" in
     ''|*[!0-9]*) ;;
-    *) PORT="$existing_port" ;;
+    *)
+      if [ "$existing_port" -ge 1 ] && [ "$existing_port" -le 65535 ]; then
+        PORT="$existing_port"
+        # An earlier run of this release records whether that port was chosen
+        # (PORT_PINNED). Keep the choice across upgrades instead of quietly
+        # turning a pin back into a walking start port.
+        existing_pinned="$("${MULTICC_CMD[@]}" config get PORT_PINNED 2>/dev/null || true)"
+        case "$existing_pinned" in
+          1|true|TRUE|yes|YES|on|ON) PORT_GIVEN=true ;;
+        esac
+      fi
+      ;;
   esac
 fi
 
@@ -1495,7 +1525,16 @@ else
   ok "ACCESS_TOKEN generated"
 fi
 "${MULTICC_CMD[@]}" config set PORT "$PORT" >/dev/null || { err "无法保存端口配置。"; exit 1; }
-ok "PORT set to $PORT"
+if [ "$PORT_GIVEN" = true ]; then
+  # `config set PORT` marks the port as chosen; keep that marker so the
+  # launcher refuses to move off it when it is taken.
+  ok "PORT set to $PORT (pinned: startup fails if it is taken)"
+else
+  # No port was chosen: clear any stale pin so the launcher starts at 3000 (or
+  # the preserved value) and walks to the next free port.
+  "${MULTICC_CMD[@]}" config unset PORT_PINNED >/dev/null 2>&1 || true
+  ok "PORT set to $PORT (starting port: moves forward if it is taken)"
+fi
 
 # ── Bring an older installation's data across ─────────────────────────────
 # Runs before the server has ever started: the destination has to be empty for
@@ -1693,8 +1732,10 @@ else
   echo "    cd $INSTALL_DIR && $START_CMD"
   echo "    cd $INSTALL_DIR && $CMD_NAME log -f"
 fi
-if [ "$PORT" != "3000" ]; then
-  echo "    (port is taken? it moves forward automatically; 'multicc url' prints the real one)"
+if [ "$PORT_GIVEN" = true ]; then
+  echo "    (port ${PORT} is pinned: if it is taken, startup fails instead of moving on)"
+else
+  echo "    (starting at ${PORT}; if it is taken, the next free port is used — 'multicc url' prints the real one)"
 fi
 echo ""
 if [ -n "$ACCESS_TOKEN" ]; then

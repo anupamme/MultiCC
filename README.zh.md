@@ -288,7 +288,7 @@ cd ~/MultiCC        # 安装脚本的默认目录（--dir 可以改）
 
 ## 配置速览
 
-所有配置都在同一个 env 文件里。用包装的话，它是每用户数据目录里的 `multicc.env`——`./multicc config path` 打印路径，`./multicc config set PORT 3000` 直接改；从源码检出运行则是仓库根目录的 `.env`。两种情况下安装脚本都会帮你写好 `ACCESS_TOKEN` 和 `PORT`。
+所有配置都在同一个 env 文件里。用包装的话，它是每用户数据目录里的 `multicc.env`——`./multicc config path` 打印路径，`./multicc config set PORT 3000` 直接改；从源码检出运行则是仓库根目录的 `.env`。两种情况下安装脚本都会帮你写好 `ACCESS_TOKEN` 和 `PORT`。你明确指定的端口（`--port`、`PORT=…` 或 `config set PORT`）会被固定：被占用时启动直接失败并提示，不会悄悄换到下一个端口。
 
 ```env
 PORT=3000

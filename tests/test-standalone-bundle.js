@@ -209,6 +209,13 @@ test('launcher paths and env: platform data dirs, bundled runtime, loopback chil
     port: null, data: null, resources: null, help: false,
   });
   assert.equal(launcherScript.parseArgs(['--start', '--no-open', '--detach', '--port', '3210']).port, 3210);
+  // An unusable --port must be an error, not silently dropped as falsy and
+  // replaced by whatever port the launcher would have picked.
+  const badPort = spawnSync(process.execPath,
+    [path.join(ROOT, 'scripts', 'standalone-cli.js'), 'start', '--port', 'abc'],
+    { encoding: 'utf8' });
+  assert.equal(badPort.status, 2);
+  assert.match(badPort.stderr, /invalid --port/);
   assert.equal(launcherScript.browserCommand('http://127.0.0.1:3000', 'darwin').command, 'open');
   assert.equal(launcherScript.browserCommand('http://127.0.0.1:3000', 'linux').command, 'xdg-open');
 });
@@ -299,6 +306,35 @@ test('native arch: Mach-O, ELF, PE and universal headers are read, mismatches ar
   assert.throws(() => nativeArch.verifyNativeArch({ root: wrongOs, arch: 'x64', platform: 'darwin', logger: silent }),
     /expected darwin\/x64 native binaries, found: .*addon\.node \(linux file\)/);
   assert.equal(nativeArch.verifyNativeArch({ root: wrongOs, arch: 'x64', platform: 'linux', logger: silent }).count, 1);
+});
+
+// PORT_PINNED records a deliberate choice (install.sh --port, PORT=… or
+// `multicc config set PORT`). A pin that is taken must stop the start instead
+// of quietly walking to the next port — otherwise every saved URL is wrong.
+test('a pinned port that is taken fails the start instead of walking forward', { timeout: 60_000 }, async () => {
+  const scratch = tmpdir('multicc-standalone-pinned-');
+  const resources = path.join(scratch, 'Resources');
+  const dataDir = path.join(scratch, 'userdata');
+  stageFakeServer(resources);
+  const blocker = net.createServer();
+  await new Promise(resolve => blocker.listen(0, '127.0.0.1', resolve));
+  const busy = blocker.address().port;
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'multicc.env'), `PORT=${busy}\nPORT_PINNED=1\n`);
+    const res = spawnSync(process.execPath, [
+      LAUNCHER, '--start', '--resources', resources, '--data', dataDir, '--no-open',
+    ], { encoding: 'utf8', timeout: 30_000 });
+    const output = `${res.stdout}${res.stderr}`;
+    assert.equal(res.status, 1, `a taken pinned port must fail:\n${output}`);
+    assert.match(output, new RegExp(`端口 ${busy} 已被占用`));
+    assert.equal(fs.existsSync(path.join(dataDir, 'desktop-runtime.json')), false,
+      'nothing may be reported as started');
+    assert.equal(fs.existsSync(path.join(dataDir, 'standalone-launcher.pid')), false,
+      'the failed start must release its pid file');
+  } finally {
+    await new Promise(resolve => blocker.close(resolve));
+  }
 });
 
 test('launcher supervises the server end to end and --stop leaves nothing behind', { timeout: 180_000 }, async () => {

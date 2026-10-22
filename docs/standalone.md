@@ -61,7 +61,7 @@ curl -sSL .../install.sh | bash -s -- --no-open
 | `--version <v\|latest>` | URL 里的 tag | 装哪个版本；`latest` 走 GitHub API 查最新 release |
 | `--from <path\|url>` | 无 | 用本地文件或指定 URL 的包代替下载 |
 | `--token <token>` | 自动生成 | 写入 `ACCESS_TOKEN` |
-| `--port <n>` | `3000` | 起始端口（被占用会自动往后找） |
+| `--port <n>` | `3000` | 指定后即固定：端口被占用时启动失败并提示，不会改到别的端口。不指定时（也可用环境变量 `PORT=8080 ./install.sh`）从 `3000` 开始找空闲端口 |
 | `--no-service` | 关 | 不询问开机自启 |
 | `--no-start` | 关 | 只安装和配置，不启动；同时跳过开机自启设置 |
 | `--no-open` | 关 | 启动服务，但不打开浏览器 |
@@ -112,6 +112,8 @@ Windows 对应参数为 `-InstallDir`、`-Version`、`-From`、`-AccessToken`、
 | `./multicc version` | 打印已安装版本 |
 
 通用选项：`--port <n>`、`--data <dir>`（等价于 `MULTICC_STANDALONE_HOME`，用于同机多实例或 U 盘安装）、`--no-open`。
+
+端口规则：`--port`、`PORT` 环境变量或 `multicc config set PORT <n>` 都是**明确指定**——写入 `PORT_PINNED=1`，启动时端口被占用就直接失败并说明原因；没有指定时 `PORT` 只是起始端口，从 `3000` 起找第一个空闲端口（`multicc url` 打印真实地址）。`multicc config unset PORT` 会同时清掉固定标记。
 
 Windows 上停止走的是**停止请求文件**（`standalone-launcher.stop`），不是信号：Windows 没有 SIGTERM，`process.kill` 在那里等于直接终止进程，会留下没人监管的服务端。监管进程每 500ms 轮询该请求并走同一条优雅排空路径；若它长时间不响应，包装脚本会用 `taskkill /T` 兜底收掉整棵进程树。
 

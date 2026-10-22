@@ -27,7 +27,9 @@ const DESKTOP = path.join(ROOT, 'desktop');
 const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'desktop-fixture-server.js');
 const FOREGROUND_SUPERVISOR = path.join(ROOT, 'tests', 'fixtures', 'desktop-foreground-supervisor.js');
 
-const { findFreePort, probePort } = require(path.join(DESKTOP, 'lib', 'port-chooser.js'));
+const {
+  PortUnavailableError, findFreePort, probePort, selectPort,
+} = require(path.join(DESKTOP, 'lib', 'port-chooser.js'));
 const { waitForReadiness } = require(path.join(DESKTOP, 'lib', 'health-probe.js'));
 const { MACOS_AGENT_FILES, POWERD_FILES } = require(path.join(ROOT, 'scripts', 'desktop-bundle-server.js'));
 const desktopEnv = require(path.join(DESKTOP, 'lib', 'desktop-env.js'));
@@ -96,6 +98,30 @@ test('port-chooser skips a bound port and finds the next free one', async () => 
   assert.notEqual(free, busy);
   assert.equal(await probePort(free, '127.0.0.1'), true);
   await new Promise(resolve => blocker.close(resolve));
+});
+
+// The rule both the desktop shell and the standalone launcher follow:
+// an explicit port is used verbatim, an unspecified one walks from 3000.
+test('an explicit port is pinned and a taken one fails instead of walking forward', async () => {
+  const blocker = net.createServer();
+  await new Promise(resolve => blocker.listen(0, '127.0.0.1', resolve));
+  const busy = blocker.address().port;
+  try {
+    await assert.rejects(
+      selectPort({ pinnedPort: busy }),
+      error => error instanceof PortUnavailableError
+        && error.code === 'EPORTUNAVAILABLE'
+        && error.message.includes(`端口 ${busy} 已被占用`),
+    );
+    const free = await findFreePort(busy);
+    assert.equal(await selectPort({ pinnedPort: free }), free,
+      'an explicit free port must be used exactly as given');
+    assert.notEqual(await selectPort({ startPort: busy }), busy,
+      'without a pin the next free port is used');
+    await assert.rejects(selectPort({ pinnedPort: 70000 }), /无效的端口/);
+  } finally {
+    await new Promise(resolve => blocker.close(resolve));
+  }
 });
 
 // ── unit: health-probe ──────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ const { spawn, execFileSync } = require('child_process');
 const LIB_DIR = fs.existsSync(path.join(__dirname, 'lib'))
   ? path.join(__dirname, 'lib')
   : path.resolve(__dirname, '..', 'desktop', 'lib');
-const { findFreePort } = require(path.join(LIB_DIR, 'port-chooser'));
+const { findFreePort, probePort, selectPort } = require(path.join(LIB_DIR, 'port-chooser'));
 const { createBackendSupervisor, killProcessTree } = require(path.join(LIB_DIR, 'backend-supervisor'));
 const { reclaimOrphan, pidAlive, readRuntimeInfo } = require(path.join(LIB_DIR, 'orphan-reclaim'));
 const {
@@ -226,7 +226,11 @@ function createLauncher({
   platform = process.platform,
   openUrl,
   startPort = DEFAULT_START_PORT,
+  // A pin comes from `--port` or from a config that was explicitly set; the
+  // start port alone is only a starting point and may walk forward.
+  pinnedPort = null,
   findFreePortImpl = findFreePort,
+  probePortImpl = probePort,
   reclaimImpl = reclaimOrphan,
   createSupervisor = createBackendSupervisor,
   // Reading another process's command line is the only way to tell a real
@@ -457,6 +461,17 @@ function createLauncher({
     ensureWritableDirs(desktopEnv);
     const current = await status();
     if (current.running) {
+      // `--port` is a request, not a hint: reusing a server on another port
+      // would silently ignore it and leave the caller pointing at the wrong
+      // place. Say so instead of pretending the start honoured the flag.
+      if (args.port) {
+        let runningPort = null;
+        try { runningPort = Number.parseInt(new URL(current.origin).port, 10); } catch (_) {}
+        if (runningPort !== args.port) {
+          throw new Error(`MultiCC 已在 ${current.origin} 运行，--port ${args.port} 未生效；`
+            + `请先 multicc stop，再 multicc start --port ${args.port}。`);
+        }
+      }
       logger.log(`already running at ${current.origin} (pid ${current.pid}) — nothing to start`);
       if (args.open) openUrl(current.origin);
       return { started: false, origin: current.origin, pid: current.pid };
@@ -474,6 +489,18 @@ function createLauncher({
     const owner = otherLauncher();
     if (owner) return refuseSecondLauncher(owner);
     if (args.detach && env.MULTICC_STANDALONE_DETACHED !== '1' && !args.detachedChild) {
+      // Check a pinned port before going into the background: the detached
+      // child's stderr is the log file, so a taken port would otherwise surface
+      // only as a silent 60-second "not ready" in the calling terminal.
+      const requestedPinned = args.port || pinnedPort;
+      if (requestedPinned) {
+        await selectPort({
+          pinnedPort: requestedPinned,
+          startPort,
+          findFreePortImpl,
+          probePortImpl,
+        });
+      }
       const child = detachSelf(args);
       logger.log(`starting in the background (pid ${child.pid}); logs: ${desktopEnv.logsDir}`);
       return { started: true, detached: true, pid: child.pid, origin: null };
@@ -497,7 +524,21 @@ function createLauncher({
       clearPidFile();
       throw error;
     }
-    const port = args.port || await findFreePortImpl(startPort);
+    // An explicit port must be used exactly as given; only an unspecified one
+    // may walk forward. A pinned port that is taken is a startup failure, not
+    // a reason to move somewhere the user did not ask for.
+    let port;
+    try {
+      port = await selectPort({
+        pinnedPort: args.port || pinnedPort,
+        startPort,
+        findFreePortImpl,
+        probePortImpl,
+      });
+    } catch (error) {
+      clearPidFile();
+      throw error;
+    }
     const dotenv = readEnvValues(desktopEnv.envFile);
     // supervisor.start() only spawns; readiness arrives through onPhase. Gate
     // on that (or on a failure) instead of reading getState() right away —
@@ -595,14 +636,18 @@ async function main(argv = process.argv.slice(2)) {
   if (!fs.existsSync(paths.runtimeNode)) {
     logger.error(`bundled Node runtime is missing (${paths.runtimeNode})`);
   }
-  // PORT in the bundle's config is the *starting* port, not a pin: the launcher
-  // still walks forward when it is taken. Without this, "multicc config set PORT"
-  // would look honoured while every start went to 3000 anyway.
-  const configuredPort = Number.parseInt(readEnvValues(paths.desktopEnv.envFile).PORT, 10);
-  const startPort = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535
+  // PORT is the port to start from; PORT_PINNED says the user chose it and the
+  // launcher must not move off it. Only an unspecified port may walk forward —
+  // a pin that is taken has to fail loudly, otherwise bookmarks, phone links
+  // and firewall rules silently point at nothing.
+  const dotenv = readEnvValues(paths.desktopEnv.envFile);
+  const configuredPort = Number.parseInt(dotenv.PORT, 10);
+  const portValid = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535;
+  const startPort = portValid ? configuredPort : DEFAULT_START_PORT;
+  const pinnedPort = portValid && /^(1|true|yes|on)$/i.test(String(dotenv.PORT_PINNED || '').trim())
     ? configuredPort
-    : DEFAULT_START_PORT;
-  const launcher = createLauncher({ paths, env, logger, startPort });
+    : null;
+  const launcher = createLauncher({ paths, env, logger, startPort, pinnedPort });
 
   if (args.mode === 'status') {
     const state = await launcher.status();

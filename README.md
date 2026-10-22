@@ -439,6 +439,8 @@ Everything lives in a single env file. Installed from a package, that file is
 `multicc.env` in the per-user data directory — `./multicc config path` prints it,
 `./multicc config set PORT 3000` edits it. Running from a checkout it is `.env` at
 the repo root. Either way the installer writes `ACCESS_TOKEN` and `PORT` for you.
+A port you specify (`--port`, `PORT=…`, or `config set PORT`) is pinned: if it is
+taken, startup fails with a message instead of silently moving to the next port.
 
 ```env
 PORT=3000

@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 
-const { findFreePort } = require('./lib/port-chooser');
+const { DEFAULT_PORT, selectPort } = require('./lib/port-chooser');
 const {
   resolveDesktopEnv, buildChildEnv, readEnvValues, ensureWritableDirs,
 } = require('./lib/desktop-env');
@@ -195,8 +195,25 @@ async function startBackend() {
       return;
     }
 
-    const port = await findFreePort();
-    logLine(`starting backend on 127.0.0.1:${port} (server: ${desktopEnv.serverEntry}, runtime: ${desktopEnv.runtimeNode})`);
+    // The same rule as the standalone launcher: an explicit port is used
+    // verbatim and a taken one stops the start with a message; only an
+    // unspecified port is allowed to walk forward from 3000. Without this the
+    // desktop shell ignored PORT in its config and always started on the first
+    // free port from 3000.
+    const dotenv = readEnvValues(desktopEnv.envFile);
+    const configuredPort = Number.parseInt(dotenv.PORT, 10);
+    const configuredValid = Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort <= 65535;
+    const envPortRaw = process.env.MULTICC_DESKTOP_PORT;
+    const pinnedPort = envPortRaw !== undefined && envPortRaw !== ''
+      ? Number.parseInt(envPortRaw, 10)
+      : configuredValid && /^(1|true|yes|on)$/i.test(String(dotenv.PORT_PINNED || '').trim())
+        ? configuredPort
+        : null;
+    const port = await selectPort({
+      pinnedPort,
+      startPort: configuredValid ? configuredPort : DEFAULT_PORT,
+    });
+    logLine(`starting backend on 127.0.0.1:${port}${pinnedPort !== null ? ' (pinned)' : ''} (server: ${desktopEnv.serverEntry}, runtime: ${desktopEnv.runtimeNode})`);
     supervisor = createBackendSupervisor({
       spawn: childProcess.spawn,
       execPath: desktopEnv.runtimeNode,
@@ -205,7 +222,7 @@ async function startBackend() {
         port: childPort,
         desktopEnv,
         baseEnv: sanitizedBaseEnv(),
-        dotenv: readEnvValues(desktopEnv.envFile),
+        dotenv,
         runtimeNode: desktopEnv.runtimeNode,
         // Tells the server it is hosted by this shell (not a standalone
         // install), so the web UI's update entry refuses instead of running

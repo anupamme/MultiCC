@@ -92,18 +92,23 @@ function archiveFixture({ scratch, name, root }, { corrupt = false } = {}) {
 function runInstaller(args, { cwd, env = {} } = {}) {
   const standaloneHome = env.MULTICC_STANDALONE_HOME || tmpdir('multicc-installer-data-');
   const userHome = env.HOME || tmpdir('multicc-installer-user-');
+  const childEnv = {
+    ...process.env,
+    ...env,
+    HOME: userHome,
+    MULTICC_INSTALLER_APPLICATIONS_DIR: env.MULTICC_INSTALLER_APPLICATIONS_DIR || path.join(userHome, 'Applications'),
+    MULTICC_STANDALONE_HOME: standaloneHome,
+    MULTICC_DESKTOP_DIR: env.MULTICC_DESKTOP_DIR || path.join(standaloneHome, 'Desktop'),
+  };
+  // A test runner hosted by a MultiCC server inherits its PORT. The installer
+  // treats PORT as an explicit choice, so an ambient value would change what
+  // every test installs. Only a PORT a test asks for is passed through.
+  if (!Object.prototype.hasOwnProperty.call(env, 'PORT')) delete childEnv.PORT;
   return spawnSync('bash', [INSTALLER, ...args], {
     encoding: 'utf8',
     cwd: cwd || ROOT,
     detached: true,
-    env: {
-      ...process.env,
-      ...env,
-      HOME: userHome,
-      MULTICC_INSTALLER_APPLICATIONS_DIR: env.MULTICC_INSTALLER_APPLICATIONS_DIR || path.join(userHome, 'Applications'),
-      MULTICC_STANDALONE_HOME: standaloneHome,
-      MULTICC_DESKTOP_DIR: env.MULTICC_DESKTOP_DIR || path.join(standaloneHome, 'Desktop'),
-    },
+    env: childEnv,
   });
 }
 
@@ -171,6 +176,7 @@ test('install.sh unpacks, configures, starts, and safely replaces a previous ins
   const list = spawnSync(path.join(installDir, 'multicc'), ['config', 'list'], { encoding: 'utf8', env: { ...process.env, ...env } });
   assert.equal(list.status, 0, list.stderr);
   assert.match(list.stdout, /PORT=3111/);
+  assert.match(list.stdout, /PORT_PINNED=1/, 'an explicit --port must be pinned, not merely a starting point');
   assert.match(list.stdout, /ACCESS_TOKEN=\*+/, 'the token must never be printed in full by `config list`');
   assert.equal(fs.existsSync(path.join(installDir, 'multicc.env')), false,
     'the config must not be written inside the package');
@@ -200,6 +206,51 @@ test('install.sh unpacks, configures, starts, and safely replaces a previous ins
     'a replacement install must stop the old process and bring the new bundle back up');
   const leftovers = fs.readdirSync(targetParent).filter(name => name.includes('.old-'));
   assert.deepEqual(leftovers, [], 'the replaced installation must not be left behind');
+});
+
+// PORT in the environment used to be overwritten by the script's own default,
+// so `PORT=3133 ./install.sh` silently installed on 3000. It is as explicit as
+// --port and must be pinned the same way.
+test('install.sh honours PORT from the environment and pins it', () => {
+  const fixture = buildFixtureBundle();
+  const archive = archiveFixture(fixture);
+  const home = tmpdir('multicc-installer-home-');
+  const targetParent = tmpdir('multicc-installer-target-');
+  const installDir = path.join(targetParent, 'MultiCC');
+  const env = { MULTICC_STANDALONE_HOME: home, PORT: '3133' };
+
+  const res = runInstaller(['--from', archive, '--dir', installDir, '--token', 't',
+    '--no-service', '--no-start', '--no-open'], { env });
+  assert.equal(res.status, 0, `installer failed:\n${res.stdout}\n${res.stderr}`);
+  assert.match(res.stdout, /PORT set to 3133 \(pinned/);
+
+  const list = spawnSync(path.join(installDir, 'multicc'), ['config', 'list'],
+    { encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.match(list.stdout, /PORT=3133/);
+  assert.match(list.stdout, /PORT_PINNED=1/,
+    'a port from the environment must not be silently downgraded to a start port');
+});
+
+// No port anywhere means "start at 3000 and walk to the first free port", so
+// the config must not record a pin that would turn a busy 3000 into a failure.
+test('install.sh leaves an unspecified port as a starting port', () => {
+  const fixture = buildFixtureBundle();
+  const archive = archiveFixture(fixture);
+  const home = tmpdir('multicc-installer-home-');
+  const targetParent = tmpdir('multicc-installer-target-');
+  const installDir = path.join(targetParent, 'MultiCC');
+  const env = { MULTICC_STANDALONE_HOME: home, PORT: '' };
+
+  const res = runInstaller(['--from', archive, '--dir', installDir, '--token', 't',
+    '--no-service', '--no-start', '--no-open'], { env });
+  assert.equal(res.status, 0, `installer failed:\n${res.stdout}\n${res.stderr}`);
+  assert.match(res.stdout, /PORT set to 3000 \(starting port/);
+
+  const list = spawnSync(path.join(installDir, 'multicc'), ['config', 'list'],
+    { encoding: 'utf8', env: { ...process.env, ...env } });
+  assert.match(list.stdout, /PORT=3000/);
+  assert.doesNotMatch(list.stdout, /PORT_PINNED/,
+    'a default install must not pin 3000 — a busy port has to move forward');
 });
 
 // A user coming from a pre-standalone release has an installation the current
