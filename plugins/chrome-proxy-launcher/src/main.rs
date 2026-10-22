@@ -438,7 +438,7 @@ fn parse_proxy_url(url: &str) -> Result<ProxyConfig, String> {
     Ok(ProxyConfig { scheme, host, port, username: None, password: None })
 }
 
-/// 给外部调用方（multicc 的 claude-egress 转发器）准备一条「现在就可用」的
+/// 给外部调用方（multicc 交给 CPR 的出口钩子）准备一条「现在就可用」的
 /// 出口：订阅出口确保内核在跑（有上游再加中继），带凭据直连确保中继在跑，
 /// 无凭据直连直接回原地址。返回的 proxyUrl 是标准代理 URL，http 或 socks5。
 ///

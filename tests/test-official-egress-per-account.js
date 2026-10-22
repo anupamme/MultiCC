@@ -87,14 +87,13 @@ test('allowlist override records never surface as duplicate providers', () => {
 // ── 专用出口（每个账号一条 VPN 出口）────────────────────────────────────────
 //
 // The binding rides on the same per-entry override record as the allowlist, and
-// it is what makes the routing view hand that entry a local base URL (the
-// /claude-egress hop). Both must stay scoped to the edited entry: a shared
-// record would silently move every account onto one exit IP.
+// it is what the proxy's resolveUpstreamAgent hook reads off the route's provider
+// (src/claude-auth/egress-agent.js). Both must stay scoped to the edited entry: a
+// shared record would silently move every account onto one exit IP.
 
-const claudeEgressRoute = require('../src/providers/claude-egress-route');
 const BINDING = { pluginId: 'chrome-proxy-launcher', profileId: 'us-home' };
 
-test('a dedicated egress binding stays on its own entry and rewrites only that route view', () => {
+test('a dedicated egress binding stays on its own entry and reaches the hop untouched', () => {
   providers.updateProvider('claude', ACCOUNT_PROVIDER_ID, { egressBinding: BINDING });
 
   assert.deepEqual(providers.getProvider('claude', ACCOUNT_PROVIDER_ID).egressBinding, BINDING);
@@ -103,14 +102,13 @@ test('a dedicated egress binding stays on its own entry and rewrites only that r
   const record = storeRecords().find(p => p.id === ACCOUNT_PROVIDER_ID);
   assert.deepEqual(record.egressBinding, BINDING);
 
-  // The stored record stays base-less (that shape is what keeps it recognized
-  // as an official entry); only the hop's view gets the loopback base URL.
-  claudeEgressRoute.setPort(4321);
+  // The hop's view carries the binding but stays base-less: the route keeps the
+  // proxy's official branch (account credential, 401 recovery), and only the
+  // dial goes out through the egress.
   const view = providers.routingProviderView('claude', ACCOUNT_PROVIDER_ID);
-  assert.equal(view.settingsConfig.env.ANTHROPIC_BASE_URL,
-    `http://127.0.0.1:4321/claude-egress/${ACCOUNT_PROVIDER_ID}`);
-  assert.equal(providers.getProvider('claude', ACCOUNT_PROVIDER_ID).settingsConfig.env.ANTHROPIC_BASE_URL, undefined);
-  assert.equal(providers.routingProviderView('claude', TERMINAL_ID).settingsConfig.env.ANTHROPIC_BASE_URL, undefined);
+  assert.deepEqual(view.egressBinding, BINDING);
+  assert.equal(view.settingsConfig.env.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(providers.routingProviderView('claude', TERMINAL_ID).egressBinding, undefined);
 });
 
 test('binding-only patches never clear the allowlist, and clearing the binding spares the rest', () => {

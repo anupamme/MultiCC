@@ -275,7 +275,7 @@ test('installed CPR 0.3+ cpr mode proxies Claude and Codex through explicit host
 
     const router = require('cli-provider-router');
     const packageVersion = require('cli-provider-router/package.json').version;
-    assert.equal(packageVersion, '0.5.1');
+    assert.equal(packageVersion, '0.5.2');
     assert.match(String(router.API_VERSION), /^1\./);
 
     const providers = integrationProviders(upstream.url);
@@ -536,16 +536,17 @@ test('installed CPR 0.3+ negotiates the production API and required capabilities
     mode: 'cpr', providers: fakeProviders(), router, ...HOST,
   });
   assert.equal(runtime.mode, 'cpr');
-  // CPR advertises backward-compatible minor bumps (API now 1.3.0, providerStore
+  // CPR advertises backward-compatible minor bumps (API now 1.4.0, providerStore
   // capability 1.1) as it grows: 1.1.0 added the dangling-subagent fail-open,
   // 1.2.0 added the metadata-only onActivity liveness callback, 1.3.0 added the
   // local request hooks (both a new `activityEvents`-style capability —
   // `requestHooks`, not in REQUIRED_CAPABILITIES so it is not negotiated here —
-  // and a `protocolProxy` bump). The port gate only requires API major 1 and the
-  // required capability majors (asserted above via routerApiMajor), so the
+  // and a `protocolProxy` bump), 1.4.0 added the optional `upstreamAgent` egress
+  // hook (also not negotiated; see routerSupports). The port gate only requires
+  // API major 1 and the required capability majors (asserted above via routerApiMajor), so the
   // runtime stays compatible; we pin the exact advertised values so a future
   // MAJOR bump — which would be breaking — still trips this test.
-  assert.equal(runtime.routerApiVersion, '1.3.0');
+  assert.equal(runtime.routerApiVersion, '1.4.0');
   assert.deepEqual(runtime.routerCapabilities, {
     providerStore: '1.1',
     spawnEnvironment: '1.0',
@@ -553,6 +554,10 @@ test('installed CPR 0.3+ negotiates the production API and required capabilities
     agentRouting: '1.0',
     normalizedUsage: '1.0',
   });
+  // Optional capabilities are visible through routerSupports even though the
+  // port does not negotiate them: the dedicated-egress wiring fails closed on it.
+  assert.equal(runtime.routerSupports('upstreamAgent'), true);
+  assert.equal(runtime.routerSupports('noSuchCapability'), false);
 });
 
 test('legacy CPR 0.2 proxy usage enters the standardized UsageObserved callback', () => {

@@ -185,6 +185,10 @@ function createProviderRouterRuntime(options = {}) {
     mode: port.mode,
     routerApiVersion: port.routerApiVersion,
     routerCapabilities: port.routerCapabilities,
+    // Any advertised capability, including optional ones the port does not
+    // negotiate (e.g. `upstreamAgent`): an option the installed CPR does not
+    // know is silently ignored, so a host relying on one must check first.
+    routerSupports: name => !!(router && router.CAPABILITIES && router.CAPABILITIES[name]),
     embeddingPaths,
     createBinding,
     resolveSpawnEnv,
