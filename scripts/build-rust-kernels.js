@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { nativeBinaryArch, nativeBinaryPlatform } = require('./native-arch');
+const { sourcePaths, probeAddon } = require('./rust-source-cache');
 
 function targetFor(platform, arch) {
   const targets = { 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
@@ -20,9 +20,12 @@ function verify(file, platform, arch) {
   }
 }
 function build({ platform = process.platform, arch = process.arch,
-  out = process.env.MULTICC_RUST_PREBUILT_DIR || path.join(os.tmpdir(), 'multicc-rust-prebuilt'),
-  targetDir = process.env.CARGO_TARGET_DIR || path.join(os.tmpdir(), 'multicc-rust-target') } = {}) {
+  out = process.env.MULTICC_RUST_PREBUILT_DIR,
+  targetDir = process.env.CARGO_TARGET_DIR } = {}) {
   const repo = path.resolve(__dirname, '..'), target = targetFor(platform, arch);
+  const defaults = !out || !targetDir ? sourcePaths(repo) : null;
+  out ||= defaults.prebuiltDir;
+  targetDir ||= defaults.targetDir;
   const result = spawnSync('cargo', ['build', '--locked', '--release', '--manifest-path',
     path.join(repo, 'native/Cargo.toml'), '--target', target], {
     stdio: 'inherit', env: { ...process.env, CARGO_TARGET_DIR: path.resolve(targetDir) },
@@ -34,9 +37,13 @@ function build({ platform = process.platform, arch = process.arch,
   verify(source, platform, arch);
   const file = path.resolve(out, `${platform}-${arch}`, 'multicc_core.node');
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.copyFileSync(source, file);
-  if (platform === process.platform && arch === process.arch) {
-    if (require(file).protocolVersion() !== 1 || typeof require(file).RustDatabase !== 'function') throw new Error('Rust 接口版本不匹配');
+  const temporary = `${file}.${process.pid}.tmp.node`;
+  try {
+    fs.copyFileSync(source, temporary);
+    if (platform === process.platform && arch === process.arch && !probeAddon(temporary)) throw new Error('Rust 接口版本不匹配');
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
   }
   console.log(`Rust 模块已构建：${file}`);
   return file;

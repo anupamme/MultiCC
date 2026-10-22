@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
 const { spawnSync } = require('child_process');
+const { targetFor, verify: verifyRustBinary } = require('./build-rust-kernels');
 
 function verifyServerDependencies(appServerDir) {
   const root = fs.realpathSync(appServerDir);
@@ -36,18 +37,30 @@ function verifyDesktopResources({ resourcesDir, execute = true, timeoutMs = 60_0
   if (!runtimeNode) throw new Error('packaged Resources is missing the bundled Node runtime');
   const appServerDir = path.join(resources, 'app-server');
   const dependencies = verifyServerDependencies(appServerDir);
+  // Cross-arch builds cannot load the addon, but must still prove the final
+  // copied tree contains the binary for the manifest's target.
+  const { platform, arch } = JSON.parse(fs.readFileSync(path.join(resources, 'bundle-manifest.json'), 'utf8'));
+  targetFor(platform, arch);
+  const rustFile = path.join(appServerDir, 'native/prebuilt', `${platform}-${arch}`, 'multicc_core.node');
+  if (!fs.existsSync(rustFile)) throw new Error(`packaged Resources is missing Rust SQLite: ${platform}-${arch}`);
+  verifyRustBinary(rustFile, platform, arch);
   if (execute) {
     // Resolve from the packaged server, not this script or the build checkout.
-    // Loading CPR also checks its transitive imports; Node's SQLite is the
-    // mandatory storage runtime. ESM-only dependencies are covered above by
+    // Loading CPR also checks its transitive imports; the packaged Rust SQLite
+    // must open and execute a transaction. ESM-only dependencies are covered by
     // resolution rather than CommonJS require().
     const script = `const r = require('module').createRequire(${JSON.stringify(path.join(appServerDir, 'server.js'))});
       if (r('@iarna/toml').parse('value = 1').value !== 1) throw new Error('TOML parse failed');
       if (!/^1\\./.test(r('cli-provider-router').API_VERSION || '')) throw new Error('CPR API major 1 required');
-      const db = new (require('node:sqlite').DatabaseSync)(':memory:');
-      db.exec('create table smoke(x)'); db.close();`;
+      const db = new (r('./src/sqlite/driver').databaseConstructor())(':memory:');
+      if (db.backend !== 'rust') throw new Error('Rust SQLite required');
+      db.exec('create table smoke(x); create virtual table f using fts5(x)');
+      db.transaction(() => db.prepare('insert into smoke values (?)').run('rust'))();
+      if (db.prepare('select x from smoke').get().x !== 'rust') throw new Error('SQLite smoke failed');
+      db.close();`;
     const result = spawnSync(runtimeNode, ['--disable-warning=ExperimentalWarning', '-e', script],
-      { cwd: appServerDir, encoding: 'utf8', timeout: timeoutMs });
+      { cwd: appServerDir, encoding: 'utf8', timeout: timeoutMs,
+        env: { ...process.env, MULTICC_RUST_ADDON: '', MULTICC_RUST_PREBUILT_DIR: '', MULTICC_SQLITE_BACKEND: 'rust' } });
     if (result.error || result.status !== 0) {
       throw new Error(`packaged runtime dependency smoke failed: ${result.error?.message || result.stderr || result.stdout || `exit ${result.status}`}`);
     }

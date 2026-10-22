@@ -4876,6 +4876,12 @@
       ]
     },
     {
+      "path": "tests/test-source-rust.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:rust"
+    },
+    {
       "path": "tests/test-sqlite-driver.js",
       "tier": "flow",
       "lane": "deterministic",
