@@ -55,40 +55,38 @@ test('Air loads account actions before the Provider add flow and keeps accounts 
   assert.ok(advanced > mod, 'module must be loaded before the panel that mounts its card');
 });
 
-test('Codex add and relogin open the terminal client with its id parameter', async () => {
-  for (const act of ['add', 'relogin']) {
-    let click;
-    const opened = [];
-    const nodes = new Map();
-    const overlay = {
-      style: {}, remove() {},
-      querySelector(selector) {
-        if (!nodes.has(selector)) nodes.set(selector, { value: 'test account' });
-        return nodes.get(selector);
-      },
-    };
-    const sessionId = 'codex-acct-login-test';
-    const context = vm.createContext({
-      window: {
-        t,
-        MultiCCApi: { json: async () => ({ loginSessionId: sessionId }) },
-        open: (url, target) => opened.push({ url, target }),
-      },
-      document: {
-        body: { dataset: {}, appendChild() {} },
-        getElementById: () => null,
-        addEventListener: (name, handler) => { if (name === 'click') click = handler; },
-        createElement: () => overlay,
-      },
-      MutationObserver: class { observe() {} },
-      setInterval, clearInterval, Date,
-    });
-    vm.runInContext(fs.readFileSync(SOURCE_PATH, 'utf8'), context);
-    click({ target: { closest: () => ({ dataset: { act, vendor: 'codex', id: 'test' } }) } });
-    if (act === 'add') await nodes.get('[data-act="ok"]').onclick();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(opened, [{ url: 'index.html?id=' + sessionId, target: '_blank' }], act);
-  }
+test('Codex add and relogin open the sign-in sheet with a callback box, not a terminal', async () => {
+  const id = 'dddddddddddddddd';
+  const oauthUrl = 'https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&state=st';
+  const calls = [];
+  const h = signinHarness(async (url, options) => {
+    calls.push({ url, method: options?.method || 'GET', body: options?.json });
+    if (url === '/api/codex/accounts' && options?.method === 'POST') return { ok: true, accountId: id, oauthUrl };
+    if (url === '/api/codex/accounts') return { accounts: [{ id, label: '小号', loggedIn: false, login: { state: 'pending', oauthUrl } }] };
+    if (url === '/api/claude/accounts') return { accounts: [] };
+    if (url.endsWith('/relogin')) return { ok: true, accountId: id, oauthUrl };
+    if (url.endsWith('/login-status')) return { state: 'pending' };
+    return { ok: true };
+  });
+
+  h.context.window.MultiCCOfficialAccounts.add('codex');
+  const label = h.overlays[0];
+  label.querySelector('[data-k="label"]').value = '小号';
+  label.querySelector('[data-act="ok"]').onclick();
+  await h.flush(); await h.flush();
+
+  assert.deepEqual(h.opened, [], 'nothing opens by itself — no terminal page, no browser tab');
+  const panel = h.overlays[1];
+  assert.match(panel.innerHTML, /登录 Codex 账号 · 小号/);
+  assert.match(panel.innerHTML, /127\.0\.0\.1:1455/, 'the paste hint names the Codex callback');
+  assert.equal(panel.q('url').textContent, oauthUrl, 'the whole authorize link is shown');
+  panel.q('close').onclick();
+
+  h.click({ target: { closest: () => ({ dataset: { act: 'relogin', vendor: 'codex', id } }) } });
+  await h.flush(); await h.flush();
+  assert.ok(calls.some(c => c.url === `/api/codex/accounts/${id}/relogin` && c.method === 'POST'));
+  const reopened = h.overlays[h.overlays.length - 1];
+  assert.equal(reopened.q('url').textContent, oauthUrl, 'relogin reuses the same sheet');
 });
 
 test('the module evaluates cleanly and exposes its surface', () => {
@@ -300,6 +298,41 @@ test('a pending Claude row reopens the sign-in panel with its link', async () =>
   assert.deepEqual(h.opened, []);
   panel.q('close').onclick();
   assert.equal(panel.removed, true);
+});
+
+test('a pending Codex row pastes its callback back to the codex routes', async () => {
+  const id = 'eeeeeeeeeeeeeeee';
+  const oauthUrl = 'https://auth.openai.com/oauth/authorize?client_id=app_EMoamEEZ73f0CkXaXp7hrann&state=st';
+  const calls = [];
+  let status = 'pending';
+  const h = signinHarness(async (url, options) => {
+    calls.push({ url, method: options?.method || 'GET', body: options?.json });
+    if (url === '/api/codex/accounts') return { accounts: [{ id, label: '小号', loggedIn: false, login: { state: status, oauthUrl } }] };
+    if (url === '/api/claude/accounts') return { accounts: [] };
+    if (url.endsWith('/login-callback')) {
+      status = 'complete';
+      return { ok: true, accepted: true };
+    }
+    if (url.endsWith('/login-status')) return { state: status, email: status === 'complete' ? 'codex@example.com' : '' };
+    return { ok: true };
+  });
+  await h.context.window.MultiCCOfficialAccounts.load();
+  h.click({ target: { closest: () => ({ dataset: { act: 'open-signin', vendor: 'codex', id } }) } });
+  const panel = h.overlays[0];
+  assert.match(panel.innerHTML, /登录 Codex 账号 · 小号/);
+  assert.equal(panel.q('url').textContent, oauthUrl);
+
+  const input = panel.q('callback');
+  input.value = 'http://127.0.0.1:1455/auth/callback?code=good&state=st';
+  input.oninput();
+  await panel.q('form').onsubmit({ preventDefault() {} });
+  const paste = calls.find(c => c.url === `/api/codex/accounts/${id}/login-callback`);
+  assert.ok(paste, 'the paste goes to the codex route, not the claude one');
+  assert.equal(paste.method, 'POST');
+
+  for (const tick of h.ticks) tick();
+  await h.flush(); await h.flush();
+  assert.equal(panel.q('phase').textContent, 'Codex 账号登录完成：codex@example.com');
 });
 
 test('an official Provider card still opens the editor, because the egress-IP allowlist lives only there', () => {

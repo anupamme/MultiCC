@@ -123,6 +123,36 @@ pub fn data_dir() -> PathBuf {
     home_dir().join(".multicc").join("plugins-data").join("chrome-proxy-launcher")
 }
 
+/// 数据目录里有每个身份的登录 cookie、代理账密和订阅 token：整个目录只给本人
+/// （0700），清单文件 0600。每条命令开头调一次，旧版本按默认权限建的目录也会
+/// 被收紧。失败不阻断命令（例如目录还不存在）。
+/// 含账密/token 的文件在 rename 之前就收成 0600，避免出现可读的空窗。
+fn private_file(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
+pub fn lock_down() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = data_dir();
+        if fs::create_dir_all(&dir).is_ok() {
+            let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+        }
+        for file in [profiles_file(), subscriptions_file()] {
+            if file.exists() {
+                private_file(&file);
+            }
+        }
+    }
+}
+
 pub fn profiles_file() -> PathBuf {
     data_dir().join("profiles.json")
 }
@@ -210,6 +240,7 @@ pub fn save_profiles(profiles: &[Profile]) -> Result<(), String> {
     let tmp = dir.join(".profiles.json.tmp");
     let bytes = serde_json::to_vec_pretty(profiles).map_err(|err| err.to_string())?;
     fs::write(&tmp, bytes).map_err(|err| format!("写入身份清单失败：{err}"))?;
+    private_file(&tmp);
     fs::rename(&tmp, &file).map_err(|err| format!("替换身份清单失败：{err}"))
 }
 
@@ -229,6 +260,7 @@ pub fn save_subscriptions(subs: &[Subscription]) -> Result<(), String> {
     let tmp = dir.join(".subscriptions.json.tmp");
     let bytes = serde_json::to_vec_pretty(subs).map_err(|err| err.to_string())?;
     fs::write(&tmp, bytes).map_err(|err| format!("写入订阅清单失败：{err}"))?;
+    private_file(&tmp);
     fs::rename(&tmp, &file).map_err(|err| format!("替换订阅清单失败：{err}"))
 }
 
@@ -238,6 +270,7 @@ pub fn write_subscription_config(id: &str, body: &str) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|err| format!("创建订阅目录失败：{err}"))?;
     let tmp = dir.join(format!(".{id}.yaml.tmp"));
     fs::write(&tmp, body).map_err(|err| format!("写入订阅配置失败：{err}"))?;
+    private_file(&tmp);
     fs::rename(&tmp, &file).map_err(|err| format!("替换订阅配置失败：{err}"))
 }
 
@@ -279,7 +312,13 @@ pub fn slugify(name: &str) -> String {
 }
 
 /// 在既有清单里为 name 挑一个不冲突的 id；空 slug 落回 profile-N。
+/// 已删除身份的登录目录（chrome-profiles/<id>）会被保留，所以磁盘上已有目录的
+/// id 也算占用 —— 新身份必须从空白登录开始，不能悄悄继承旧身份的 cookie。
 pub fn allocate_id(name: &str, existing: &[Profile]) -> String {
+    allocate_id_with(name, existing, |id| user_data_dir(id).exists())
+}
+
+fn allocate_id_with(name: &str, existing: &[Profile], dir_taken: impl Fn(&str) -> bool) -> String {
     let base = {
         let slug = slugify(name);
         if slug.is_empty() {
@@ -288,7 +327,7 @@ pub fn allocate_id(name: &str, existing: &[Profile]) -> String {
             slug.chars().take(40).collect::<String>()
         }
     };
-    let taken = |id: &str| existing.iter().any(|p| p.id == id);
+    let taken = |id: &str| existing.iter().any(|p| p.id == id) || dir_taken(id);
     if !taken(&base) {
         return base;
     }
@@ -333,9 +372,17 @@ mod tests {
             subscription: None,
             note: String::new(), chrome_path: None, created_at: 0, updated_at: 0,
         }];
-        assert_eq!(allocate_id("Shop", &existing), "shop-2");
-        assert_eq!(allocate_id("纯中文", &[]), "profile");
-        assert_eq!(allocate_id("纯中文", &existing), "profile");
+        let no_dirs = |_: &str| false;
+        assert_eq!(allocate_id_with("Shop", &existing, no_dirs), "shop-2");
+        assert_eq!(allocate_id_with("纯中文", &[], no_dirs), "profile");
+        assert_eq!(allocate_id_with("纯中文", &existing, no_dirs), "profile");
+    }
+
+    #[test]
+    fn allocate_id_never_reuses_a_deleted_identitys_login_dir() {
+        // 「shop」已被删除但登录目录还在：同名新身份不能接手那份 cookie。
+        let leftover = |id: &str| id == "shop";
+        assert_eq!(allocate_id_with("Shop", &[], leftover), "shop-2");
     }
 
     #[test]

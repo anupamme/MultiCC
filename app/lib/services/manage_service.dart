@@ -321,8 +321,9 @@ class ManageService {
     if (res.statusCode >= 400) _throw(res);
   }
 
-  /// Add an independent Claude/Codex sign-in account. The returned payload
-  /// contains either `oauthUrl` (Claude) or `loginSessionId` (Codex).
+  /// Add an independent Claude/Codex sign-in account. Both vendors now answer
+  /// with `oauthUrl` (multicc's own PKCE flow); a terminal login session id is
+  /// kept only for the built-in "same CLI" route of older servers.
   Future<Map<String, dynamic>> createProviderAccount(
     String vendor, {
     String label = '',
@@ -341,15 +342,16 @@ class ManageService {
         .cast<String, dynamic>();
   }
 
-  /// Finish a pending Claude account sign-in from the address the browser
-  /// ended on (or `code#state`); the PKCE exchange stays on the server.
-  Future<Map<String, dynamic>> submitClaudeLoginCallback(
+  /// Finish a pending account sign-in from the address the browser ended on
+  /// (or `code#state`); the PKCE exchange stays on the server.
+  Future<Map<String, dynamic>> submitAccountLoginCallback(
+    String vendor,
     String accountId,
     String callback,
   ) async {
     final res = await _send(
       'POST',
-      '/api/claude/accounts/${Uri.encodeComponent(accountId)}/login-callback',
+      '/api/$vendor/accounts/${Uri.encodeComponent(accountId)}/login-callback',
       body: jsonEncode({'callback': callback}),
       timeout: const Duration(seconds: 20),
     );
@@ -358,11 +360,14 @@ class ManageService {
         .cast<String, dynamic>();
   }
 
-  /// `{state: idle|pending|complete|error, email?, error?}` of a Claude sign-in.
-  Future<Map<String, dynamic>> claudeLoginStatus(String accountId) async {
+  /// `{state: idle|pending|complete|error, email?, error?}` of a sign-in.
+  Future<Map<String, dynamic>> accountLoginStatus(
+    String vendor,
+    String accountId,
+  ) async {
     final res = await _send(
       'GET',
-      '/api/claude/accounts/${Uri.encodeComponent(accountId)}/login-status',
+      '/api/$vendor/accounts/${Uri.encodeComponent(accountId)}/login-status',
     );
     if (res.statusCode >= 400) _throw(res);
     return (jsonDecode(utf8.decode(res.bodyBytes)) as Map)

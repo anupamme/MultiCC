@@ -8,10 +8,12 @@ import '../i18n.dart';
 import '../services/manage_service.dart';
 import '../theme.dart';
 
-/// Claude account sign-in that opens nothing by itself (Magpie's flow): the
-/// whole link to copy into whichever browser holds the account, then the
-/// address that browser ends on — its own localhost, unreachable when MultiCC
-/// runs on a server — pasted back so the server finishes the PKCE exchange.
+/// Account sign-in that opens nothing by itself (Magpie's flow): the whole
+/// link to copy into whichever browser holds the account, then the address
+/// that browser ends on — its own localhost, unreachable when MultiCC runs on
+/// a server — pasted back so the server finishes the PKCE exchange. Both
+/// vendors use multicc's own PKCE flow now, so the sheet only differs in its
+/// copy and endpoint (`vendor`).
 /// Pops `true` once the account is signed in.
 class ClaudeSigninDialog extends StatefulWidget {
   const ClaudeSigninDialog({
@@ -20,12 +22,14 @@ class ClaudeSigninDialog extends StatefulWidget {
     required this.accountId,
     required this.oauthUrl,
     required this.name,
+    this.vendor = 'claude',
   });
 
   final ManageService manage;
   final String accountId;
   final String oauthUrl;
   final String name;
+  final String vendor;
 
   @override
   State<ClaudeSigninDialog> createState() => _ClaudeSigninDialogState();
@@ -42,6 +46,22 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
   String _error = '';
 
   bool get _locked => _submitting || _accepted || _failed || _done;
+
+  bool get _isCodex => widget.vendor == 'codex';
+  String get _titleKey =>
+      _isCodex ? 'airOfficialAcctCodexSigninTitle' : 'airOfficialAcctSigninTitle';
+  String get _step1Key =>
+      _isCodex ? 'airOfficialAcctCodexSigninStep1' : 'airOfficialAcctSigninStep1';
+  String get _step2Key =>
+      _isCodex ? 'airOfficialAcctCodexSigninStep2' : 'airOfficialAcctSigninStep2';
+  String get _doneKey =>
+      _isCodex ? 'airOfficialAcctCodexLoginDone' : 'airOfficialAcctClaudeLoginDone';
+  String get _doneEmailKey => _isCodex
+      ? 'airOfficialAcctCodexLoginDoneEmail'
+      : 'airOfficialAcctClaudeLoginDoneEmail';
+  String get _failedKey => _isCodex
+      ? 'airOfficialAcctCodexLoginFailed'
+      : 'airOfficialAcctClaudeLoginFailed';
 
   @override
   void initState() {
@@ -60,7 +80,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
 
   Future<void> _check() async {
     try {
-      final s = await widget.manage.claudeLoginStatus(widget.accountId);
+      final s = await widget.manage.accountLoginStatus(widget.vendor, widget.accountId);
       if (!mounted || _done) return;
       final state = s['state']?.toString();
       if (state == 'complete') {
@@ -71,7 +91,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
           _failed = true;
           _submitting = false;
           _phase = '';
-          _error = t('airOfficialAcctClaudeLoginFailed', {'message': s['error']?.toString() ?? ''});
+          _error = t(_failedKey, {'message': s['error']?.toString() ?? ''});
         });
       }
     } catch (_) {
@@ -86,8 +106,8 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
       _submitting = false;
       _error = '';
       _phase = email.isEmpty
-          ? t('airOfficialAcctClaudeLoginDone')
-          : t('airOfficialAcctClaudeLoginDoneEmail', {'email': email});
+          ? t(_doneKey)
+          : t(_doneEmailKey, {'email': email});
     });
     Future.delayed(const Duration(milliseconds: 1200), () {
       if (mounted) Navigator.of(context).pop(true);
@@ -103,7 +123,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
       _phase = t('airOfficialAcctSigninSubmitting');
     });
     try {
-      final r = await widget.manage.submitClaudeLoginCallback(widget.accountId, raw);
+      final r = await widget.manage.submitAccountLoginCallback(widget.vendor, widget.accountId, raw);
       if (!mounted) return;
       if (r['state'] == 'complete') {
         _finish('');
@@ -134,7 +154,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
   Widget build(BuildContext context) {
     const small = TextStyle(color: AppColors.muted, fontSize: 12, height: 1.5);
     return AlertDialog(
-      title: Text(t('airOfficialAcctSigninTitle', {'name': widget.name})),
+      title: Text(t(_titleKey, {'name': widget.name})),
       content: SizedBox(
         width: 520,
         child: SingleChildScrollView(
@@ -148,7 +168,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
                   child: Text(_phase,
                       style: TextStyle(color: _done ? AppColors.success : AppColors.warning, fontSize: 12)),
                 ),
-              Text(t('airOfficialAcctSigninStep1'), style: small),
+              Text(t(_step1Key), style: small),
               const SizedBox(height: 6),
               Container(
                 width: double.infinity,
@@ -175,7 +195,7 @@ class _ClaudeSigninDialogState extends State<ClaudeSigninDialog> {
                 ),
               ]),
               const SizedBox(height: 4),
-              Text(t('airOfficialAcctSigninStep2'), style: small),
+              Text(t(_step2Key), style: small),
               const SizedBox(height: 8),
               TextField(
                 controller: _callback,
