@@ -8,9 +8,9 @@ const { spawnSync } = require('node:child_process');
 const { CompatDatabase: Rust, databaseConstructor } = require('../src/sqlite/driver');
 const { CompatDatabase: Node } = require('../src/sqlite/node-driver');
 
-function file(t) {
+function file(t, close = () => {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-rust-sqlite-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => { close(); fs.rmSync(root, { recursive: true, force: true }); });
   return path.join(root, 'test.sqlite');
 }
 function memory(t) { const db = new Rust(':memory:'); t.after(() => db.close()); return db; }
@@ -77,11 +77,12 @@ test('外层手动事务与内层回滚、关闭后旧语句失效', t => {
   assert.throws(() => statement.all(), /not open/);
 });
 test('原 Node 数据库由 Rust 打开，WAL 双连接、data_version 与重新打开一致', t => {
-  const filename = file(t), node = new Node(filename);
-  t.after(() => node.close());
+  let node, rust;
+  const filename = file(t, () => { rust?.close(); node?.close(); });
+  node = new Node(filename);
   node.pragma('journal_mode = WAL'); node.exec('CREATE TABLE t(k TEXT PRIMARY KEY, body TEXT)');
   node.prepare('INSERT INTO t VALUES (?, ?)').run('旧', JSON.stringify({ title: '旧数据' }));
-  let rust = new Rust(filename); t.after(() => rust.close());
+  rust = new Rust(filename);
   assert.equal(rust.prepare('SELECT body FROM t').get().body, '{"title":"旧数据"}');
   const before = rust.pragma('data_version', { simple:true });
   node.prepare('INSERT INTO t VALUES (?, ?)').run('另一个连接', '{}');
@@ -93,8 +94,9 @@ test('原 Node 数据库由 Rust 打开，WAL 双连接、data_version 与重新
   assert.throws(() => rust.exec('DELETE FROM t'), { code:'SQLITE_READONLY' });
 });
 test('跨进程锁竞争超时不会留下部分写入，解锁后恢复', t => {
-  const filename = file(t), db = new Rust(filename, { timeout: 25 });
-  t.after(() => db.close());
+  let db;
+  const filename = file(t, () => db?.close());
+  db = new Rust(filename, { timeout: 25 });
   db.exec('CREATE TABLE t(x); BEGIN IMMEDIATE; INSERT INTO t VALUES(1)');
   const result = spawnSync(process.execPath, ['-e', `
     const D=require('./src/sqlite/driver').databaseConstructor(),db=new D(process.argv[1],{timeout:25});

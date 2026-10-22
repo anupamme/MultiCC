@@ -539,10 +539,12 @@ test('missing or zero legacy switch cannot disable the host', t => {
 });
 
 test('the classifier journal is reachable before any shell resolves and fails safe', async t => {
+  let host;
+  // after hooks run in registration order; release this second connection first.
+  t.after(() => host?.close());
   const f = fixture(t);
-  const host = createTaskShellHost({ file: f.file, records: f.records,
+  host = createTaskShellHost({ file: f.file, records: f.records,
     loadHistory: id => f.histories.get(id) || [], getChatState: () => null });
-  t.after(() => host.close());
   // A verdict about a receipt this host cannot see is not a verdict. It must
   // come back as "nothing happened" rather than throwing inside the classifier.
   assert.deepEqual(await host.recordAttributionDecision('unknown', null, { relation: 'new', taskId: 'tsk_x' }),
@@ -628,9 +630,10 @@ test('P1 P4: deleting a shell drops the journals that shell owns', async t => {
 test('P1: mounting the host enforces the attribution retention window', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'multicc-sweep-'));
   const file = path.join(dir, 'shell.sqlite');
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let host, seeded;
+  t.after(() => { host?.close(); seeded?.close(); fs.rmSync(dir, { recursive: true, force: true }); });
   const DAY = 24 * 60 * 60 * 1000;
-  const seeded = createTaskShellStore(file);
+  seeded = createTaskShellStore(file);
   // The review window exists only if something enforces it: a reverted journal
   // row past the window is reclaimed, one inside it is the audit trail.
   // Journal rows are keyed by the module's operation key, not by the raw ids:
@@ -642,8 +645,7 @@ test('P1: mounting the host enforces the attribution retention window', async t 
   seeded.set('task-op', opKey('fresh'), { id: opKey('fresh'), shellId: 'sh_1', clientMsgId: 'fresh',
     status: 'reverted', undoneAt: Date.now() - DAY });
   seeded.close();
-  const host = createTaskShellHost({ file, records: new Map(), directories: new Map() });
-  t.after(() => host.close());
+  host = createTaskShellHost({ file, records: new Map(), directories: new Map() });
   host.mountRoutes({ get: () => {}, post: () => {}, put: () => {}, delete: () => {}, use: () => {} });
   assert.deepEqual(host.taskOperations().list('sh_1').map(row => row.clientMsgId), ['fresh'],
     'the mount sweep keeps only the rows still inside the retention window');
