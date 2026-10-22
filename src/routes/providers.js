@@ -217,6 +217,14 @@ function createProviderRoutes(rawDeps) {
       const providers = deps.providers.listProviders(
         appType === 'claude' || appType === 'codex' ? appType : undefined,
       ).filter(provider => !cli || deps.providers.providerSupportsCli(provider, cli));
+      // 选择器先返回内存快照；后台刷新由 Rust 按账号应用一天 TTL/CLI 版本。
+      if (deps.codexAccountModelCatalogRuntime && req.query.poll !== '1') {
+        for (const provider of providers.filter(p => p.appType === 'codex' && p.isOfficial)) {
+          try {
+            Promise.resolve(deps.codexAccountModelCatalogRuntime.refreshProvider(provider.id)).catch(() => {});
+          } catch (_) { /* 刷新不能阻塞列表 */ }
+        }
+      }
       const nowMs = now();
       const staleAfterMs = deps.limitCacheStaleMs || STALE_MS_DEFAULT;
       // Attach the persistent last-known-good limit summary (if any) to each

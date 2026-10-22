@@ -797,6 +797,10 @@
     let epoch = 0;
     const catalogs = new Map();
     const catalogErrors = new Map();
+    let modelWatchKey = '';
+    let stopModelWatch = null;
+    let modelCatalogStatus = null;
+    let closed = false;
     let pendingNative = '';
     let pickerOpen = false;
     let pickerFilter = "";
@@ -1003,7 +1007,10 @@
     modelSearch.hidden = true;
     modelSearch.placeholder = tt('runConfigModelSearch', '搜索模型…');
     modelSearch.setAttribute('aria-label', tt('runConfigModelSearch', '搜索模型…'));
-    modelField.append(modelSearch, modelSelect, modelCustom);
+    const modelStatus = el(doc, 'span', 'rc-model-status');
+    modelStatus.setAttribute('role', 'status');
+    modelStatus.hidden = true;
+    modelField.append(modelSearch, modelSelect, modelCustom, modelStatus);
     lineRow.append(lineField, modelField);
     const accountField = el(doc, 'div', 'rc-field rc-account-field');
     accountField.append(el(doc, 'span', null, tt('runConfigAccountLabel', '账户')));
@@ -1168,7 +1175,12 @@
     // 一开就在那个叉上顶一圈蓝色焦点环。焦点收到对话框本身，叉要按 Tab 才到。
     dialog.tabIndex = -1;
     try { dialog.focus({ preventScroll: true }); } catch (_) { dialog.focus(); }
-    dialog.onclose = () => dialog.remove();
+    dialog.onclose = () => {
+      closed = true;
+      ++epoch;
+      if (stopModelWatch) stopModelWatch();
+      dialog.remove();
+    };
 
     function radio(docRef, className, title, detail) {
       const node = el(docRef, 'div', `rc-radio ${className}`);
@@ -1374,6 +1386,60 @@
     function renderModel() {
       fillModel(modelSelect, modelCustom, providerValue, currentCli, modelValue);
       modelValue = currentModelValue();
+      watchSelectedModels();
+    }
+
+    function watchSelectedModels() {
+      const provider = providerById(currentCli, providerValue);
+      // 借道线路继续使用出借方目录，不访问本机官方账号目录。
+      const official = /^(codex)-official(?:-[a-f0-9]{16})?$/.test(providerValue)
+        || !!(provider && (provider.builtinOfficial || provider.isOfficial) && provider.appType === 'codex');
+      const key = !closed && (currentCli === 'codex' || currentCli === 'codex-exp') && official
+        ? `${currentCli}:${providerValue}` : '';
+      if (key !== modelWatchKey) {
+        if (stopModelWatch) stopModelWatch();
+        stopModelWatch = null;
+        modelWatchKey = key;
+        modelCatalogStatus = null;
+        const api = scope();
+        if (key && api && typeof api.watchCodexModels === 'function') {
+          const selectedProvider = providerValue;
+          const selectedCli = currentCli;
+          stopModelWatch = api.watchCodexModels({ providerId: selectedProvider }, catalog => {
+            if (closed || modelWatchKey !== key) return;
+            modelCatalogStatus = catalog;
+            // normalizeCatalog 返回冻结记录；替换副本，不修改共享目录对象。
+            for (const [cli, existing] of catalogs) {
+              if (cli !== 'codex' && cli !== 'codex-exp') continue;
+              const list = existing.providers.map(item => item.id === selectedProvider
+                ? { ...item, modelOptions: catalog.diagnostic.code === 'request_failed' && !catalog.models.length
+                    ? item.modelOptions : catalog.models.map(model => model.model),
+                    model: (catalog.models.find(model => model.isDefault) || {}).model || item.model }
+                : item);
+              catalogs.set(cli, { ...existing, providers: list });
+            }
+            if (currentCli !== selectedCli || providerValue !== selectedProvider) return;
+            // 读取当前输入，异步返回期间用户选择/输入的模型必须保留。
+            const selected = currentModelValue();
+            fillModel(modelSelect, modelCustom, providerValue, currentCli, selected);
+            modelValue = currentModelValue();
+            paintModelStatus();
+            renderFooter();
+          });
+        }
+      }
+      paintModelStatus();
+    }
+
+    function paintModelStatus() {
+      const status = modelCatalogStatus;
+      const code = status && status.diagnostic && status.diagnostic.code;
+      modelStatus.textContent = !modelWatchKey ? '' : !status || status.refreshing
+        ? (modelSelect.options.length > 2 ? '正在后台更新模型…' : '正在加载模型…')
+        : code && code !== 'ok' && code !== 'none' && code !== 'ready'
+          ? (status.diagnostic.message || '模型列表获取失败，请重新打开后重试。')
+          : status.models.length ? '' : '当前账号没有可用模型。';
+      modelStatus.hidden = !modelStatus.textContent;
     }
 
     // The sub-task model keeps an explicit "leave it to the main line" as its
@@ -2199,6 +2265,9 @@
     }
 
     function selectCli(cli) {
+      if (stopModelWatch) stopModelWatch();
+      stopModelWatch = null;
+      modelWatchKey = '';
       currentCli = cli;
       providerValue = '';
       modelValue = '';

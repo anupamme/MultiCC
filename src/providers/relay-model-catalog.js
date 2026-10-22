@@ -128,25 +128,22 @@ function createProviderRelayModelCatalogRuntime(options = {}) {
     let summary = providers.getProviderSummary(appType, id);
     if (!summary) return { ok: false, reason: 'not_found', appType, providerId: id };
 
-    // The official Codex provider's source of truth is the account-scoped CLI
-    // catalog.  Nudge its existing background refresh, but never hold this
-    // relay request open for an app-server spawn (which can take 12 seconds and
-    // would make the borrower's Provider picker look frozen).  The summary
-    // already reads Codex's durable models_cache.json; a verified in-memory
-    // catalog is an additional last-known-good source until the next pull.
+    // 借道目录只读账号自己的快照，不在分享/导入路径额外触发发现。
     let discovered = [];
     let catalogFetchedAt = null;
-    if (appType === 'codex' && summary.isOfficial === true
-        && codexModelsRuntime) {
+    if (appType === 'codex' && summary.isOfficial === true && codexModelsRuntime) {
       try {
-        if (typeof codexModelsRuntime.syncIfDue === 'function') codexModelsRuntime.syncIfDue();
-        const result = typeof codexModelsRuntime.peek === 'function'
-          ? codexModelsRuntime.peek() : null;
+        const record = typeof providers.getProvider === 'function'
+          ? providers.getProvider(appType, id) : summary;
+        const managed = !!(record && (record.activeAccountId && record.activeAccountId !== 'global'
+          || require('../official-accounts').officialAccountIdFromProvider(record)));
+        const result = typeof codexModelsRuntime.peekProvider === 'function'
+          ? codexModelsRuntime.peekProvider(record)
+          : !managed && typeof codexModelsRuntime.peek === 'function' ? codexModelsRuntime.peek() : null;
         discovered = (result && Array.isArray(result.models) ? result.models : [])
           .map(item => item && item.model);
-        catalogFetchedAt = result && result.catalogFetchedAt || null;
-        summary = providers.getProviderSummary(appType, id) || summary;
-      } catch (_) { /* the summary's last-known-good list remains usable */ }
+        catalogFetchedAt = result && (result.fetchedAt || result.catalogFetchedAt) || null;
+      } catch (_) { /* 读取失败仍保留账号自己的最后一份目录 */ }
     }
 
     const models = normalizeModels([

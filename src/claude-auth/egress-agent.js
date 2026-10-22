@@ -118,7 +118,7 @@ function createClaudeEgressAgentResolver(options = {}) {
     }
   }
 
-  return { resolveUpstreamAgent };
+  return { resolveUpstreamAgent, resolveProxyUrl };
 }
 
 // 旧版 CPR 不认钩子时会把它**静默忽略**（supported 由 providerRouterRuntime

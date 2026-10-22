@@ -64,7 +64,7 @@ const services = require('./src/services');
 const state = require('./src/state/container');
 const artifacts = require('./src/artifacts'), docsRegistry = require('./src/docs-registry'), secretsVault = require('./src/secrets-vault'), annotationLive = require('./src/annotation-live'), remoteScreen = require('./src/remote-screen'), pluginsRoutes = require('./src/routes/plugins');
 const providers = require('./src/providers/core');
-providers.enableUnifiedOfficialProviders();
+providers.enableUnifiedOfficialProviders(); const codexCatalog = require('./src/codex/model-catalog').startDefaultRuntime();
 const { executeAuxHttp } = require('./src/aux-http');
 const tokenGlobal = require('./src/token-global');
 const { createRoleTokenTracker } = require('./src/role-token-tracker');
@@ -401,7 +401,7 @@ authRuntime.mountRoutes(app);
 // exact /models routes cannot be swallowed by their prefix handlers.
 const providerRelayModelCatalogRuntime = createProviderRelayModelCatalogRuntime({
   providers,
-  codexModelsRuntime: require('./src/routes/codex-models').defaultRuntime,
+  codexModelsRuntime: codexCatalog,
   logger,
 });
 mountProviderRelayModelCatalogRoutes(app, providerRelayModelCatalogRuntime);
@@ -1966,7 +1966,7 @@ const {
   providers,
   getPort: () => PORT,
   getClaudeOfficialViaProxy: () => CLAUDE_OFFICIAL_VIA_PROXY,
-  executeAuxHttp, providerLimitCache, getCliAvailability: () => cliAvailabilitySummary(), codexModelsRuntime: require('./src/routes/codex-models').defaultRuntime,
+  executeAuxHttp, providerLimitCache, getCliAvailability: () => cliAvailabilitySummary(), codexModelsRuntime: codexCatalog,
   broadcast: broadcastTo,
   // Aux health is fleet-wide: one transition changes the meaning of EVERY
   // session's judgement at once, and an already-open page has no other way to
@@ -2131,7 +2131,7 @@ const providerRoutes = createProviderRoutes({
   http,
   https,
   logger: console,
-  relayModelCatalogRuntime: providerRelayModelCatalogRuntime,
+  relayModelCatalogRuntime: providerRelayModelCatalogRuntime, codexAccountModelCatalogRuntime: codexCatalog,
   providerLimitCache,
   limitRecorder,
   limitCacheStaleMs: Number(process.env.MULTICC_LIMIT_CACHE_STALE_MS) || undefined,
@@ -2142,7 +2142,7 @@ providerRoutes.mountCatalogRoutes(app);
 // GET /api/opencode/models — list models the local opencode CLI exposes
 // (provider/model strings, cached for 1 day). Used by the chat picker when an
 // opencode session has no multicc-managed provider's model list to render.
-mountOpenCodeModelRoutes(app); require('./src/routes/cli-key-accounts').mountCliKeyAccountRoutes(app, { store: require('./src/cli-key-accounts').sharedCliKeyAccountStore(), sessionPersistence }); require('./src/routes/codex-models').mountCodexModelRoutes(app); // account-entitled Codex app-server model/list, 60s cache + explicit refresh
+mountOpenCodeModelRoutes(app); require('./src/routes/cli-key-accounts').mountCliKeyAccountRoutes(app, { store: require('./src/cli-key-accounts').sharedCliKeyAccountStore(), sessionPersistence }); require('./src/routes/codex-models').mountCodexModelRoutes(app);
 require('./src/routes/commandcode-auth').mountCommandcodeAuthRoutes(app, {
   directories, createSessionRecord, persistedSessionExists: id => persistedSessions.has(id),
   getStatus: () => {

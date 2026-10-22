@@ -71,7 +71,7 @@ test('relay model normalization is bounded, ordered and accepts current model-id
   ]), ['gpt-6.1-sol', 'glm-5.2[1M]', 'vendor/model:v2']);
 });
 
-test('lender catalog nudges Codex refresh without blocking and mounts both scoped paths', async () => {
+test('lender catalog reads cached Codex models without refreshing and mounts both scoped paths', async () => {
   const { providers } = providerRuntime({
     getProviderSummary: (appType, id) => id === 'missing' ? null : ({
       id, appType, name: 'Official', isOfficial: appType === 'codex',
@@ -97,7 +97,7 @@ test('lender catalog nudges Codex refresh without blocking and mounts both scope
   assert.deepEqual(catalog.models, ['gpt-6.1-sol', 'gpt-6-astra']);
   assert.equal(catalog.preferredModel, 'gpt-6.1-sol');
   assert.equal(catalog.catalogFetchedAt, 4900);
-  assert.equal(nudges, 1);
+  assert.equal(nudges, 0, '借道读取不额外触发模型刷新');
   assert.equal(catalog.revision, catalogRevision('gpt-6.1-sol', catalog.models));
 
   const routes = {};

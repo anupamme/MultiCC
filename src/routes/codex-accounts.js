@@ -122,6 +122,11 @@ function mountCodexAccountRoutes(app, deps) {
         accounts.writeCodexCredential(account.id, credential.auth);
         loginStates.set(account.id, { state: 'complete', email: credential.email || '' });
         logger.info('codex_account_login_complete', { accountId: account.id, email: credential.email || '' });
+        // 目录失败不改变已完成的登录状态，也不等待 CLI 启动。
+        Promise.resolve().then(() => (deps.modelCatalogRuntime || require('../codex/model-catalog').defaultRuntime)
+          .refreshAccount(account.id, { force: true })).catch(() => {
+          logger.warn('codex_account_models_refresh_failed', { accountId: account.id });
+        });
       })
       .catch((error) => {
         loginStates.set(account.id, { state: 'error', error: error.message });
