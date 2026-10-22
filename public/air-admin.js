@@ -25,6 +25,11 @@
     docs: [t('airAdminPanelDocs'), t('airAdminPanelDocsDesc'), 'DOCS'],
     memory: [t('airAdminPanelMemory'), t('airAdminPanelMemoryDesc'), 'MEMORY'],
     taskgraph: [t('airAdminPanelTaskgraph'), t('airAdminPanelTaskgraphDesc'), 'TASKGRAPH'],
+    // plugins 不进设置中心分组（settingGroups 没有它），这条只为把 mode 登记进
+    // modes 集合：air.js 的 render 分发（admin-center 显隐）、URL 解析（modeFrom）
+    // 与地址栏写入（routeUrl）都以那张集合为准，缺了它「插件」页会被当成任务
+    // 视图藏掉（2026-10-22 上线后用户实测踩中：侧栏点进去看到的是目录任务页）。
+    plugins: [t('airPlugins'), t('airPluginsDesc'), 'PLUGINS'],
     workspaces: [t('airAdminPanelWorkspaces'), t('airAdminPanelWorkspacesDesc'), 'WORKSPACES'],
     // aux 不是 legacy iframe 页(manage 那边配置在弹窗里,没有 view 可嵌)——
     // 这条只为设置中心的卡片和 modes 集合提供元数据,渲染走下面的 renderAux。

@@ -67,7 +67,7 @@ function createStaticAssetsRoutes(rawDeps) {
         : (req.query.focus === 'aux' ? 'aux' : 'overview');
       const aliases = { cron: 'schedules', tasks: 'overview', planner: 'overview' };
       const allowed = new Set([
-        'overview', 'schedules', 'docs', 'memory', 'settings', 'voice', 'goal', 'aux',
+        'overview', 'schedules', 'docs', 'memory', 'plugins', 'settings', 'voice', 'goal', 'aux',
         'provider', 'global', 'push', 'tunnel', 'bridges', 'resources', 'skillsync', 'storage',
       ]);
       const view = aliases[requested] || (allowed.has(requested) ? requested : 'overview');
