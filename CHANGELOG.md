@@ -2,6 +2,17 @@
 
 All notable changes to MultiCC are documented in this file.
 
+## v2.8.5 — Restore desktop release startup (2026-10-22)
+
+This release carries the v2.8.4 changes below. The v2.8.4 desktop workflow was
+rejected before any build could start because job-level environment variables
+referenced the unavailable runner context; its tag remains unchanged.
+
+- Initialize Rust build directories in a step after runner allocation, for both desktop and standalone packages.
+- Add a regression check for the workflow context boundary and validate the release workflows with actionlint.
+- Keep core and clean-install gates running alongside builds; publish only after the required jobs succeed.
+- Keep the mobile app at 2.36.3 (build 172), which has not been distributed through the v2.8.4 release.
+
 ## v2.8.4 — Rust runtime, safer installation, and account visibility (2026-10-22)
 
 - Ship Rust SQLite as the default database backend, with explicit Node emergency compatibility mode; add native task-search and token-usage kernels with parity coverage.
