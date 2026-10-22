@@ -6,7 +6,7 @@
 //!   subscriptions/<id>.yaml           订阅拉下来的完整 Clash 配置原文
 //!   run/<id>.pid                      launch 后记录的主进程 pid
 //!   run/<id>.relay.json               带凭据直连代理的本地中继
-//!   run/<id>.core.pid                 订阅出口的 mihomo 内核 pid
+//!   run/<id>.core.pid                 订阅出口的 meow 内核 pid
 //!   core/<id>/                        每个身份的内核工作目录（config.yaml 等）
 //!   chrome-profiles/<id>/             每个身份独立的 Chrome user-data-dir
 //!
@@ -71,7 +71,7 @@ pub struct Profile {
 }
 
 /// 订阅出口 = 跳板节点 + 可选上游代理。链路：
-///   本机 → (mihomo) 订阅节点 → 上游住宅代理 → 目标站
+///   本机 → 中继 → (meow 跳板) 订阅节点 → 上游住宅代理 → 目标站
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriptionEgress {
@@ -131,7 +131,7 @@ pub fn subscriptions_file() -> PathBuf {
     data_dir().join("subscriptions.json")
 }
 
-/// 订阅拉下来的配置原文（mihomo 可直接吃的完整 Clash 配置）。
+/// 订阅拉下来的配置原文（meow 可直接吃的完整 Clash 配置）。
 pub fn subscription_config_file(id: &str) -> PathBuf {
     data_dir().join("subscriptions").join(format!("{id}.yaml"))
 }

@@ -119,7 +119,11 @@ pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str, pin_dns
 
 /// 拉起带凭据代理的本地中继并等它就绪，返回本地端口。
 /// 中继进程与 launcher（本进程）脱钩：父进程退出后由 launchd 收养常驻。
-fn spawn_relay(id: &str, proxy: &crate::store::ProxyConfig) -> Result<u16, String> {
+pub fn spawn_relay(
+    id: &str,
+    upstream: &crate::store::ProxyConfig,
+    hop: Option<crate::store::ProxyConfig>,
+) -> Result<u16, String> {
     // 上次 launch 残留的中继先收掉，避免旧凭据/旧端口混进本次会话。
     if let Some((pid, _)) = store::read_relay(id) {
         if pid_alive(pid) {
@@ -135,7 +139,7 @@ fn spawn_relay(id: &str, proxy: &crate::store::ProxyConfig) -> Result<u16, Strin
         .stderr(Stdio::null())
         .spawn()
         .map_err(|err| format!("启动本地中继失败：{err}"))?;
-    let input = serde_json::json!({ "id": id, "proxy": proxy });
+    let input = serde_json::json!({ "id": id, "proxy": upstream, "hop": hop });
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(input.to_string().as_bytes());
     } // stdin 随 drop 关闭，中继读完后进入服务循环
@@ -168,7 +172,7 @@ pub fn stop_relay_if_any(id: &str) {
 /// check_proxy=true（默认）先验证出口可用：无凭据查 TCP 可达；带凭据直接做
 /// 一次认证探测（凭据错就拒绝启动，不让 Chrome 挂在中继上白等）；订阅出口
 /// 则经刚起的本地内核取一次出口 IP。
-/// 带凭据的直连代理会先拉起本地中继；订阅出口会先拉起身份专属 mihomo 内核。
+/// 带凭据的直连代理会先拉起本地中继；订阅出口会先拉起身份专属 meow 内核。
 pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result<serde_json::Value, String> {
     let browser = find_browser(profile.chrome_path.as_deref())?;
     let data_dir = store::user_data_dir(&profile.id);
@@ -187,9 +191,28 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
         } else {
             egress.node.clone()
         };
-        let run = crate::core::start(&profile.id, &raw, &node, egress.via.as_ref())?;
+        let run = crate::core::start(&profile.id, &raw, &node)?;
+        // 有上游住宅代理时：内核只跑跳板节点，中继自己串「跳板 → 上游」的链。
+        let (listen_port, proxy_arg) = if let Some(via) = &egress.via {
+            let hop = crate::store::ProxyConfig {
+                scheme: "socks5".into(),
+                host: "127.0.0.1".into(),
+                port: run.mixed_port,
+                username: None,
+                password: None,
+            };
+            let relay_port = spawn_relay(&profile.id, via, Some(hop))?;
+            extras.insert("relayPort".into(), json!(relay_port));
+            (relay_port, format!("--proxy-server=http://127.0.0.1:{relay_port}"))
+        } else {
+            (
+                run.mixed_port,
+                format!("--proxy-server=http://127.0.0.1:{}", run.mixed_port),
+            )
+        };
         if check_proxy {
-            if let Err(err) = crate::core::verify_exit(run.mixed_port, Duration::from_secs(12)) {
+            if let Err(err) = crate::core::verify_exit(listen_port, Duration::from_secs(12)) {
+                stop_relay_if_any(&profile.id);
                 crate::core::stop_if_any(&profile.id);
                 return Err(format!(
                     "订阅出口不可用，已拒绝启动（Chrome 代理失效会直连泄漏真实出口）：{err}"
@@ -208,7 +231,7 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
                 json!(format!("{}://{}:{}", via.scheme, via.host, via.port)),
             );
         }
-        (format!("--proxy-server=http://127.0.0.1:{}", run.mixed_port), false)
+        (proxy_arg, false)
     } else if let Some(proxy) = &profile.proxy {
         if check_proxy {
             if proxy.has_credentials() {
@@ -221,7 +244,7 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
             }
         }
         let relay_port = if proxy.has_credentials() {
-            Some(spawn_relay(&profile.id, proxy)?)
+            Some(spawn_relay(&profile.id, proxy, None)?)
         } else {
             None
         };

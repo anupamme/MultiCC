@@ -11,7 +11,7 @@
 //! run/<id>.relay.json 供 launch 对账、stop 收割。兜底：连续 30 分钟没有
 //! 任何流量就自杀，防止 stop 被跳过后中继泄漏。
 
-use crate::proxy::{basic_authorization, connect_tcp, socks5_connect};
+use crate::proxy::{basic_authorization, connect_tcp};
 use crate::store::{self, ProxyConfig};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -96,12 +96,36 @@ fn auth_header_line(config: &ProxyConfig) -> String {
     }
 }
 
+/// 中继的路由：上游代理 + 可选跳板。
+///
+/// 跳板 = 只跑订阅节点的本地内核（socks5）。有跳板时先经它连到上游代理，
+/// 再由上游代理去目标站：本机 → 跳板节点 → 上游住宅代理 → 目标站。
+/// 内核的 `dialer-proxy` 也能表达同一条链，但由中继串链更可控：凭据、
+/// 失败报错、生命周期都在插件手里，不依赖内核版本的行为。
+pub struct Route {
+    pub upstream: ProxyConfig,
+    pub hop: Option<ProxyConfig>,
+}
+
+/// 连到「上游代理本身」；有跳板时先经跳板内核出去。
+fn connect_upstream(route: &Route, timeout: Duration) -> Result<TcpStream, String> {
+    match &route.hop {
+        Some(hop) => crate::proxy::socks5_connect(hop, &route.upstream.host, route.upstream.port, timeout),
+        None => connect_tcp(&route.upstream.host, route.upstream.port, timeout),
+    }
+}
+
 /// 与上游建好隧道：http 上游做 CONNECT（带认证），socks5 上游做认证 CONNECT。
-fn open_tunnel(config: &ProxyConfig, host: &str, port: u16) -> Result<TcpStream, String> {
+/// 两种情况都先经过 connect_upstream（可能经跳板）。
+fn open_tunnel(route: &Route, host: &str, port: u16) -> Result<TcpStream, String> {
+    let config = &route.upstream;
     match config.scheme.as_str() {
-        "socks5" => socks5_connect(config, host, port, Duration::from_secs(15)),
+        "socks5" => {
+            let stream = connect_upstream(route, Duration::from_secs(15))?;
+            crate::proxy::socks5_over(stream, config, host, port)
+        }
         _ => {
-            let mut stream = connect_tcp(&config.host, config.port, Duration::from_secs(15))?;
+            let mut stream = connect_upstream(route, Duration::from_secs(15))?;
             let request = format!(
                 "CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n{}User-Agent: multicc-relay/1.0\r\n\r\n",
                 auth_header_line(config)
@@ -172,7 +196,7 @@ fn refuse(mut client: TcpStream, message: &str) {
     );
 }
 
-fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<AtomicU64>) {
+fn handle_client(mut client: TcpStream, route: &Route, last_active: &Arc<AtomicU64>) {
     let _ = client.set_read_timeout(Some(Duration::from_secs(30)));
     let _ = client.set_write_timeout(Some(Duration::from_secs(30)));
     let (head, body_at) = match read_head(&mut client) {
@@ -195,7 +219,7 @@ fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<
 
     if method == "CONNECT" {
         let (host, port) = parse_authority(&target);
-        match open_tunnel(config, &host, port) {
+        match open_tunnel(route, &host, port) {
             Ok(upstream) => {
                 if client
                     .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
@@ -219,9 +243,16 @@ fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<
         }
     };
     let (host, port) = parse_authority(&authority);
-    match config.scheme.as_str() {
+    match route.upstream.scheme.as_str() {
         "socks5" => {
-            let mut upstream = match socks5_connect(config, &host, port, Duration::from_secs(15)) {
+            let stream = match connect_upstream(route, Duration::from_secs(15)) {
+                Ok(stream) => stream,
+                Err(message) => {
+                    refuse(client, &message);
+                    return;
+                }
+            };
+            let mut upstream = match crate::proxy::socks5_over(stream, &route.upstream, &host, port) {
                 Ok(stream) => stream,
                 Err(message) => {
                     refuse(client, &message);
@@ -237,7 +268,7 @@ fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<
             pipe_bidi(client, upstream, last_active);
         }
         _ => {
-            let mut upstream = match connect_tcp(&config.host, config.port, Duration::from_secs(15)) {
+            let mut upstream = match connect_upstream(route, Duration::from_secs(15)) {
                 Ok(stream) => stream,
                 Err(message) => {
                     refuse(client, &message);
@@ -245,7 +276,10 @@ fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<
                 }
             };
             // http 代理接受绝对 URL，注入认证头后原样转发。
-            let forwarded = format!("{method} {target} HTTP/1.1\r\n{}{rest_headers}", auth_header_line(config));
+            let forwarded = format!(
+                "{method} {target} HTTP/1.1\r\n{}{rest_headers}",
+                auth_header_line(&route.upstream)
+            );
             if upstream.write_all(forwarded.as_bytes()).is_err() {
                 return;
             }
@@ -256,8 +290,8 @@ fn handle_client(mut client: TcpStream, config: &ProxyConfig, last_active: &Arc<
 }
 
 /// relay 子命令入口：常驻直到空闲自杀，正常情况下不会返回。
-pub fn run(id: &str, config: &ProxyConfig) -> Result<(), String> {
-    if config.scheme == "https" {
+pub fn run(id: &str, route: &Route) -> Result<(), String> {
+    if route.upstream.scheme == "https" {
         return Err("https 上游暂不支持账密中继（请用 http 或 socks5 代理）".into());
     }
     let listener = TcpListener::bind(("127.0.0.1", 0))
@@ -275,7 +309,10 @@ pub fn run(id: &str, config: &ProxyConfig) -> Result<(), String> {
     )
     .map_err(|err| format!("写中继记录失败：{err}"))?;
 
-    let config = Arc::new(config.clone());
+    let route = Arc::new(Route {
+        upstream: route.upstream.clone(),
+        hop: route.hop.clone(),
+    });
     let last_active = Arc::new(AtomicU64::new(now_secs()));
     {
         let last_active = Arc::clone(&last_active);
@@ -289,7 +326,7 @@ pub fn run(id: &str, config: &ProxyConfig) -> Result<(), String> {
     for stream in listener.incoming() {
         last_active.store(now_secs(), Ordering::Relaxed);
         let Ok(stream) = stream else { continue };
-        let config = Arc::clone(&config);
+        let config = Arc::clone(&route);
         let last_active = Arc::clone(&last_active);
         thread::spawn(move || handle_client(stream, &config, &last_active));
     }
