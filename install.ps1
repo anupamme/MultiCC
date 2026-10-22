@@ -6,8 +6,9 @@ param(
     [string]$InstallDir = '',
     [string]$Version = '',
     [string]$AccessToken = '',
-    [ValidateRange(1, 65535)]
-    [int]$Port = 3000,
+    # 0 means "not given"; resolved below from -Port, then $env:PORT, then 3000.
+    [ValidateRange(0, 65535)]
+    [int]$Port = 0,
     [string]$From = '',
     [string]$AdoptData = '',
     [switch]$Yes,
@@ -35,6 +36,25 @@ function Write-Step([string]$Text) { Write-Host "`n>> $Text" -ForegroundColor Cy
 function Write-Ok([string]$Text) { Write-Host "[OK] $Text" -ForegroundColor Green }
 function Write-Info([string]$Text) { Write-Host "[i] $Text" -ForegroundColor Blue }
 function Write-Warn([string]$Text) { Write-Host "[!] $Text" -ForegroundColor Yellow }
+
+# An explicit -Port (or PORT in the environment) is a pin: the server must use
+# exactly that port and fail when it is taken. Without one, 3000 is only the
+# port to start from and the launcher may walk forward to the first free port.
+$PortGiven = $PSBoundParameters.ContainsKey('Port')
+if (-not $PortGiven -and -not [string]::IsNullOrWhiteSpace($env:PORT)) {
+    $envPortValue = 0
+    if ([int]::TryParse($env:PORT, [ref]$envPortValue) -and
+        $envPortValue -ge 1 -and $envPortValue -le 65535) {
+        $Port = $envPortValue
+        $PortGiven = $true
+    } else {
+        Write-Warn "Ignoring invalid PORT environment variable: $($env:PORT)"
+    }
+}
+if (-not $PortGiven) { $Port = 3000 }
+if ($Port -lt 1 -or $Port -gt 65535) {
+    throw "Invalid -Port: $Port (expected 1-65535)"
+}
 
 function Install-DesktopShortcut([string]$Root) {
     $desktop = if ($env:MULTICC_DESKTOP_DIR) {
@@ -625,9 +645,11 @@ try {
             $AccessToken = $legacyToken
         }
         $legacyPortValue = 0
-        if (-not $PSBoundParameters.ContainsKey('Port') -and
+        if (-not $PortGiven -and
             [int]::TryParse($legacyPort, [ref]$legacyPortValue) -and
             $legacyPortValue -ge 1 -and $legacyPortValue -le 65535) {
+            # The old .env always recorded a port, so this is a starting point,
+            # not proof the user chose it.
             $Port = $legacyPortValue
         }
     }
@@ -645,8 +667,29 @@ try {
             Write-Ok 'ACCESS_TOKEN generated'
         }
     }
+    if (-not $PortGiven -and $targetHadInstall) {
+        # An earlier install may carry a chosen port; keep both the value and
+        # the marker so an upgrade does not quietly turn a pin into a walk.
+        $existingPort = (& $MultiCCCommand config get PORT 2>$null | Out-String).Trim()
+        $existingPortValue = 0
+        if ([int]::TryParse($existingPort, [ref]$existingPortValue) -and
+            $existingPortValue -ge 1 -and $existingPortValue -le 65535) {
+            $Port = $existingPortValue
+            $existingPinned = (& $MultiCCCommand config get PORT_PINNED 2>$null | Out-String).Trim()
+            if ($existingPinned -in @('1', 'true', 'TRUE', 'yes', 'YES', 'on', 'ON')) {
+                $PortGiven = $true
+            }
+        }
+    }
     Invoke-MultiCC @('config', 'set', 'PORT', [string]$Port) | Out-Null
-    Write-Ok "PORT set to $Port"
+    if ($PortGiven) {
+        # `config set PORT` records the pin; make the outcome explicit here too.
+        Invoke-MultiCC @('config', 'set', 'PORT_PINNED', '1') | Out-Null
+        Write-Ok "PORT set to $Port (pinned: startup fails if it is taken)"
+    } else {
+        Invoke-MultiCC @('config', 'unset', 'PORT_PINNED') -IgnoreFailure | Out-Null
+        Write-Ok "PORT set to $Port (starting port: moves forward if it is taken)"
+    }
 
     # -- Bring an older installation's data across -------------------------
     # Before the server has ever started: the destination has to be empty for the

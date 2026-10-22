@@ -47,7 +47,7 @@ the authority for anything below.
 | `--version <v\|latest>` | Release to install; default is the tag in the URL |
 | `--from <path\|url>` | Install from a local archive/directory or a URL instead of downloading |
 | `--token <xxx>` | Pre-set `ACCESS_TOKEN` (default: auto-generated) |
-| `--port <port>` | Server port (default: `3000`) |
+| `--port <port>` | Server port (default: `3000`). When given (also via the `PORT` environment variable), it is pinned: an occupied port fails startup instead of rolling to the next one. Without it, startup begins at 3000 and uses the first free port. |
 | `--no-service` | Skip the start-on-login setup |
 | `--no-start` | Install/configure only; also skips start-on-login setup |
 | `--no-open` | Start the server but do not open a browser |
