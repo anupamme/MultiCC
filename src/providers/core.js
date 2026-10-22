@@ -32,9 +32,6 @@ const { createCodexAttemptHome } = require('../codex/attempt-home');
 const { createCodexSessionHomeRuntime } = require('../codex/session-home');
 const { isOfficialCodexOAuthProvider } = require('../codex/official-relay');
 const { normalizeAllowlist: normalizeEgressIpAllowlist } = require('./egress-ip-policy');
-// 专用出口的本机跳：形状（路径 + 端口）由这个无依赖模块统一，转发器在
-// src/claude-auth/egress-forwarder.js 里服务同一个前缀。
-const claudeEgressRoute = require('./claude-egress-route');
 // Resident lanes hold their route across turns, so they own the codex home that
 // bakes it (see the module). It reaches back here for the physical
 // materialization, which is why it is required from this side.
@@ -875,8 +872,8 @@ function resolveCodexDirectHttp(providerId) {
 
 // Dedicated egress binding: which plugin profile this Claude ACCOUNT leaves
 // through. Only the identity is stored — the endpoint/credentials stay inside the
-// plugin's own data dir, and the URL is resolved per request (see
-// src/claude-auth/egress-forwarder.js). `null` clears, `undefined` leaves as is.
+// plugin's own data dir, and the URL is resolved per request by the proxy's
+// resolveUpstreamAgent hook (see src/claude-auth/egress-agent.js). `null` clears, `undefined` leaves as is.
 const EGRESS_PLUGIN_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 const EGRESS_PROFILE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 function normalizeEgressBinding(value) {
@@ -2346,24 +2343,6 @@ function claudeProviderTokenEnv(provider) {
 function claudeRoutingProviderView(provider) {
   if (!provider) return provider;
   const { env, token, bearerOnly } = claudeProviderTokenEnv(provider);
-  // Official entry bound to a dedicated egress (per Claude account): give it a
-  // base URL pointing at the local forwarder. That single change moves the route
-  // off the proxy's official branch and onto its generic one, so the hop stops
-  // replaying the host login and instead forwards to us — the forwarder attaches
-  // THIS account's OAuth credential and dials api.anthropic.com through the
-  // plugin's egress (src/claude-auth/egress-forwarder.js). Nothing is persisted:
-  // the stored record stays base-less, which is what keeps it recognized as an
-  // official entry everywhere else.
-  if (!token && provider.egressBinding && !String(env.ANTHROPIC_BASE_URL || '').trim()) {
-    const next = {
-      ...parseConfig(provider.settingsConfig),
-      env: { ...env, ANTHROPIC_BASE_URL: claudeEgressRoute.baseUrlFor(provider.id) },
-    };
-    return {
-      ...provider,
-      settingsConfig: typeof provider.settingsConfig === 'string' ? JSON.stringify(next) : next,
-    };
-  }
   if (!token) return provider;
   const hasBase = !!String(env.ANTHROPIC_BASE_URL || '').trim();
   if (hasBase && !bearerOnly) return provider;

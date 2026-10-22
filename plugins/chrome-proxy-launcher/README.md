@@ -135,8 +135,8 @@ Chrome --proxy-server=http://127.0.0.1:<随机端口>  →  中继  →  真实�
 （MultiCC 侧「线路 → 官方账号 → 编辑 → 专用出口」）：每个账号绑一个不同的
 身份，各账号的请求就从不同的 IP 出去。
 
-调用方（MultiCC 的 `/claude-egress/<providerId>` 转发器）拿的是一条标准代理
-URL，由它自己在 http 层把上游请求接到这条出口上。`egress` 只负责「把出口准备好」
+调用方（MultiCC 交给 cli-provider-router 的 `resolveUpstreamAgent` 钩子）每个
+请求拨号前调一次 `egress`，拿到一条标准代理 URL，CPR 就经这条出口去连上游。`egress` 只负责「把出口准备好」
 —— 内核/中继已在跑就复用，不在跑就拉起；返回的 `kind` 说明用的是哪一段：
 
 | kind | proxyUrl | 何时 |

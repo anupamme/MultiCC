@@ -2317,7 +2317,7 @@
       ]
     },
     {
-      "path": "tests/test-claude-egress-forwarder.js",
+      "path": "tests/test-claude-egress-agent.js",
       "tier": "core",
       "lane": "deterministic",
       "owner": "npm:test:provider-router",

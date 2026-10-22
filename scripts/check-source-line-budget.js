@@ -124,12 +124,12 @@ const MIGRATION_DEBT = Object.freeze({
   // 那一族抬起且没回来登记 —— 2026-10-22 插件通道接线时实测 3020/158444
   //（本轮零行变更，仅合并 require 与挂载同行）。按棘轮补登记存量高水位；
   // 下一次动 server.js 该拆的仍是账号/额度路由那一族，落回 <= 3000 就删掉这条。
-  // 2026-10-22 同一轮再接一跳：官方账号「专用出口」的本机转发器
-  //（src/claude-auth/egress-forwarder.js）必须挂在 express.json() 之前，实测
-  // 3028/158966。
+  // 2026-10-22 同一轮再接官方账号「专用出口」：本机转发跳改成交给 CPR 的
+  // resolveUpstreamAgent 钩子（src/claude-auth/egress-agent.js），外加旧 CPR
+  // 不认钩子时的失败兜底，实测 3025/159170。
   'server.js': Object.freeze({
-    ceiling: 3028,
-    byteCeiling: 158966,
+    ceiling: 3025,
+    byteCeiling: 159170,
     target: 3000,
     reason: 'split account/quota and host-power route families out of server.js to return under 3k',
   }),
