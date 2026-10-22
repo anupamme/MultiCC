@@ -57,8 +57,38 @@ pub fn base64_encode(input: &[u8]) -> String {
     out
 }
 
-pub fn basic_authorization(username: &str, password: &str) -> String {
-    format!(
+/// 标准字母表 base64 解码（机场订阅常把 base64 包在 yaml 外面）。
+/// 容忍换行与 URL-safe 变体；其余非法字符直接判错。
+pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for ch in input.chars() {
+        let value = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 26,
+            '0'..='9' => ch as u32 - '0' as u32 + 52,
+            '+' | '-' => 62,
+            '/' | '_' => 63,
+            '=' => break,
+            c if c.is_whitespace() => continue,
+            _ => return Err("不是 base64 文本".into()),
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+    if out.is_empty() {
+        return Err("不是 base64 文本".into());
+    }
+    Ok(out)
+}
+
+pub fn basic_authorization(username: &str, password: &str) -> String {    format!(
         "Proxy-Authorization: Basic {}",
         base64_encode(format!("{username}:{password}").as_bytes())
     )

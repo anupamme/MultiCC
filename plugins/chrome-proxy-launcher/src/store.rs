@@ -2,7 +2,12 @@
 //!
 //! 布局：
 //!   profiles.json                     身份清单（原子写：tmp + rename）
+//!   subscriptions.json                订阅清单（名称 / URL / 节点名缓存）
+//!   subscriptions/<id>.yaml           订阅拉下来的完整 Clash 配置原文
 //!   run/<id>.pid                      launch 后记录的主进程 pid
+//!   run/<id>.relay.json               带凭据直连代理的本地中继
+//!   run/<id>.core.pid                 订阅出口的 mihomo 内核 pid
+//!   core/<id>/                        每个身份的内核工作目录（config.yaml 等）
 //!   chrome-profiles/<id>/             每个身份独立的 Chrome user-data-dir
 //!
 //! id 只含 ASCII 安全字符（slug 或 profile-N），目录名直接用 id，不会出现
@@ -49,7 +54,12 @@ impl ProxyConfig {
 pub struct Profile {
     pub id: String,
     pub name: String,
-    pub proxy: ProxyConfig,
+    /// 直连代理出口。老数据里一定有；订阅出口时为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
+    /// 订阅出口：订阅里的某个节点（可再经它跳板到上游住宅代理）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription: Option<SubscriptionEgress>,
     #[serde(default)]
     pub note: String,
     #[serde(default)]
@@ -58,6 +68,40 @@ pub struct Profile {
     pub created_at: i64,
     #[serde(default)]
     pub updated_at: i64,
+}
+
+/// 订阅出口 = 跳板节点 + 可选上游代理。链路：
+///   本机 → (mihomo) 订阅节点 → 上游住宅代理 → 目标站
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionEgress {
+    /// 订阅 id（subscriptions.json 里的条目）。
+    pub id: String,
+    /// 节点名；空 = 用订阅里的第一个节点。
+    #[serde(default)]
+    pub node: String,
+    /// 经该节点跳板后才可达的上游代理（家宽/住宅代理通常如此）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<ProxyConfig>,
+}
+
+/// 一份订阅：URL + 拉取结果的元信息。节点名缓存起来给 UI 选，配置原文
+/// 单独落在 subscriptions/<id>.yaml（可能上百 KB，不塞进清单 JSON）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subscription {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub updated_at: i64,
+    #[serde(default)]
+    pub nodes: Vec<String>,
+    /// 订阅服务器回的 traffic 头（流量/到期信息），原样展示。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traffic: Option<String>,
+    #[serde(default)]
+    pub source_bytes: u64,
 }
 
 pub fn now_secs() -> i64 {
@@ -81,6 +125,48 @@ pub fn data_dir() -> PathBuf {
 
 pub fn profiles_file() -> PathBuf {
     data_dir().join("profiles.json")
+}
+
+pub fn subscriptions_file() -> PathBuf {
+    data_dir().join("subscriptions.json")
+}
+
+/// 订阅拉下来的配置原文（mihomo 可直接吃的完整 Clash 配置）。
+pub fn subscription_config_file(id: &str) -> PathBuf {
+    data_dir().join("subscriptions").join(format!("{id}.yaml"))
+}
+
+/// 每个身份的内核目录：config.yaml + 内核自己的缓存。
+pub fn core_dir(id: &str) -> PathBuf {
+    data_dir().join("core").join(id)
+}
+
+pub fn core_pid_file(id: &str) -> PathBuf {
+    data_dir().join("run").join(format!("{id}.core.pid"))
+}
+
+/// 内核的 {pid, port}：probe 复用运行中的内核时要知道它监听哪个端口。
+pub fn core_info_file(id: &str) -> PathBuf {
+    data_dir().join("run").join(format!("{id}.core.json"))
+}
+
+pub fn clear_core_info(id: &str) {
+    let _ = fs::remove_file(core_info_file(id));
+}
+
+pub fn read_core_pid(id: &str) -> Option<i32> {
+    let text = fs::read_to_string(core_pid_file(id)).ok()?;
+    text.trim().parse::<i32>().ok()
+}
+
+pub fn write_core_pid(id: &str, pid: i32) -> Result<(), String> {
+    let dir = data_dir().join("run");
+    fs::create_dir_all(&dir).map_err(|err| format!("创建运行目录失败：{err}"))?;
+    fs::write(core_pid_file(id), pid.to_string()).map_err(|err| format!("写入内核 pid 失败：{err}"))
+}
+
+pub fn clear_core_pid(id: &str) {
+    let _ = fs::remove_file(core_pid_file(id));
 }
 
 pub fn pid_file(id: &str) -> PathBuf {
@@ -127,8 +213,41 @@ pub fn save_profiles(profiles: &[Profile]) -> Result<(), String> {
     fs::rename(&tmp, &file).map_err(|err| format!("替换身份清单失败：{err}"))
 }
 
-pub fn read_pid(id: &str) -> Option<i32> {
-    let text = fs::read_to_string(pid_file(id)).ok()?;
+pub fn load_subscriptions() -> Result<Vec<Subscription>, String> {
+    let raw = match fs::read(subscriptions_file()) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("读取订阅清单失败：{err}")),
+    };
+    serde_json::from_slice(&raw).map_err(|err| format!("订阅清单不是合法 JSON：{err}"))
+}
+
+pub fn save_subscriptions(subs: &[Subscription]) -> Result<(), String> {
+    let dir = data_dir();
+    fs::create_dir_all(&dir).map_err(|err| format!("创建数据目录失败：{err}"))?;
+    let file = subscriptions_file();
+    let tmp = dir.join(".subscriptions.json.tmp");
+    let bytes = serde_json::to_vec_pretty(subs).map_err(|err| err.to_string())?;
+    fs::write(&tmp, bytes).map_err(|err| format!("写入订阅清单失败：{err}"))?;
+    fs::rename(&tmp, &file).map_err(|err| format!("替换订阅清单失败：{err}"))
+}
+
+pub fn write_subscription_config(id: &str, body: &str) -> Result<(), String> {
+    let file = subscription_config_file(id);
+    let dir = file.parent().map(PathBuf::from).unwrap_or_else(data_dir);
+    fs::create_dir_all(&dir).map_err(|err| format!("创建订阅目录失败：{err}"))?;
+    let tmp = dir.join(format!(".{id}.yaml.tmp"));
+    fs::write(&tmp, body).map_err(|err| format!("写入订阅配置失败：{err}"))?;
+    fs::rename(&tmp, &file).map_err(|err| format!("替换订阅配置失败：{err}"))
+}
+
+pub fn read_subscription_config(id: &str) -> Result<String, String> {
+    fs::read_to_string(subscription_config_file(id)).map_err(|err| {
+        format!("订阅 {id} 的配置缓存读不到（{err}），请先刷新订阅")
+    })
+}
+
+pub fn read_pid(id: &str) -> Option<i32> {    let text = fs::read_to_string(pid_file(id)).ok()?;
     text.trim().parse::<i32>().ok()
 }
 
@@ -210,7 +329,8 @@ mod tests {
     fn allocate_id_falls_back_and_dedupes() {
         let existing = vec![Profile {
             id: "shop".into(), name: "Shop".into(),
-            proxy: ProxyConfig::new("http", "127.0.0.1", 7897),
+            proxy: Some(ProxyConfig::new("http", "127.0.0.1", 7897)),
+            subscription: None,
             note: String::new(), chrome_path: None, created_at: 0, updated_at: 0,
         }];
         assert_eq!(allocate_id("Shop", &existing), "shop-2");

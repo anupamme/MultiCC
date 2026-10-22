@@ -26,6 +26,8 @@
     padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--shadow); }
   h2 { font-size: 14px; margin: 0 0 10px; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  label.inline { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 13px; margin-top: 12px; }
+  label.inline input { width: auto; }
   input, select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--card); color: var(--ink); font-size: 14px; }
   input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
@@ -41,8 +43,9 @@
   .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .chip { border: 1px dashed var(--line); border-radius: 999px; padding: 3px 10px;
     font-size: 12px; cursor: pointer; background: var(--chip); }
-  ul.profiles { list-style: none; margin: 0; padding: 0; }
-  ul.profiles li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+  ul.profiles, ul.subs { list-style: none; margin: 0; padding: 0; }
+  ul.profiles li, ul.subs li { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
   .p-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .p-name { font-weight: 600; }
   .p-proxy { color: var(--muted); font-size: 12px; font-family: ui-monospace, monospace; }
@@ -55,46 +58,105 @@
   #notice.ok { display: block; background: color-mix(in srgb, var(--ok) 12%, var(--card)); color: var(--ok); }
   #notice.bad { display: block; background: color-mix(in srgb, var(--bad) 12%, var(--card)); color: var(--bad); }
   .empty { color: var(--muted); text-align: center; padding: 18px 0; }
+  .sub-meta { color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
 <div id="notice" role="status"></div>
 <h1>🌐 Chrome 隔离出口启动器</h1>
-<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口代理。浏览器互不串 cookie，出口互不串 IP；代理不可达时拒绝启动，避免 Chrome 静默直连泄漏真实地址。代理支持账号密码（Chrome 不能直接带认证，插件会自动起一个本地中继代为认证）。</p>
+<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口。出口可以是本机代理端口，也可以是 Clash 订阅里的节点（由身份专属 mihomo 内核承接）；家宽/住宅代理常需要先经节点跳板，填在「上游」里就是 本机 → 跳板节点 → 住宅代理 → 目标站。出口不可用时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
 
 <section class="card">
   <h2>新建 / 编辑身份</h2>
   <label>身份名称（如「美区店铺」「运营 A」）</label>
   <input id="f-name" placeholder="必填">
-  <div class="row">
-    <div>
-      <label>出口类型</label>
-      <select id="f-scheme">
-        <option value="http">HTTP 代理（Clash 混合端口等）</option>
-        <option value="socks5">SOCKS5 代理</option>
-        <option value="https">HTTPS 代理</option>
-      </select>
+
+  <label>出口类型</label>
+  <select id="f-egress">
+    <option value="direct">直连代理（本机 VPN 端口 / 任意 http(s)・socks5）</option>
+    <option value="subscription">订阅节点（Clash 订阅；可链跳板到上游住宅代理）</option>
+  </select>
+
+  <div id="egress-direct">
+    <div class="row">
+      <div>
+        <label>代理类型</label>
+        <select id="f-scheme">
+          <option value="http">HTTP 代理（Clash 混合端口等）</option>
+          <option value="socks5">SOCKS5 代理</option>
+          <option value="https">HTTPS 代理</option>
+        </select>
+      </div>
+      <div>
+        <label>代理地址</label>
+        <input id="f-host" value="127.0.0.1" placeholder="127.0.0.1">
+      </div>
+      <div>
+        <label>端口</label>
+        <input id="f-port" inputmode="numeric" placeholder="7897">
+      </div>
     </div>
-    <div>
-      <label>代理地址</label>
-      <input id="f-host" value="127.0.0.1" placeholder="127.0.0.1">
-    </div>
-    <div>
-      <label>端口</label>
-      <input id="f-port" inputmode="numeric" placeholder="7897">
+    <div class="row">
+      <div>
+        <label>代理账号（可选，代理要求认证时填）</label>
+        <input id="f-user" autocomplete="off" placeholder="user">
+      </div>
+      <div>
+        <label>代理密码（可选）</label>
+        <input id="f-pass" type="password" autocomplete="new-password" placeholder="••••">
+      </div>
     </div>
   </div>
-  <div class="row">
-    <div>
-      <label>代理账号（可选，代理要求认证时填）</label>
-      <input id="f-user" autocomplete="off" placeholder="user">
+
+  <div id="egress-sub" hidden>
+    <div class="row">
+      <div>
+        <label>订阅</label>
+        <select id="f-sub"></select>
+      </div>
+      <div>
+        <label>节点（该身份固定走这个节点）</label>
+        <select id="f-node"></select>
+      </div>
     </div>
-    <div>
-      <label>代理密码（可选）</label>
-      <input id="f-pass" type="password" autocomplete="new-password" placeholder="••••">
+    <label class="inline">
+      <input type="checkbox" id="f-via-on">
+      经这个节点跳板，再到上游住宅代理（家宽代理通常需要）
+    </label>
+    <div id="via-block" hidden>
+      <div class="row">
+        <div>
+          <label>上游类型</label>
+          <select id="f-via-scheme">
+            <option value="http">HTTP</option>
+            <option value="socks5">SOCKS5</option>
+            <option value="https">HTTPS</option>
+          </select>
+        </div>
+        <div>
+          <label>上游地址</label>
+          <input id="f-via-host" placeholder="residential.example.com">
+        </div>
+        <div>
+          <label>端口</label>
+          <input id="f-via-port" inputmode="numeric" placeholder="8080">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>上游账号（可选）</label>
+          <input id="f-via-user" autocomplete="off" placeholder="user">
+        </div>
+        <div>
+          <label>上游密码（可选）</label>
+          <input id="f-via-pass" type="password" autocomplete="new-password" placeholder="••••">
+        </div>
+      </div>
     </div>
+    <p class="hint" id="node-hint">订阅里的 vmess/trojan 等协议由本机 mihomo 内核运行；每个身份一个独立实例与端口。</p>
   </div>
-  <div class="row">
+
+  <div class="row" style="margin-top:10px">
     <div>
       <label>浏览器路径（留空 = 自动找 Chrome）</label>
       <input id="f-chrome" placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome">
@@ -110,6 +172,23 @@
     <button type="button" class="primary" id="btn-save">保存身份</button>
   </div>
   <div class="chips" id="chips"></div>
+</section>
+
+<section class="card">
+  <h2>订阅管理</h2>
+  <div class="row">
+    <div>
+      <label>订阅名称（留空 = 用域名）</label>
+      <input id="s-name" placeholder="家宽订阅">
+    </div>
+  </div>
+  <label>订阅地址（Clash 订阅链接；含 token，只保存在本机）</label>
+  <input id="s-url" placeholder="https://…/subscription.yaml">
+  <div class="row" style="margin-top:10px">
+    <button type="button" class="primary" id="btn-sub-add">添加订阅</button>
+  </div>
+  <ul class="subs" id="sub-list"></ul>
+  <p class="empty" id="sub-empty" hidden>还没有订阅。粘贴 Clash 订阅链接后点「添加订阅」。</p>
 </section>
 
 <section class="card">
@@ -146,22 +225,126 @@ async function run(command, input) {
   return payload;
 }
 
-function proxyText(profile) {
-  const user = profile.proxy.username ? `${profile.proxy.username}@` : '';
-  const lock = profile.proxy.username ? ' 🔑' : '';
-  return `${profile.proxy.scheme}://${user}${profile.proxy.host}:${profile.proxy.port}${lock}`;
+let subscriptions = [];   // 最近一次 list 的结果
+const probeResults = new Map(); // id -> {exitIp, via, latencyMs}
+const editingId = () => $('btn-save').dataset.editing || '';
+
+function currentEgressType() {
+  return $('f-egress').value;
+}
+
+function syncEgressBlocks() {
+  const subscribed = currentEgressType() === 'subscription';
+  $('egress-direct').hidden = subscribed;
+  $('egress-sub').hidden = !subscribed;
+  $('btn-detect').hidden = subscribed;
+}
+
+function subById(id) {
+  return subscriptions.find(item => item.id === id) || null;
+}
+
+function fillSubscriptionOptions(selectedId) {
+  const select = $('f-sub');
+  select.replaceChildren();
+  if (!subscriptions.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '（先到「订阅管理」添加订阅）';
+    select.append(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const item of subscriptions) {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = `${item.name}（${item.nodes.length} 个节点）`;
+    select.append(option);
+  }
+  if (selectedId && subById(selectedId)) select.value = selectedId;
+}
+
+function fillNodeOptions(selectedNode) {
+  const sub = subById($('f-sub').value);
+  const select = $('f-node');
+  select.replaceChildren();
+  if (!sub) {
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  for (const name of sub.nodes) {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    select.append(option);
+  }
+  if (selectedNode && sub.nodes.includes(selectedNode)) select.value = selectedNode;
+}
+
+function syncViaBlock() {
+  const on = $('f-via-on').checked;
+  $('via-block').hidden = !on;
+}
+
+function readVia() {
+  if (!$('f-via-on').checked) return null;
+  const host = $('f-via-host').value.trim();
+  if (!host) throw new Error('填了跳板上游但上游地址为空');
+  return {
+    scheme: $('f-via-scheme').value,
+    host,
+    port: Number($('f-via-port').value),
+    username: $('f-via-user').value.trim(),
+    password: $('f-via-pass').value,
+  };
+}
+
+function readDirectProxy() {
+  return {
+    scheme: $('f-scheme').value,
+    host: $('f-host').value.trim(),
+    port: Number($('f-port').value),
+    username: $('f-user').value.trim(),
+    password: $('f-pass').value,
+  };
+}
+
+function readSubscriptionEgress() {
+  const id = $('f-sub').value;
+  if (!id) throw new Error('请先选择订阅（没有就去下面添加）');
+  return { id, node: $('f-node').value || '', via: readVia() };
 }
 
 function fillForm(profile) {
   $('f-name').value = profile ? profile.name : '';
-  $('f-scheme').value = profile ? profile.proxy.scheme : 'http';
-  $('f-host').value = profile ? profile.proxy.host : '127.0.0.1';
-  $('f-port').value = profile ? profile.proxy.port : '';
-  $('f-user').value = (profile && profile.proxy.username) || '';
-  $('f-pass').value = (profile && profile.proxy.password) || '';
+  const egressType = (profile && profile.egressType) || 'direct';
+  $('f-egress').value = egressType;
+
+  const proxy = (profile && profile.proxy) || null;
+  $('f-scheme').value = proxy ? proxy.scheme : 'http';
+  $('f-host').value = proxy ? proxy.host : '127.0.0.1';
+  $('f-port').value = proxy ? proxy.port : '';
+  $('f-user').value = (proxy && proxy.username) || '';
+  $('f-pass').value = (proxy && proxy.password) || '';
+
+  const subscription = (profile && profile.subscription) || null;
+  fillSubscriptionOptions(subscription ? subscription.id : '');
+  fillNodeOptions(subscription ? subscription.node : '');
+  const via = subscription && subscription.via;
+  $('f-via-on').checked = Boolean(via);
+  $('f-via-scheme').value = via ? via.scheme : 'http';
+  $('f-via-host').value = via ? via.host : '';
+  $('f-via-port').value = via ? via.port : '';
+  $('f-via-user').value = (via && via.username) || '';
+  $('f-via-pass').value = (via && via.password) || '';
+
   $('f-chrome').value = (profile && profile.chromePath) || '';
   $('btn-save').dataset.editing = profile ? profile.id : '';
   $('btn-save').textContent = profile ? `更新「${profile.name}」` : '保存身份';
+  syncEgressBlocks();
+  syncViaBlock();
 }
 
 function makeButton(text, className, onClick) {
@@ -173,12 +356,68 @@ function makeButton(text, className, onClick) {
   return button;
 }
 
-const probeResults = new Map(); // id -> {exitIp, via, latencyMs} 本地缓存展示
+function renderSubscriptions() {
+  const list = $('sub-list');
+  list.replaceChildren();
+  $('sub-empty').hidden = subscriptions.length > 0;
+  for (const item of subscriptions) {
+    const row = document.createElement('li');
+
+    const head = document.createElement('div');
+    head.className = 'p-head';
+    const name = document.createElement('span');
+    name.className = 'p-name';
+    name.textContent = item.name;
+    const meta = document.createElement('span');
+    meta.className = 'sub-meta';
+    const updated = item.updatedAt ? new Date(item.updatedAt * 1000).toLocaleString() : '未拉取';
+    meta.textContent = `${item.nodes.length} 个节点 · 更新于 ${updated}${item.traffic ? ' · ' + item.traffic : ''}`;
+    head.append(name, meta);
+
+    const actions = document.createElement('div');
+    actions.className = 'p-actions';
+    actions.append(
+      makeButton('刷新', '', async event => {
+        event.target.disabled = true;
+        try {
+          const result = await run('subscription-refresh', { id: item.id });
+          notice(`已刷新「${item.name}」：${result.subscription.nodes.length} 个节点`);
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          event.target.disabled = false;
+          await refresh();
+        }
+      }),
+      makeButton('删除', 'danger', async event => {
+        if (!confirm(`删除订阅「${item.name}」？被身份引用时不会删除。`)) return;
+        event.target.disabled = true;
+        try {
+          await run('subscription-remove', { id: item.id });
+          notice(`已删除订阅「${item.name}」`);
+        } catch (error) {
+          notice(error.message, 'bad');
+        } finally {
+          event.target.disabled = false;
+          await refresh();
+        }
+      }),
+    );
+    row.append(head, actions);
+    list.append(row);
+  }
+}
 
 async function refresh() {
-  const list = $('list');
   const data = await run('list');
+  subscriptions = data.subscriptions || [];
   const profiles = data.profiles || [];
+  renderSubscriptions();
+  // 表单里的订阅下拉跟着最新清单走（保留当前选择）。
+  fillSubscriptionOptions($('f-sub').value);
+  fillNodeOptions($('f-node').value);
+
+  const list = $('list');
   $('empty').hidden = profiles.length > 0;
   list.replaceChildren();
   for (const profile of profiles) {
@@ -189,10 +428,10 @@ async function refresh() {
     const name = document.createElement('span');
     name.className = 'p-name';
     name.textContent = profile.name;
-    const proxy = document.createElement('span');
-    proxy.className = 'p-proxy';
-    proxy.textContent = proxyText(profile);
-    head.append(name, proxy);
+    const egress = document.createElement('span');
+    egress.className = 'p-proxy';
+    egress.textContent = profile.egressText || '';
+    head.append(name, egress);
     if (profile.running) {
       const badge = document.createElement('span');
       badge.className = 'badge run';
@@ -203,7 +442,7 @@ async function refresh() {
     if (probe) {
       const badge = document.createElement('span');
       badge.className = 'badge ip';
-      badge.title = `经 ${probe.via} · ${probe.latencyMs}ms`;
+      badge.title = `${probe.via || ''} · ${probe.latencyMs}ms`;
       badge.textContent = `出口 ${probe.exitIp}`;
       head.append(badge);
     }
@@ -216,7 +455,9 @@ async function refresh() {
         try {
           const url = $('f-url').value.trim();
           const result = await run('launch', { id: profile.id, url });
-          notice(`已启动「${profile.name}」（pid ${result.pid}），出口强制走 ${proxyText(profile)}`);
+          let detail = result.node ? `节点 ${result.node}` : (profile.egressText || '');
+          if (result.upstream) detail += ` → 上游 ${result.upstream}`;
+          notice(`已启动「${profile.name}」（pid ${result.pid}），出口：${detail}`);
         } catch (error) {
           notice(error.message, 'bad');
         } finally {
@@ -260,7 +501,7 @@ async function refresh() {
         try {
           await run('remove', { id: profile.id });
           probeResults.delete(profile.id);
-          if ($('btn-save').dataset.editing === profile.id) fillForm(null);
+          if (editingId() === profile.id) fillForm(null);
           notice(`已删除「${profile.name}」`);
         } catch (error) {
           notice(error.message, 'bad');
@@ -275,14 +516,22 @@ async function refresh() {
   }
 }
 
+$('f-egress').onchange = syncEgressBlocks;
+$('f-via-on').onchange = syncViaBlock;
+$('f-sub').onchange = () => fillNodeOptions('');
+
 $('btn-detect').onclick = async event => {
   event.target.disabled = true;
   try {
     const data = await run('detect');
     const chips = $('chips');
     chips.replaceChildren();
-    if (data.browser) notice(`浏览器：${data.browser}`);
-    else notice('没找到 Chrome，身份里需要手动填浏览器路径', 'bad');
+    const bits = [];
+    if (data.browser) bits.push(`浏览器：${data.browser}`);
+    else bits.push('没找到 Chrome，身份里需要手动填浏览器路径');
+    if (data.core) bits.push(`内核：${data.core}`);
+    else bits.push('没找到 mihomo 内核，订阅出口暂时不可用');
+    notice(bits.join(' · '), data.browser && data.core ? 'ok' : 'bad');
     const found = data.proxies || [];
     if (!found.length) {
       const hint = document.createElement('span');
@@ -311,15 +560,13 @@ $('btn-detect').onclick = async event => {
 $('btn-test').onclick = async event => {
   event.target.disabled = true;
   try {
-    const result = await run('probe', {
-      proxy: {
-        scheme: $('f-scheme').value,
-        host: $('f-host').value.trim(),
-        port: Number($('f-port').value),
-        username: $('f-user').value.trim(),
-        password: $('f-pass').value,
-      },
-    });
+    let result;
+    if (currentEgressType() === 'subscription') {
+      // 始终按表单当前值试连（含未保存的改动）：所见即所测。
+      result = await run('probe', { subscription: readSubscriptionEgress() });
+    } else {
+      result = await run('probe', { proxy: readDirectProxy() });
+    }
     notice(`这个出口的 IP 是 ${result.exitIp}（${result.latencyMs}ms）`);
   } catch (error) {
     notice(error.message, 'bad');
@@ -331,19 +578,16 @@ $('btn-test').onclick = async event => {
 $('btn-save').onclick = async event => {
   event.target.disabled = true;
   try {
+    const egressType = currentEgressType();
     const input = {
-      id: event.target.dataset.editing || '',
+      id: editingId(),
       name: $('f-name').value.trim(),
+      egressType,
       note: '',
-      proxy: {
-        scheme: $('f-scheme').value,
-        host: $('f-host').value.trim(),
-        port: Number($('f-port').value),
-        username: $('f-user').value.trim(),
-        password: $('f-pass').value,
-      },
       chromePath: $('f-chrome').value.trim(),
     };
+    if (egressType === 'subscription') input.subscription = readSubscriptionEgress();
+    else input.proxy = readDirectProxy();
     const result = await run('save', input);
     fillForm(null);
     notice(`已保存「${result.profile.name}」`);
@@ -352,6 +596,29 @@ $('btn-save').onclick = async event => {
   } finally {
     event.target.disabled = false;
     await refresh();
+  }
+};
+
+$('btn-sub-add').onclick = async event => {
+  const url = $('s-url').value.trim();
+  if (!url) {
+    notice('先粘贴订阅地址', 'bad');
+    return;
+  }
+  event.target.disabled = true;
+  try {
+    const result = await run('subscription-save', { name: $('s-name').value.trim(), url });
+    $('s-url').value = '';
+    $('s-name').value = '';
+    notice(`已添加订阅「${result.subscription.name}」：${result.subscription.nodes.length} 个节点`);
+    await refresh();
+    // 顺手选中刚加的订阅，少点一次。
+    fillSubscriptionOptions(result.subscription.id);
+    fillNodeOptions('');
+  } catch (error) {
+    notice(error.message, 'bad');
+  } finally {
+    event.target.disabled = false;
   }
 };
 
