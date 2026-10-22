@@ -26,28 +26,53 @@ function headersWithoutHop(headers) {
   return copy;
 }
 
-async function createRouteRelay() {
+// The CLI's own reachability probe, addressed to this relay rather than to a
+// provider. Answer it here so it never travels upstream.
+const HELLO_PATH = /^\/api\/hello\/?$/;
+// The only path that carries a Messages call. Everything else is still
+// forwarded (a future CLI may add endpoints this build cannot know about, and
+// an empty local 404 is what the CLI turns into "There's an issue with the
+// selected model (...)"), but it is logged once so it cannot hide again.
+const MESSAGES_PATH = /^\/v1\/messages(?:\/count_tokens)?(?:\?[^#]*)?$/;
+
+// Refuse anything that could escape the bound /claude-proxy/<provider>/<session>
+// prefix once it is concatenated with it.
+function unsafeTarget(rawUrl) {
+  const path = String(rawUrl || '').split('?')[0];
+  return !path.startsWith('/') || path.startsWith('//') || /(?:^|\/)\.\.(?:\/|$)/.test(path);
+}
+
+async function createRouteRelay({ logger = console } = {}) {
   const token = randomBytes(32).toString('hex');
   let target = null, closed = false;
   const active = new Set();
   const waiters = new Set();
+  const reported = new Set();
+  function noteUnusual(method, rawUrl) {
+    const line = `${method} ${rawUrl}`;
+    if (!logger?.warn || reported.has(line) || reported.size >= 32) return;
+    reported.add(line);
+    logger.warn('[sdk-relay] forwarding non-Messages request:', line.slice(0, 200));
+  }
   const server = http.createServer((req, res) => {
     const auth = Buffer.from(String(req.headers.authorization || ''));
     const expected = Buffer.from(`Bearer ${token}`);
     if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
       res.writeHead(401); res.end(); return;
     }
-    if (req.method !== 'POST' || !/^\/v1\/messages(?:\/count_tokens)?(?:\?[^#]*)?$/.test(req.url)) {
-      res.writeHead(404); res.end(); return;
+    if (HELLO_PATH.test(req.url)) {
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); return;
     }
+    if (unsafeTarget(req.url)) { res.writeHead(400); res.end(); return; }
     // Snapshot before reading any body. bind() cannot move active producers.
     const route = target;
     if (closed || !route) { res.writeHead(503); res.end(); return; }
+    if (!MESSAGES_PATH.test(req.url)) noteUnusual(req.method, req.url);
     const headers = headersWithoutHop(req.headers);
     delete headers['x-api-key'];
     headers.authorization = `Bearer ${route.token}`;
     const upstream = http.request(route.url.origin + route.url.pathname + req.url,
-      { method: 'POST', headers }, response => {
+      { method: req.method, headers }, response => {
         res.writeHead(response.statusCode, headersWithoutHop(response.headers));
         response.on('error', () => res.destroy());
         response.pipe(res);
