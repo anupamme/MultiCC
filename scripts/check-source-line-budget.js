@@ -428,8 +428,11 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 外网访问提示与订阅日期展示：新增 18 个双语键。
     // +5 双语键（airDirDelete*）：目录页「删除工作区」入口与两步确认文案，实测
     //   9488/603741，按真实高水位抬一格。
-    maxLines: 9488,
-    maxBytes: 603741,
+    // main 上另有 +8 双语键（airOfficialAcctPaste*，粘贴回调登录）未登记、已到 9504 行；
+    // 随后 Claude 账号登录改为 Magpie 式登录面板：+15 双语键（airOfficialAcctSignin*），
+    // 删 5 个随旧「自动打开授权页」与行内粘贴框退场的键，实测 9524/607173。
+    maxLines: 9524,
+    maxBytes: 607173,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

@@ -185,42 +185,121 @@ test('global account controls switch via account API and retain the singleton pr
   assert.match(status.textContent, /已全局切换/);
 });
 
-test('a pending Claude account posts the pasted callback from its row', async () => {
-  let click;
-  const calls = [];
-  const id = 'bbbbbbbbbbbbbbbb';
-  const callback = 'http://localhost:54545/callback?code=pasted&state=st';
-  const input = { value: callback, dataset: { id } };
+// A tiny DOM for the sign-in panel: every overlay hands out one stub per
+// data-k / data-act selector, so the test can drive the panel like a user.
+function signinHarness(apiImpl) {
+  const overlays = [], opened = [], copied = [], toasts = [], ticks = [], later = [];
+  const stub = () => ({ value: '', textContent: '', disabled: false, style: {}, dataset: {} });
   const body = { innerHTML: '', querySelectorAll: () => [] };
+  let click;
   const context = vm.createContext({
-    window: { t, MultiCCApi: { json: async (url, options) => {
-      calls.push({ url, method: options?.method || 'GET', body: options?.json });
-      if (url === '/api/claude/accounts') return { accounts: [
-        { id, label: '远程号', loggedIn: false, login: { state: 'pending', oauthUrl: 'https://claude.ai/oauth/authorize?x=1' } },
-      ] };
-      if (url === '/api/codex/accounts') return { accounts: [] };
-      return { ok: true, accepted: true };
-    } } },
+    window: { t, MultiCCApi: { json: apiImpl }, open: (url) => opened.push(url), isSecureContext: true },
+    navigator: { clipboard: { writeText: async (text) => { copied.push(text); } } },
     document: {
-      body: { dataset: {} },
+      body: { dataset: {}, appendChild() {} },
       getElementById: key => key === 'official-accounts-body' ? body : {},
       addEventListener: (name, handler) => { if (name === 'click') click = handler; },
-      querySelectorAll: selector => selector.includes('claude-callback') ? [input] : [],
+      createElement: () => {
+        const parts = {};
+        const overlay = { style: {}, innerHTML: '', removed: false, remove() { this.removed = true; },
+          querySelector: sel => parts[sel] || (parts[sel] = stub()) };
+        overlay.q = k => overlay.querySelector('[data-k="' + k + '"]');
+        overlays.push(overlay);
+        return overlay;
+      },
     },
-    MutationObserver: class { observe() {} }, setInterval, clearInterval, Date,
-    escapeHtml: text => text, loadProviders() {},
+    MutationObserver: class { observe() {} },
+    setInterval: (fn) => { ticks.push(fn); return ticks.length; },
+    clearInterval() {},
+    setTimeout: (fn) => { later.push(fn); return later.length; },
+    Date, escapeHtml: text => text, loadProviders() {}, showToast: (msg, err) => toasts.push({ msg, err: !!err }),
   });
   vm.runInContext(fs.readFileSync(SOURCE_PATH, 'utf8'), context);
-  await context.window.MultiCCOfficialAccounts.load();
-  assert.match(body.innerHTML, /data-act="paste-login"/);
-  assert.match(body.innerHTML, /浏览器若提示无法访问 localhost/);
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  return { context, overlays, opened, copied, toasts, ticks, later, body, flush, click: (...a) => click(...a) };
+}
 
-  click({ target: { closest: () => ({ dataset: { act: 'paste-login', vendor: 'claude', id } }) } });
-  await new Promise(resolve => setImmediate(resolve));
-  const paste = calls.find(c => c.url === `/api/claude/accounts/${id}/login-callback`);
-  assert.equal(paste.method, 'POST');
-  assert.equal(paste.body.callback, callback);
-  assert.equal(input.value, '', 'the pasted secret is cleared from the row');
+test('adding a Claude account shows the sign-in link and a callback box instead of opening claude.ai', async () => {
+  const id = 'cccccccccccccccc';
+  const oauthUrl = 'https://claude.ai/oauth/authorize?code=true&state=st';
+  const calls = [];
+  let status = 'pending';
+  const h = signinHarness(async (url, options) => {
+    calls.push({ url, method: options?.method || 'GET', body: options?.json });
+    if (url === '/api/claude/accounts' && options?.method === 'POST') return { ok: true, accountId: id, oauthUrl };
+    if (url === '/api/claude/accounts') return { accounts: [{ id, label: 'VPS号', login: { state: status } }] };
+    if (url === '/api/codex/accounts') return { accounts: [] };
+    if (url.endsWith('/login-callback')) {
+      if (options.json.callback.includes('state=wrong')) throw new Error('回调 state 不匹配');
+      return { ok: true, accepted: true };
+    }
+    if (url.endsWith('/login-status')) return { state: status, email: status === 'complete' ? 'me@example.com' : '' };
+    return { ok: true };
+  });
+  h.context.window.MultiCCOfficialAccounts.add('claude');
+  const label = h.overlays[0];
+  label.querySelector('[data-k="label"]').value = 'VPS号';
+  label.querySelector('[data-act="ok"]').onclick();
+  await h.flush(); await h.flush();
+
+  assert.deepEqual(h.opened, [], 'nothing opens by itself');
+  const panel = h.overlays[1];
+  assert.match(panel.innerHTML, /登录 Claude 账号 · VPS号/);
+  assert.match(panel.innerHTML, /localhost:54545/);
+  assert.equal(panel.q('url').textContent, oauthUrl, 'the whole link is shown');
+  assert.equal(panel.q('submit').disabled, true, 'nothing to submit yet');
+
+  panel.q('copy').onclick();
+  await h.flush();
+  assert.deepEqual(h.copied, [oauthUrl]);
+  panel.q('open').onclick();
+  assert.deepEqual(h.opened, [oauthUrl], 'opening is the user\'s own click');
+
+  const input = panel.q('callback');
+  input.value = 'http://localhost:54545/callback?code=bad&state=wrong';
+  input.oninput();
+  assert.equal(panel.q('submit').disabled, false);
+  await panel.q('form').onsubmit({ preventDefault() {} });
+  assert.equal(panel.q('error').textContent, '回调 state 不匹配', 'a rejected paste says why in place');
+  assert.equal(input.disabled, false, 'and can be corrected');
+
+  input.value = 'http://localhost:54545/callback?code=good&state=st';
+  const first = panel.q('form').onsubmit({ preventDefault() {} });
+  panel.q('form').onsubmit({ preventDefault() {} });
+  await first;
+  const pastes = calls.filter(c => c.url === `/api/claude/accounts/${id}/login-callback`);
+  assert.equal(pastes.length, 2, 'the second submit while one is in flight is ignored');
+  assert.equal(pastes[1].body.callback, 'http://localhost:54545/callback?code=good&state=st');
+  assert.equal(panel.q('phase').textContent, '已接收回调，正在换取令牌…');
+  assert.equal(input.disabled, true);
+
+  status = 'complete';
+  for (const tick of h.ticks) tick();
+  await h.flush(); await h.flush();
+  assert.equal(panel.q('phase').textContent, 'Claude 账号登录完成：me@example.com');
+  assert.equal(h.toasts.filter(x => /登录完成/.test(x.msg)).length, 0, 'the panel reports it, not a second toast');
+  for (const fn of h.later) fn();
+  assert.equal(panel.removed, true, 'the panel closes once signed in');
+});
+
+test('a pending Claude row reopens the sign-in panel with its link', async () => {
+  const id = 'bbbbbbbbbbbbbbbb';
+  const oauthUrl = 'https://claude.ai/oauth/authorize?x=1';
+  const h = signinHarness(async (url) => {
+    if (url === '/api/claude/accounts') return { accounts: [{ id, label: '远程号', loggedIn: false, login: { state: 'pending', oauthUrl } }] };
+    if (url === '/api/codex/accounts') return { accounts: [] };
+    return { state: 'pending' };
+  });
+  await h.context.window.MultiCCOfficialAccounts.load();
+  assert.match(h.body.innerHTML, /data-act="open-signin"/);
+  assert.match(h.body.innerHTML, /继续登录/);
+  assert.doesNotMatch(h.body.innerHTML, /data-k="claude-callback"/);
+  h.click({ target: { closest: () => ({ dataset: { act: 'open-signin', vendor: 'claude', id } }) } });
+  const panel = h.overlays[0];
+  assert.equal(panel.q('url').textContent, oauthUrl);
+  assert.deepEqual(h.opened, []);
+  panel.q('close').onclick();
+  assert.equal(panel.removed, true);
 });
 
 test('an official Provider card still opens the editor, because the egress-IP allowlist lives only there', () => {
