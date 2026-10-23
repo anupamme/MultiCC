@@ -77,7 +77,8 @@ test('真实 Chrome：固定代理可用时访问成功，断代理后目标直�
     const logFile = path.join(f.home, `network-${suffix}.json`);
     const args = launched.data.args.map(arg => arg.startsWith('--user-data-dir=')
       ? `--user-data-dir=${path.join(f.home, `headless-${suffix}`)}` : arg);
-    execFile(process.env.CHROME_TEST_BIN, ['--headless=new', '--disable-background-networking', '--dump-dom', `--log-net-log=${logFile}`, ...args],
+    // 独立 user-data-dir 仍会访问系统钥匙串；只在测试中使用模拟钥匙串。
+    execFile(process.env.CHROME_TEST_BIN, [...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []), '--headless=new', '--disable-background-networking', '--dump-dom', `--log-net-log=${logFile}`, ...args],
       { timeout: 15000, maxBuffer: 2 * 1024 * 1024 }, (error, stdout) => {
         if (error) return reject(error);
         try { resolve({ html: stdout, log: JSON.parse(fs.readFileSync(logFile, 'utf8')) }); }

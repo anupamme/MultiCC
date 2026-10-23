@@ -158,7 +158,10 @@ node --test --test-concurrency=1 plugins/chrome-proxy-launcher/tests/isolation.c
 集成测试默认使用上面构建的 release 二进制（可用 `PLUGIN_TEST_BIN` 指定）。
 提供 `CHROME_TEST_BIN` 浏览器路径后，额外在临时 profile 中进行无头断代理测试：
 代理开启时页面必须成功，关闭代理后必须记录代理连接错误且目标没有新增直连。
-测试不使用用户登录数据，也不关闭现有浏览器。指纹测试通过临时 Chrome 的调试
+测试不使用用户登录数据，也不关闭现有浏览器。macOS 的所有临时 Chrome 测试
+均使用 `--use-mock-keychain`，避免测试读取系统钥匙串或反复弹出授权提示；仅创建
+临时 profile 不能隔离钥匙串。此参数不用于真实身份，不能为消除提示而给已有
+登录目录切换密钥来源，否则可能无法解密原有 Cookie / 密码。指纹测试通过临时 Chrome 的调试
 管道加载真实扩展，验证首段页面脚本、iframe、重复读取、跨进程重载和卸载恢复；
 测试接口的临时加载不等于人工安装，不能据此宣称已验证用户身份中的安装状态。
 
