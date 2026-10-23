@@ -887,6 +887,12 @@ class _ChatViewState extends State<ChatView> {
     // Scaffold removes the bottom view inset from the MediaQuery it provides
     // to its body, so capture keyboard visibility before entering it.
     final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // 分类条那一行现在同时承载「实时读数」与两个动作药丸，两处判定在这里一次
+    // 算好：散着写的话，状态药丸位和有按钮的状态会各说各话。
+    final livenessLine = chatLivenessDeservesLine(
+      _liveness?['state'] as String?,
+    );
+    final classifyActions = classifyBarActions(provider.classifyState);
     return Scaffold(
       backgroundColor: const Color(0xFFf4f8fd),
       body: SafeArea(
@@ -1010,48 +1016,35 @@ class _ChatViewState extends State<ChatView> {
                                 ChatSessionGoneBanner(
                                   onClose: () => _closeGoneSession(provider),
                                 ),
-                              // Liveness pill: only working (🟢) and stalled (🔴) earn a
-                              // dedicated line — they say "a turn is running / stuck".
-                              // idle (🟡) and unknown (⚪) are the resting states; a
-                              // permanent "空闲" row under the header is pure noise.
-                              if (chatLivenessDeservesLine(
-                                _liveness?['state'] as String?,
-                              ))
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(
-                                      left: 12,
-                                      right: 12,
-                                      bottom: 2,
-                                    ),
-                                    child: livenessChip(_liveness),
-                                  ),
-                                ),
-                              if (provider.hasClassify)
-                                Builder(
-                                  builder: (_) {
-                                    // 显隐规则集中在 helper 里（web can-mark-done /
-                                    // can-cancel-task 两个 class 的等价物），这里只负责把动作接上。
-                                    final actions = classifyBarActions(
-                                      provider.classifyState,
-                                    );
-                                    return AuxClassifyBar(
-                                      goal: provider.classifyGoal,
-                                      phase: provider.classifyPhase,
-                                      classifyState: provider.classifyState,
-                                      goalState: provider.classifyGoalState?.toString(),
-                                      stale: provider.classifyStale,
-                                      onMarkTurnSucceeded: actions.canMarkDone
-                                          ? () => _markTurnSucceeded(provider)
-                                          : null,
-                                      onCancelTurn: actions.canCancelTask
-                                          ? provider.cancel
-                                          : null,
-                                      onMarkGoalAchieved: () =>
-                                          _markGoalAchieved(provider),
-                                    );
-                                  },
+                              // 回合实时读数（服务端 liveness）：working/stalled
+                              // 才有信息量，idle/unknown 是静息态，不占位置。
+                              // 它不再单独占一行 —— 有分类条时并进同一行的状态
+                              // 药丸位（「目标 · 请求/思考中 · 8s · ✕ 取消」），
+                              // 只有没有分类条时才自己成行，免得顶部叠两条都在说
+                              // 「还在跑」的横条。
+                              if (provider.hasClassify || livenessLine)
+                                AuxClassifyBar(
+                                  goal: provider.classifyGoal,
+                                  phase: provider.classifyPhase,
+                                  classifyState: provider.classifyState,
+                                  goalState: provider.classifyGoalState?.toString(),
+                                  stale: provider.classifyStale,
+                                  liveness: livenessLine ? _liveness : null,
+                                  // 显隐规则集中在 helper 里（web can-mark-done /
+                                  // can-cancel-task 两个 class 的等价物），这里只负责把动作接上。
+                                  onMarkTurnSucceeded:
+                                      provider.hasClassify &&
+                                          classifyActions.canMarkDone
+                                      ? () => _markTurnSucceeded(provider)
+                                      : null,
+                                  onCancelTurn:
+                                      provider.hasClassify &&
+                                          classifyActions.canCancelTask
+                                      ? provider.cancel
+                                      : null,
+                                  onMarkGoalAchieved: provider.hasClassify
+                                      ? () => _markGoalAchieved(provider)
+                                      : null,
                                 ),
                               _CenteredChatLane(
                                 child: ChatRuntimeNoticePanel(

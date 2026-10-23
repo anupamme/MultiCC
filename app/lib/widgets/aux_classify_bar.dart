@@ -46,6 +46,16 @@ class AuxClassifyBar extends StatelessWidget {
   /// 点「确认」才调用。对齐 web 的 #ac-goal-pop（桌面悬停 / 触屏长按）。
   final VoidCallback? onMarkGoalAchieved;
 
+  /// Turn-in-flight liveness verdict (GET /api/sessions/:id/liveness).
+  ///
+  /// Non-null means a turn is running or stalled right now, and this strip is
+  /// the activity readout: the live chip takes the state-pill slot, so
+  /// 「目标 · 请求/思考中 · 8s · ✕ 取消」 stays one line. It used to be a
+  /// separate row above this one, which put two strips on screen saying the
+  /// same thing ("something is running") and cost a whole line on a phone.
+  /// Null (resting / finished turn) falls back to the classifier's phase pill.
+  final Map<String, dynamic>? liveness;
+
   const AuxClassifyBar({
     super.key,
     required this.goal,
@@ -53,6 +63,7 @@ class AuxClassifyBar extends StatelessWidget {
     required this.classifyState,
     this.goalState,
     this.stale = false,
+    this.liveness,
     this.onMarkTurnSucceeded,
     this.onCancelTurn,
     this.onMarkGoalAchieved,
@@ -151,6 +162,9 @@ class AuxClassifyBar extends StatelessWidget {
         : status == CanonicalStatus.succeeded
         ? airStatusWord(status)
         : _phaseLabel(phase);
+    // 目标还没判出来时这一行只剩实时读数，不画图标/目标/空药丸，也不把整条
+    // 让给一枚说不出所以然的「规划中」。
+    final showClassify = goal.trim().isNotEmpty;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: const BoxDecoration(
@@ -159,71 +173,81 @@ class AuxClassifyBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.auto_awesome_outlined,
-            size: 14,
-            color: Color(0xFF8a9aab),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Tooltip(
-              message: stale ? '$goal\n${t('auxVerdictPausedHint')}' : goal,
-              child: Text(
-                goal,
-                style: TextStyle(
-                  color: const Color(0xFF4a6076),
-                  fontSize: 12,
-                  height: 1.3,
-                  // A paused verdict is de-emphasised, not hidden: still the best
-                  // description on screen, no longer claiming to be the current one.
-                  fontStyle: stale ? FontStyle.italic : FontStyle.normal,
+          if (showClassify) ...[
+            const Icon(
+              Icons.auto_awesome_outlined,
+              size: 14,
+              color: Color(0xFF8a9aab),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Tooltip(
+                message: stale ? '$goal\n${t('auxVerdictPausedHint')}' : goal,
+                child: Text(
+                  goal,
+                  style: TextStyle(
+                    color: const Color(0xFF4a6076),
+                    fontSize: 12,
+                    height: 1.3,
+                    // A paused verdict is de-emphasised, not hidden: still the best
+                    // description on screen, no longer claiming to be the current one.
+                    fontStyle: stale ? FontStyle.italic : FontStyle.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-          // The marker sits between the goal and the state pill, so it reads as a
-          // caveat about both rather than as another state.
-          if (stale) ...[
-            const SizedBox(width: 6),
-            Tooltip(
-              message: t('auxVerdictPausedHint'),
-              child: verdictStaleChip(),
-            ),
+            // The marker sits between the goal and the state pill, so it reads as a
+            // caveat about both rather than as another state.
+            if (stale) ...[
+              const SizedBox(width: 6),
+              Tooltip(
+                message: t('auxVerdictPausedHint'),
+                child: verdictStaleChip(),
+              ),
+            ],
+            const SizedBox(width: 8),
           ],
-          const SizedBox(width: 8),
-          Builder(
-            builder: (pillContext) {
-              final pill = Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: phaseBg,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: phaseBorder),
-                ),
-                child: Text(
-                  '$stateEmoji $phaseLabel',
-                  style: TextStyle(
-                    color: phaseColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
+          // 状态药丸位：回合在跑/卡住时归实时读数，静息时归分类器的阶段词。
+          // 同一时刻只留一枚 —— 两枚并排会把目标挤到只剩几个字。
+          if (liveness != null)
+            livenessChip(liveness!)
+          else if (showClassify)
+            Builder(
+              builder: (pillContext) {
+                final pill = Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
                   ),
-                ),
-              );
-              final onMark = onMarkGoalAchieved;
-              if (goalTone != 'interact' || onMark == null) return pill;
-              return GestureDetector(
-                key: const Key('classify-goal-pill'),
-                behavior: HitTestBehavior.opaque,
-                onLongPress: () async {
-                  HapticFeedback.selectionClick();
-                  if (await _confirmGoalAchieved(pillContext)) onMark();
-                },
-                child: pill,
-              );
-            },
-          ),
+                  decoration: BoxDecoration(
+                    color: phaseBg,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: phaseBorder),
+                  ),
+                  child: Text(
+                    '$stateEmoji $phaseLabel',
+                    style: TextStyle(
+                      color: phaseColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                );
+                final onMark = onMarkGoalAchieved;
+                if (goalTone != 'interact' || onMark == null) return pill;
+                return GestureDetector(
+                  key: const Key('classify-goal-pill'),
+                  behavior: HitTestBehavior.opaque,
+                  onLongPress: () async {
+                    HapticFeedback.selectionClick();
+                    if (await _confirmGoalAchieved(pillContext)) onMark();
+                  },
+                  child: pill,
+                );
+              },
+            ),
           // Cancel button: visible only when state is P (processing). Same slot
           // and same red tint as the web's ac-cancel-task pill; the action is
           // the composer's Stop — cancel the in-flight turn.
