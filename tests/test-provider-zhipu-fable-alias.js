@@ -138,7 +138,7 @@ test('ANTHROPIC_DEFAULT_FABLE_MODEL is stripped from the inherited server env fo
 
 test('the Air claude-glm preset prefills fable=glm-5.3 in the model-mapping editor', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'air-provider.js'), 'utf8');
-  const presetLine = src.split('\n').find(l => /'claude-glm':/.test(l));
+  const presetLine = src.split('\n').find(l => /id: 'claude-glm'/.test(l));
   assert.ok(presetLine, 'claude-glm preset exists');
   assert.match(presetLine, /aliasMap:\s*\{\s*fable:\s*\{\s*model:\s*'glm-5\.3'/);
   assert.match(presetLine, /name:\s*'GLM5\.3'/);

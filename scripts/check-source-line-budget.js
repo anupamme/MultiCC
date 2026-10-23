@@ -459,8 +459,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 要如实说「上游已有 vX，需升级 MultiCC 本体」，并把 airCliUpdateBundled 改成明说
     // 「上面的升级按钮不会改动它」—— 旧文案和可升级的 CLI 行并排，读起来像在催一件
     // 点下去没反应的事。中英各 1 行 = +2 行，重跑生成器实测 9580/613354。
-    maxLines: 9580,
-    maxBytes: 613354,
+    // +6 双语键（airProviderPresetRefresh*/Source*）：Provider 模板可从 GitHub
+    // 更新，中英各 6 行 = +12 行；与上一批合并后重跑生成器实测 9592/614156。
+    maxLines: 9592,
+    maxBytes: 614156,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

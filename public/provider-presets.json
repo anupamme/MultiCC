@@ -1,0 +1,79 @@
+{
+  "version": "2026-10-23",
+  "updatedAt": "2026-10-23",
+  "presets": [
+    {
+      "id": "claude-api",
+      "appType": "claude",
+      "nameKey": "airProviderPresetClaudeApi",
+      "name": "Claude 官方 API",
+      "baseUrl": "https://api.anthropic.com",
+      "apiFormat": "anthropic",
+      "model": ""
+    },
+    {
+      "id": "claude-glm",
+      "appType": "claude",
+      "nameKey": "airProviderPresetGlm",
+      "name": "智谱 GLM",
+      "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+      "apiFormat": "anthropic",
+      "model": "glm-5.2",
+      "aliasMap": {
+        "fable": { "model": "glm-5.3", "name": "GLM5.3" }
+      }
+    },
+    {
+      "id": "claude-deepseek",
+      "appType": "claude",
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com/anthropic",
+      "apiFormat": "anthropic",
+      "model": "deepseek-v4-pro",
+      "models": ["deepseek-v4-pro", "deepseek-v4-flash"]
+    },
+    {
+      "id": "claude-minimax",
+      "appType": "claude",
+      "name": "MiniMax",
+      "baseUrl": "https://api.minimaxi.com/anthropic",
+      "apiFormat": "anthropic",
+      "model": "MiniMax-M2"
+    },
+    {
+      "id": "claude-qwen",
+      "appType": "claude",
+      "nameKey": "airProviderPresetQwen",
+      "name": "Qwen 通义千问",
+      "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "apiFormat": "anthropic",
+      "model": "qwen3-coder-plus"
+    },
+    {
+      "id": "claude-openrouter",
+      "appType": "claude",
+      "name": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api",
+      "apiFormat": "anthropic",
+      "model": "anthropic/claude-sonnet-4.5"
+    },
+    {
+      "id": "codex-xf-maas",
+      "appType": "codex",
+      "nameKey": "airProviderPresetXfMaas",
+      "name": "讯飞 MaaS Coding",
+      "baseUrl": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v1",
+      "apiFormat": "openai_responses",
+      "model": "xopglm52"
+    },
+    {
+      "id": "codex-deepseek",
+      "appType": "codex",
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiFormat": "openai_responses",
+      "model": "deepseek-v4-pro",
+      "models": ["deepseek-v4-pro", "deepseek-v4-flash"]
+    }
+  ]
+}

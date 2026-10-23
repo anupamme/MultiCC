@@ -1303,6 +1303,10 @@ button.admin-stat:hover { transform: translateY(-1px); }
 .air-provider-create-choice section > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .air-provider-create-choice button { min-width: 0; color: #176dc1; border-color: #c7def3; background: #fff; }
 #air-provider-api-fields[hidden], #air-provider-create-choice[hidden] { display: none; }
+.air-provider-preset-sync { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; min-height: 20px; }
+.air-provider-preset-sync span { min-width: 0; overflow: hidden; color: #7c8d9f; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+.air-provider-preset-sync button { flex: 0 0 auto; padding: 3px 9px; font-size: 10px; }
+#air-provider-preset-sync[hidden] { display: none; }
 .air-provider-refs-dialog .air-provider-ref-group { margin-top: 12px; padding: 10px 12px; border: 1px solid #e1eaf3; border-radius: 12px; background: #fff; }
 .air-provider-ref-group header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .air-provider-ref-group header strong { color: #2c4f6d; font-size: 12px; }

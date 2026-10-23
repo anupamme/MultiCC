@@ -1117,10 +1117,10 @@ class _ProviderEditorState extends State<_ProviderEditor> {
                 )),
             const SizedBox(height: 14),
             const _FieldLabel('Model（可选）'),
-            _input(_model, hint: '如 deepseek-chat', mono: true),
+            _input(_model, hint: '如 deepseek-v4-pro', mono: true),
             const SizedBox(height: 14),
             const _FieldLabel('可用模型列表（每行一个，可选）'),
-            _input(_models, hint: 'deepseek-chat\ndeepseek-reasoner', mono: true, maxLines: 3),
+            _input(_models, hint: 'deepseek-v4-pro\ndeepseek-v4-flash', mono: true, maxLines: 3),
             if (_appType == 'claude') ...[
               const SizedBox(height: 14),
               const _FieldLabel('模型映射（分级覆盖，可选）'),

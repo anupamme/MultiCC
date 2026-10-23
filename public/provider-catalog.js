@@ -645,6 +645,100 @@
     });
   }
 
+  // ── Provider templates（「模板」下拉的数据）─────────────────────────────────
+  // A template only pre-fills the provider form (appType / protocol / base URL /
+  // default model / optional models / tier aliases); credentials are never part
+  // of it. The bundled copy lives in air-provider.js, and a newer GitHub-hosted
+  // copy can override it by id. Both are untrusted input, so every field below is
+  // whitelisted and bounded — one bad field drops that template, not the dialog.
+  const PRESET_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/i;
+  const PRESET_NAME_KEY_RE = /^[a-z][A-Za-z0-9]{3,80}$/;
+  const MAX_PRESETS = 40;
+  const MAX_PRESET_MODELS = 12;
+
+  function normalizeProviderPreset(value, fallbackId) {
+    if (!value || typeof value !== 'object') return null;
+    const id = text(value.id == null ? fallbackId : value.id, 64);
+    if (!PRESET_ID_RE.test(id)) return null;
+    const appType = text(value.appType, 20).toLowerCase();
+    if (!APP_TYPES.has(appType)) return null;
+    const apiFormat = API_FORMATS.has(value.apiFormat)
+      ? value.apiFormat
+      : (appType === 'claude' ? 'anthropic' : 'openai_responses');
+    // claude lanes only speak Anthropic Messages; codex (>= 0.130) only /responses.
+    if (appType === 'claude' && apiFormat !== 'anthropic') return null;
+    if (appType === 'codex' && apiFormat !== 'openai_responses') return null;
+    const rawBaseUrl = text(value.baseUrl, 2048);
+    const baseUrl = rawBaseUrl ? safeBaseUrl(rawBaseUrl) : '';
+    // A URL we cannot parse is a mistake worth rejecting, not silently blanking.
+    if (rawBaseUrl && !baseUrl) return null;
+    const model = text(value.model, 240);
+    const name = text(value.name, 80) || id;
+    const nameKey = PRESET_NAME_KEY_RE.test(text(value.nameKey, 80)) ? text(value.nameKey, 80) : '';
+    return Object.freeze({
+      id,
+      appType,
+      apiFormat,
+      name,
+      nameKey,
+      baseUrl,
+      model,
+      models: Object.freeze(normalizeModelOptions(value.models, model).slice(0, MAX_PRESET_MODELS)),
+      aliasMap: Object.freeze(normalizeAliasMap(value.aliasMap)),
+    });
+  }
+
+  // Accepts both shapes the catalog may take: `presets: [...]` (array) or
+  // `presets: { id: {...} }` (map). Returns null when nothing valid survives,
+  // so callers can keep the previous catalog instead of showing an empty list.
+  function normalizePresetCatalog(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const raw = Array.isArray(source.presets)
+      ? source.presets
+      : (source.presets && typeof source.presets === 'object'
+        ? Object.keys(source.presets).map(id => ({ ...(source.presets[id] || {}), id }))
+        : []);
+    const presets = [];
+    const seen = new Set();
+    for (const item of raw) {
+      if (presets.length >= MAX_PRESETS) break;
+      const preset = normalizeProviderPreset(item, '');
+      if (!preset || seen.has(preset.id)) continue;
+      seen.add(preset.id);
+      presets.push(preset);
+    }
+    if (!presets.length) return null;
+    return Object.freeze({
+      version: text(source.version, 40),
+      updatedAt: text(source.updatedAt, 40),
+      presets: Object.freeze(presets),
+    });
+  }
+
+  // Remote catalog on top of the bundled one: same id = the remote wins (that is
+  // the update), a new id is appended, a local-only id stays. Nothing is ever
+  // removed, so a partial or experimental remote file cannot empty the picker.
+  function mergePresetCatalogs(base, extra) {
+    const out = [];
+    const index = new Map();
+    for (const catalog of [base, extra]) {
+      if (!catalog || !Array.isArray(catalog.presets)) continue;
+      for (const preset of catalog.presets) {
+        if (index.has(preset.id)) out[index.get(preset.id)] = preset;
+        else if (out.length < MAX_PRESETS) {
+          index.set(preset.id, out.length);
+          out.push(preset);
+        }
+      }
+    }
+    if (!out.length) return null;
+    return Object.freeze({
+      version: text((extra && extra.version) || (base && base.version), 40),
+      updatedAt: text((extra && extra.updatedAt) || (base && base.updatedAt), 40),
+      presets: Object.freeze(out),
+    });
+  }
+
   function normalizeDefaults(value) {
     const source = value && typeof value === 'object' ? value : {};
     return Object.freeze({
@@ -1146,6 +1240,9 @@
 
   return {
     normalizeProvider,
+    normalizeProviderPreset,
+    normalizePresetCatalog,
+    mergePresetCatalogs,
     providerDisplayName,
     cliDisplayName,
     cliEngine,

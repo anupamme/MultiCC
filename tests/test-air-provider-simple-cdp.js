@@ -173,6 +173,18 @@ test('Provider 更多连接方式以任务入口逐项展开，手机端保持�
     assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('.air-provider-create-choice strong')].map(node=>node.textContent)`),
       ['使用 API Key', '添加登录账号']);
     assert.equal(await page.evaluate(`document.getElementById('air-provider-api-fields').hidden`), true);
+    // 模板来自目录（本地内置 / GitHub 更新），不再是一段写死的 option HTML。
+    await page.evaluate(`document.querySelector('[data-provider-key="claude"]').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('air-provider-api-fields').hidden===false`));
+    const presetValues = await page.evaluate(`[...document.querySelectorAll('#air-provider-form select[name="preset"] option')].map(node=>node.value)`);
+    assert.ok(presetValues.includes('claude-deepseek'), `template options: ${presetValues.join(', ')}`);
+    assert.ok(presetValues.includes('codex-deepseek'), 'DeepSeek is also offered through the Codex lane');
+    assert.ok(await page.evaluate(`document.getElementById('air-provider-preset-status').textContent.trim().length>0`));
+    assert.ok(await page.evaluate(`document.getElementById('air-provider-preset-refresh').textContent.trim().length>0`));
+    await page.evaluate(`(()=>{const select=document.getElementById('air-provider-form').elements.preset;select.value='claude-deepseek';select.dispatchEvent(new Event('change'))})()`);
+    assert.equal(await page.evaluate(`document.getElementById('air-provider-form').elements.model.value`), 'deepseek-v4-pro');
+    assert.equal(await page.evaluate(`document.getElementById('air-provider-form').elements.models.value`),
+      'deepseek-v4-pro\ndeepseek-v4-flash');
     await page.evaluate(`document.querySelector('[data-provider-account="claude"]').click()`);
     assert.ok(await page.waitFor(`document.querySelector('[data-k="label"]') !== null`), '账号入口直接进入创建并登录流程');
   });
