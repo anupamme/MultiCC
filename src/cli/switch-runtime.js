@@ -63,6 +63,13 @@ const BUNDLED_ENGINE_VERSIONS = Object.freeze({
   })(),
 });
 
+// 内置引擎虽然装不了、只能随 MultiCC 走, 但它在 npm 上有真实的发布源。查一下上游
+// 版本, 面板才能区分「已是最新」与「MultiCC 里钉的这一版落后了, 要升级 MultiCC 本体」
+// —— 只写「随 MultiCC 升级」而不说落不落后, 用户会以为自己看到的是一句催升级的空话。
+const BUNDLED_ENGINE_PACKAGES = Object.freeze({
+  'claude-exp': '@anthropic-ai/claude-agent-sdk',
+});
+
 // 最新版探测与本地版本探测分开缓存: 上游 registry 会超时/限流, 本地 `--version`
 // 不会。两者共用一个 TTL, 但互不覆盖 —— 上游挂了不该让「当前版本」这一栏也空掉。
 const CLI_LATEST_TTL_MS = 24 * 60 * 60 * 1000;
@@ -147,7 +154,7 @@ function createCliSwitchRuntime(options) {
   const versionCache = { at: 0, versions: null };
   // registry 与 latest 一起缓: 记下「这个新版是从哪个源读到的」, 安装时把同一个源
   // 交给 npm, 保证报得出的新版一定装得到(见 buildInstallEnv)。
-  const latestCache = { at: 0, latest: null, registry: null };
+  const latestCache = { at: 0, latest: null, registry: null, bundled: null };
   let updateWatchStarted = false;
 
   function resolveCliCommandMap() {
@@ -389,7 +396,10 @@ function createCliSwitchRuntime(options) {
     const now = clock();
     const fresh = !force && latestCache.latest && (now - latestCache.at) < CLI_LATEST_TTL_MS;
     if (fresh) {
-      return { latest: latestCache.latest, registry: latestCache.registry, at: latestCache.at, cached: true };
+      return {
+        latest: latestCache.latest, registry: latestCache.registry,
+        bundled: latestCache.bundled || {}, at: latestCache.at, cached: true,
+      };
     }
     const fetchLatest = resolveFetchLatestVersionWithSource();
     const next = {};
@@ -408,10 +418,28 @@ function createCliSwitchRuntime(options) {
         usedRegistry[family] = null;
       }
     }));
+    // 随 MultiCC 走的引擎只比版本、不参与升级计数: 面板装不了它, 报出来的只是
+    // 「MultiCC 这一版钉的引擎落后上游多少」。没装的引擎不去打网络。
+    const fetchBundled = resolveFetchLatestVersion();
+    const bundledNext = {};
+    await Promise.all(Object.entries(BUNDLED_ENGINE_PACKAGES).map(async ([lane, pkg]) => {
+      if (!bundledEngineAvailable(versions, lane)) return;
+      try { bundledNext[lane] = await fetchBundled(pkg); } catch (_) { bundledNext[lane] = null; }
+    }));
     latestCache.at = now;
     latestCache.latest = next;
     latestCache.registry = usedRegistry;
-    return { latest: next, registry: usedRegistry, at: now, cached: false };
+    latestCache.bundled = bundledNext;
+    return { latest: next, registry: usedRegistry, bundled: bundledNext, at: now, cached: false };
+  }
+
+  function bundledEngineAvailable(versions, lane) {
+    for (const entry of Object.values(versions || {})) {
+      for (const engine of (entry && entry.bundled) || []) {
+        if (engine.lane === lane) return !!engine.available;
+      }
+    }
+    return false;
   }
 
   // 合并成对外契约。原有字段(cmd/available/version/error)一个不动, 只新增
@@ -428,15 +456,21 @@ function createCliSwitchRuntime(options) {
     return { env: name, path: value };
   }
 
-  function decorateVersions(versions, latest, inUse = {}, registry = {}) {
+  function decorateVersions(versions, latest, inUse = {}, registry = {}, bundledLatest = {}) {
     const out = {};
     for (const family of familyTargets().keys()) {
       const entry = versions[family] || { cmd: null, available: false, version: null, error: null, bundled: [] };
       const pkg = cliUpstream.npmPackageFor(family);
       const verdict = cliUpstream.classifyUpdate(entry.version, latest ? latest[family] : null);
+      // 内置引擎只加「上游有没有新版」这一个事实, 不加可升级性: 它没有能单独安装的
+      // 制品, updateCount 也不数它 —— 面板最多用一句话告诉用户「要升级的是 MultiCC」。
+      const bundled = (entry.bundled || []).map(engine => {
+        const engineVerdict = cliUpstream.classifyUpdate(engine.version, bundledLatest[engine.lane] || null);
+        return { ...engine, latest: engineVerdict.latest, updateAvailable: engineVerdict.updateAvailable };
+      });
       out[family] = {
         ...entry,
-        bundled: entry.bundled || [],
+        bundled,
         latest: verdict.latest,
         updateAvailable: verdict.updateAvailable,
         updateSource: pkg ? 'npm' : null,
@@ -454,7 +488,7 @@ function createCliSwitchRuntime(options) {
   async function collectCliVersions({ force = false } = {}) {
     const local = await probeLocalVersions({ force });
     const upstream = await probeLatestVersions({ force, versions: local.versions });
-    const versions = decorateVersions(local.versions, upstream.latest, cliInUseCounts(), upstream.registry);
+    const versions = decorateVersions(local.versions, upstream.latest, cliInUseCounts(), upstream.registry, upstream.bundled);
     const updateCount = Object.values(versions).filter(entry => entry.updateAvailable).length;
     return {
       versions,
@@ -473,6 +507,7 @@ function createCliSwitchRuntime(options) {
     latestCache.at = 0;
     latestCache.latest = null;
     latestCache.registry = null;
+    latestCache.bundled = null;
   }
 
   // 启动后探一次, 之后每 24h 一次。两个 timer 都 unref: 检测永远不该把一个进程

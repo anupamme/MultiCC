@@ -371,8 +371,38 @@ test('随 MultiCC 走的引擎挂在家族行下面，不是一行卖不出去�
   assert.match(claudeRow, /^Claude(?! Code)/);
   assert.match(claudeRow, /Claude Agent SDK v0\.60\.4/, '要说出这个引擎是什么版本、跟谁走');
   assert.match(claudeRow, /MultiCC/);
+  // 浮层里同时有一句「有新版」和一颗升级按钮: 这行必须明确说那颗按钮不会改成它，
+  // 否则用户点完发现 SDK 没动，只会以为面板在催一件假动作。
+  assert.match(claudeRow, /不会改动它/);
   // 只有 CLI 制品的那个家族有可点的升级按钮
   assert.equal(rowButtons(context.registry).length, 1);
+});
+
+test('内置引擎落后上游时说要升 MultiCC 本体，而不是把它算成一条待更新', async () => {
+  const context = buildContext({
+    fetchImpl: createFetch({
+      '/api/cli/versions': versionsBody({
+        claude: entry({
+          version: '2.0.1', latest: '2.0.1',
+          // CLI 制品已是最新, 落后的是随 MultiCC 走的那颗引擎
+          bundled: [{
+            lane: 'claude-exp', engine: 'Claude Agent SDK', kind: 'chat',
+            available: true, version: '0.3.307', latest: '0.3.309', updateAvailable: true,
+          }],
+        }),
+        codex: entry({ version: '0.20.0', latest: '0.20.0' }),
+      }, 0),
+    }),
+  });
+  await settle();
+  openPopover(context.registry);
+  const claudeRow = rowTexts(context.registry).find(text => text.startsWith('Claude'));
+  assert.match(claudeRow, /Claude Agent SDK v0\.3\.307/);
+  assert.match(claudeRow, /0\.3\.309/, '上游有新版本就要说出来');
+  assert.match(claudeRow, /MultiCC/);
+  // 角标与摘要只看可点的升级: 引擎落后不是面板能解决的事
+  assert.equal(context.registry['cli-update-badge'].hidden, true);
+  assert.equal(rowButtons(context.registry).length, 0);
 });
 
 test('确认后跑官方升级、轮询到完成，并用 ?refresh=1 让角标清零', async () => {
