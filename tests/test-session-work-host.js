@@ -713,6 +713,29 @@ test('queued projection does not make its own outbox delivery look busy', () => 
   assert.equal(h.host.isRunActive('s1'), true);
 });
 
+test('editing a staged message broadcasts the new body without inventing a session state', () => {
+  const h = fixture();
+  h.host.onSchedulerEvent({
+    type: 'queued_edited',
+    sessionId: 's1',
+    entryId: 'entry-1',
+    schedulerState: 'running',
+    queuedItems: [
+      { entryId: 'entry-1', state: 'pending', position: 1, text: '改过的正文' },
+    ],
+    at: 30,
+  });
+  const broadcast = h.calls.filter(call => call[0] === 'broadcast').at(-1);
+  assert.equal(broadcast[2].type, 'session_queue');
+  assert.equal(broadcast[2].event, 'queued_edited');
+  // The event name is bookkeeping, not a session state: clients switch on this.
+  assert.equal(broadcast[2].state, 'running');
+  assert.equal(broadcast[2].items[0].text, '改过的正文');
+  const patch = h.calls.filter(call => call[0] === 'task-state').at(-1)[2];
+  assert.equal(patch.queueState, 'running');
+  assert.equal(h.host.getRunState('s1'), 'running');
+});
+
 test('a live queue outranks the stale classify verdict left by the previous turn', () => {
   const h = fixture({
     classifyDisplay: state => ({

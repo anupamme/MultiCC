@@ -549,7 +549,7 @@ function createSessionWorkHost(deps = {}) {
     // dropping a staged message is not a state of the session, and publishing
     // the raw event name as `state` would invent one for every client that
     // switches on it.
-    const queueState = ['queued_cancelled', 'queued_inserted', 'queued_reordered']
+    const queueState = ['queued_cancelled', 'queued_inserted', 'queued_reordered', 'queued_edited']
       .includes(event.type)
       ? event.schedulerState || 'idle'
       : state;

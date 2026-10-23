@@ -338,11 +338,14 @@ class _SessionQueuePanelState extends State<SessionQueuePanel> {
   // 文案/图标/色彩全部取自中心 registry，队列面板不再自带一套状态词表。
   StatusSpec _spec(CanonicalStatus state) => statusPresentation[state]!;
 
-  Future<void> _run(Future<void> Function() action) async {
-    if (_busy || !widget.enabled) return;
+  /// 跑一个队列动作。返回 false 表示这次什么都没发（面板忙碌或未连接）——
+  /// 调用方据此决定要不要报「成功」，否则断线时会弹出一条假的已修改提示。
+  Future<bool> _run(Future<void> Function() action) async {
+    if (_busy || !widget.enabled) return false;
     setState(() => _busy = true);
     try {
       await action();
+      return true;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -398,7 +401,8 @@ class _SessionQueuePanelState extends State<SessionQueuePanel> {
     if (next == null || edit == null) return;
     final value = next.trim();
     if (value.isEmpty || value == item.text) return;
-    await _run(() => edit(item.entryId, value));
+    final sent = await _run(() => edit(item.entryId, value));
+    if (!sent) return;
     messenger.showSnackBar(
       SnackBar(content: Text(t('queuedMessageEdited'))),
     );

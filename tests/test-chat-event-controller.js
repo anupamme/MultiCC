@@ -918,6 +918,28 @@ test('structured user-input and FIFO events expose correlation and honest frozen
     && call[0] === 'system' && call[1].startsWith('队列保持冻结')), false);
 });
 
+test('editing a staged message redraws the dock with the new body', () => {
+  const fixture = controllerFixture();
+  const generation = fixture.controller.beginGeneration();
+  fixture.controller.handleEvent({
+    type: 'session_queue',
+    event: 'snapshot',
+    state: 'running',
+    items: [{ entryId: 'q-1', state: 'pending', position: 1, text: '旧正文' }],
+  }, generation);
+  fixture.controller.handleEvent({
+    type: 'session_queue',
+    event: 'queued_edited',
+    state: 'running',
+    entryId: 'q-1',
+    items: [{ entryId: 'q-1', state: 'pending', position: 1, text: '新正文' }],
+  }, generation);
+
+  const renders = fixture.calls.filter(call => Array.isArray(call) && call[0] === 'queue');
+  assert.deepEqual(renders.at(-1)[1], ['新正文'],
+    'the broadcast carries the rewritten body and replaces the stale row');
+});
+
 test('structured answer card is above messages and never overlays the composer', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'chat.html'), 'utf8');
   const card = html.indexOf('id="pending-user-input-card"');

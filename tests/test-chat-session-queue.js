@@ -72,6 +72,12 @@ class FakeNode {
     this.listeners.get(type).push(handler);
   }
 
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter(node => node !== this);
+    this.parentNode = null;
+  }
+
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getBoundingClientRect() { return this.rect; }
   setPointerCapture(pointerId) { this.captured = pointerId; }
@@ -84,6 +90,7 @@ class FakeNode {
 }
 
 function dockFixture() {
+  const body = new FakeNode('body');
   const ids = new Map([
     ['session-queue-dock', new FakeNode('details')],
     ['session-queue-count', new FakeNode('strong')],
@@ -91,11 +98,12 @@ function dockFixture() {
     ['session-queue-list', new FakeNode('div')],
   ]);
   const documentRef = {
+    body,
     createElement: tag => new FakeNode(tag),
     getElementById: id => ids.get(id) || null,
   };
   const list = ids.get('session-queue-list');
-  return { documentRef, list, ids };
+  return { documentRef, list, body, ids };
 }
 
 function queueItems(texts) {
@@ -333,27 +341,84 @@ test('the edit handler posts the confirmed text rewrite for the entry', async ()
   assert.deepEqual(notices, [['已修改暂存消息', 'completed']]);
 });
 
-test('double-clicking a pending staged message prompts for its new text', () => {
-  const previous = globalThis.prompt;
-  globalThis.prompt = () => '双击后的新正文';
-  try {
-    const edits = [];
-    queueApi.configure({ translate: zhT,
-      onEdit: async (entryId, text) => edits.push([entryId, text]),
-    });
-    const { documentRef, list } = dockFixture();
-    queueApi.render(queueItems(['原正文']), {}, documentRef);
-    const text = list.querySelector('.session-queue-text');
-    assert.ok(text.dataset.edit === '1', 'a pending entry is editable');
-    text.fire('dblclick');
-    assert.deepEqual(edits, [['entry-1', '双击后的新正文']]);
+test('the edit handler relabels the row from the action response', async () => {
+  const { documentRef, list } = dockFixture();
+  queueApi.configure({ translate: zhT, onEdit: async () => {} });
+  queueApi.render(queueItems(['原正文', '第二条']), {}, documentRef);
 
-    // A claimed (running) entry is not editable.
-    queueApi.render([
-      { entryId: 'leased', state: 'leased', position: 1, text: '执行中' },
-    ], {}, documentRef);
-    assert.equal(list.querySelector('.session-queue-text').dataset.edit, undefined);
-  } finally {
-    globalThis.prompt = previous;
-  }
+  const handler = queueApi.createEditHandler({
+    document: documentRef,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        edited: { entryId: 'entry-2', text: '改过的第二条' },
+      }),
+    }),
+    withToken: url => url,
+    getSessionName: () => 's1',
+    notify: () => {},
+  });
+
+  await handler('entry-2', '改过的第二条');
+  // The dock must not wait for the queue broadcast to show what the user saved:
+  // a missed frame used to leave the old body under a success toast.
+  assert.deepEqual(texts(list), ['原正文', '改过的第二条']);
+});
+
+test('the response patch also lands when children is an HTMLCollection', async () => {
+  const { documentRef, list } = dockFixture();
+  queueApi.configure({ translate: zhT, onEdit: async () => {} });
+  queueApi.render(queueItems(['原正文', '第二条']), {}, documentRef);
+  // A real DOM hands back an HTMLCollection: indexed, with a length, and no
+  // Array.prototype methods. The array-backed FakeNode hid that difference, so
+  // the in-page path silently did nothing while the test stayed green.
+  const rows = list.children;
+  const collection = { length: rows.length };
+  rows.forEach((row, index) => { collection[index] = row; });
+  list.children = collection;
+
+  const handler = queueApi.createEditHandler({
+    document: documentRef,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        edited: { entryId: 'entry-2', text: '改过的第二条' },
+      }),
+    }),
+    withToken: url => url,
+    getSessionName: () => 's1',
+    notify: () => {},
+  });
+
+  await handler('entry-2', '改过的第二条');
+  assert.equal(collection[1].querySelector('.session-queue-text').textContent, '改过的第二条');
+});
+
+test('double-clicking a pending staged message opens a multiline editor', async () => {
+  const edits = [];
+  queueApi.configure({ translate: zhT,
+    onEdit: async (entryId, text) => edits.push([entryId, text]),
+  });
+  const { documentRef, list, body } = dockFixture();
+  queueApi.render(queueItems(['原正文']), {}, documentRef);
+  const text = list.querySelector('.session-queue-text');
+  assert.ok(text.dataset.edit === '1', 'a pending entry is editable');
+  text.fire('dblclick');
+
+  const input = body.querySelector('.session-queue-edit-input');
+  assert.ok(input, 'the editor is a textarea dialog, not a one-line prompt');
+  assert.equal(input.value, '原正文');
+  input.value = '第一行\n第二行';
+  body.querySelector('.session-queue-edit-save').fire('click');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(edits, [['entry-1', '第一行\n第二行']],
+    'newlines survive, which window.prompt() could never carry');
+
+  // A claimed (running) entry is not editable.
+  queueApi.render([
+    { entryId: 'leased', state: 'leased', position: 1, text: '执行中' },
+  ], {}, documentRef);
+  assert.equal(list.querySelector('.session-queue-text').dataset.edit, undefined);
 });

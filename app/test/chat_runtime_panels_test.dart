@@ -267,6 +267,52 @@ void main() {
     expect(find.byKey(const Key('queued-edit-input')), findsNothing);
   });
 
+  testWidgets('an offline panel never reports a queued edit it did not send', (
+    tester,
+  ) async {
+    final edited = <(String, String)>[];
+    final queue = SessionQueueState.fromEvent({
+      'state': 'running',
+      'items': [
+        {
+          'entryId': 'queued-1',
+          'state': 'pending',
+          'position': 1,
+          'text': 'original',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      _host(
+        SessionQueuePanel(
+          queue: queue,
+          enabled: false,
+          onAction: (_) async {},
+          onCancelQueued: (_) async {},
+          onEditQueued: (entryId, text) async => edited.add((entryId, text)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(InkWell).first);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('queued-text-queued-1')));
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(find.byKey(const Key('queued-text-queued-1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('queued-edit-input')),
+      'rewritten',
+    );
+    await tester.tap(find.byKey(const Key('queued-edit-save')));
+    await tester.pumpAndSettle();
+
+    // Disconnected: _run refuses to send, so neither the action nor a success
+    // toast may happen — the old code showed 已修改暂存消息 anyway.
+    expect(edited, isEmpty);
+    expect(find.text('已修改暂存消息'), findsNothing);
+  });
+
   testWidgets('queued entries offer insert; the prioritised one shows running', (
     tester,
   ) async {

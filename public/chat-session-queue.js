@@ -54,6 +54,7 @@
     getSessionName,
     notify = () => {},
     payloadFor = () => ({}),
+    apply = null,
   } = {}) {
     return async (entryId, argument) => {
       const sessionName = String(getSessionName?.() || '').trim();
@@ -87,6 +88,11 @@
         notify(tr('queueInsertPending'), 'info');
         return false;
       }
+      // Answer the user from the action's own response as well as the queue
+      // broadcast. The broadcast is fire-and-forget (only a `snapshot` is
+      // replayed after a reconnect), so a socket that missed it would leave the
+      // old row on screen next to a success toast.
+      try { apply?.(data); } catch (_) { /* the broadcast still lands */ }
       notify(tr(ACTION_DONE[action] || 'queuedMessageUpdated'), 'completed');
       return true;
     };
@@ -100,10 +106,110 @@
     return createActionHandler('insert_queued', options);
   }
 
-  function createEditHandler(options) {
+  function createEditHandler(options = {}) {
+    const documentRef = options.document || global.document;
     return createActionHandler('edit_queued', {
       ...options,
       payloadFor: text => ({ text }),
+      // Patch the edited row only. Re-rendering the whole list from the response
+      // would resurrect entries another action claimed while this request was in
+      // flight; the broadcast remains the authority for everything else.
+      apply: data => updateEntryText(
+        data?.edited?.entryId,
+        data?.edited?.text,
+        documentRef,
+      ),
+    });
+  }
+
+  // Rewrite one row in place from the edit response. Returns false when the dock
+  // no longer shows that entry (it left the queue meanwhile), which is not an
+  // error: there is nothing left to relabel.
+  function updateEntryText(entryId, text, documentRef = global.document) {
+    const cleanEntryId = String(entryId || '').trim();
+    const list = documentRef?.getElementById?.('session-queue-list');
+    const rows = list?.children;
+    // In a page this is an HTMLCollection: indexed and iterable, but it has no
+    // Array.prototype methods, so `Array.isArray(rows)` is always false there.
+    // Walk it by index so the browser path and the test double behave alike.
+    if (!cleanEntryId || !rows || typeof rows.length !== 'number') return false;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (row?.dataset?.entryId !== cleanEntryId) continue;
+      const target = row.querySelector?.('.session-queue-text');
+      if (!target) return false;
+      target.textContent = String(text || tr('queueEntryPlaceholder'));
+      return true;
+    }
+    return false;
+  }
+
+  // Editing a staged message needs more than one line: the message itself can be
+  // a paragraph, and window.prompt() (single line, no paste-friendly editing)
+  // made long drafts impossible to fix on the web. The dialog is built from the
+  // document the caller passed, so it works in the page and in Node tests.
+  function requestEditText(initial, documentRef = global.document) {
+    const doc = documentRef;
+    const body = doc?.body;
+    if (!doc || !body || typeof doc.createElement !== 'function') {
+      const promptFn = globalThis.prompt || global.prompt;
+      return Promise.resolve(typeof promptFn === 'function'
+        ? promptFn.call(globalThis, tr('queuedMessageEditTitle'), String(initial || ''))
+        : null);
+    }
+    return new Promise(resolve => {
+      const overlay = doc.createElement('div');
+      overlay.className = 'session-queue-edit-overlay';
+      const panel = doc.createElement('div');
+      panel.className = 'session-queue-edit-panel';
+      panel.setAttribute?.('role', 'dialog');
+      panel.setAttribute?.('aria-modal', 'true');
+      const title = doc.createElement('div');
+      title.className = 'session-queue-edit-title';
+      title.textContent = tr('queuedMessageEditTitle');
+      const area = doc.createElement('textarea');
+      area.className = 'session-queue-edit-input';
+      area.value = String(initial || '');
+      area.rows = 6;
+      area.placeholder = tr('queuedMessageEditHint');
+      area.setAttribute?.('aria-label', tr('queuedMessageEditTitle'));
+      const actions = doc.createElement('div');
+      actions.className = 'session-queue-edit-actions';
+      const cancel = doc.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'session-queue-edit-cancel';
+      cancel.textContent = tr('cancel');
+      const save = doc.createElement('button');
+      save.type = 'button';
+      save.className = 'session-queue-edit-save';
+      save.textContent = tr('save');
+
+      function close(value) {
+        overlay.remove?.();
+        resolve(value);
+      }
+
+      cancel.addEventListener('click', () => close(null));
+      save.addEventListener('click', () => close(area.value));
+      area.addEventListener?.('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault?.();
+          close(null);
+        } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+          event.preventDefault?.();
+          close(area.value);
+        }
+      });
+      // Clicking the dimmed backdrop cancels; clicks inside the panel do not.
+      overlay.addEventListener?.('click', event => {
+        if (event?.target === overlay) close(null);
+      });
+
+      actions.append(cancel, save);
+      panel.append(title, area, actions);
+      overlay.appendChild(panel);
+      body.appendChild(overlay);
+      try { area.focus?.(); } catch (_) { /* no focus in a detached document */ }
     });
   }
 
@@ -300,6 +406,9 @@
     for (const [index, item] of items.entries()) {
       const row = documentRef.createElement('div');
       row.className = 'session-queue-item';
+      // Entry ids are what a queue action's response addresses; without this the
+      // dock can only be updated by replaying a whole list.
+      if (item?.entryId) row.dataset.entryId = String(item.entryId);
       const movability = item?.entryId && item?.state === 'pending'
         && typeof onReorder === 'function' ? item : null;
       const handle = movability && items.length > 1
@@ -322,11 +431,10 @@
       if (item?.entryId && item?.state === 'pending' && typeof onEdit === 'function') {
         text.dataset.edit = '1';
         text.title = tr('queueEditHintTitle');
-        text.addEventListener('dblclick', () => {
-          const next = (globalThis.prompt || global.prompt || (() => null))
-            .call(globalThis, tr('queuedMessageEditTitle'), String(item?.text || ''));
-          if (next === null) return;
-          const value = next.trim();
+        text.addEventListener('dblclick', async () => {
+          const next = await requestEditText(String(item?.text || ''), documentRef);
+          if (next === null || next === undefined) return;
+          const value = String(next).trim();
           if (!value || value === String(item?.text || '')) return;
           void onEdit(item.entryId, value);
         });
@@ -411,6 +519,8 @@
     createInsertHandler,
     createReorderHandler,
     createEditHandler,
+    updateEntryText,
+    requestEditText,
     render,
   });
 })(typeof window !== 'undefined' ? window : globalThis);
