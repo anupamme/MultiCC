@@ -74,6 +74,11 @@ test('explicit emergency Node mode never builds Rust', () => {
     paths() { throw Error('unexpected cache access'); } }), null);
 });
 
+test('Rust CPR still requires the source addon when SQLite uses emergency Node mode', () => {
+  assert.throws(() => ensureSourceRust({ env: { MULTICC_SQLITE_BACKEND: 'node', MULTICC_CPR_BACKEND: 'rust' },
+    paths() { throw Error('CPR requires addon'); } }), /CPR requires addon/);
+});
+
 const nativeTest = (name, fn) => test(name, { skip: process.platform === 'win32' && 'source manager uses a POSIX shell' }, fn);
 
 nativeTest('first source boot builds once; a new process reuses it and source changes select a new addon', t => {

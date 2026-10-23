@@ -10,7 +10,7 @@ const { sourcePaths, sourceFingerprint, probeAddon } = require('./rust-source-ca
 
 function ensureSourceRust({ repoRoot = path.resolve(__dirname, '..'), env = process.env,
   probe = probeAddon, paths = sourcePaths, run = spawnSync, log = console.error } = {}) {
-  if (env.MULTICC_SQLITE_BACKEND === 'node') return null;
+  if (env.MULTICC_SQLITE_BACKEND === 'node' && String(env.MULTICC_CPR_BACKEND || 'node').trim().toLowerCase() !== 'rust') return null;
   const cache = paths(repoRoot, env);
   const target = `${process.platform}-${process.arch}`;
   const file = path.join(cache.prebuiltDir, target, 'multicc_core.node');

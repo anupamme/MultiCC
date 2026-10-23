@@ -692,6 +692,7 @@ test('packaged dependency gate checks cross-arch trees and detects transitive lo
   for (const name of ['driver.js', 'node-driver.js']) {
     writeBundleFile(resources, `app-server/src/sqlite/${name}`, fs.readFileSync(path.join(ROOT, 'src/sqlite', name)));
   }
+  writeBundleFile(resources, 'app-server/src/native/runtime.js', fs.readFileSync(path.join(ROOT, 'src/native/runtime.js')));
   if (process.platform === 'win32') fs.copyFileSync(process.execPath, runtime);
   else {
     // Homebrew Node relies on dylibs relative to its real executable; copying

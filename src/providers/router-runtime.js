@@ -79,6 +79,8 @@ function resolveRouterVersion(router, explicitVersion) {
 
 function createProviderRouterRuntime(options = {}) {
   const env = options.env || process.env;
+  const { resolveCprBackend, createRustCprRouter } = require('./rust-cpr');
+  const proxyBackend = resolveCprBackend(env);
   const mode = String(options.mode || resolveMode(env)).trim().toLowerCase();
   if (!PORT_MODES.includes(mode)) {
     throw new ProviderRouterPortError('mode must be legacy, shadow, or cpr', 'PROVIDER_ROUTER_MODE_INVALID');
@@ -87,7 +89,8 @@ function createProviderRouterRuntime(options = {}) {
   if (!providers) throw new Error('providers implementation is required');
   // The dependency is loaded here, never from server.js.  Legacy mode supports
   // the installed CPR 0.2 compatibility mounts; shadow/cpr negotiate below.
-  const router = options.router || require('cli-provider-router');
+  const nodeRouter = options.router || require('cli-provider-router');
+  const router = proxyBackend === 'rust' ? createRustCprRouter(nodeRouter, { env }) : nodeRouter;
   const routerVersion = resolveRouterVersion(router, options.routerPackageVersion);
   if (mode !== 'legacy' && /^0\./.test(routerVersion)) {
     throw new ProviderRouterPortError(
@@ -183,6 +186,7 @@ function createProviderRouterRuntime(options = {}) {
   return Object.freeze({
     apiVersion: port.apiVersion,
     mode: port.mode,
+    proxyBackend,
     routerApiVersion: port.routerApiVersion,
     routerCapabilities: port.routerCapabilities,
     // Any advertised capability, including optional ones the port does not

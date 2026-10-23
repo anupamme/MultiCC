@@ -118,6 +118,11 @@ function createClaudeEgressAgentResolver(options = {}) {
     }
   }
 
+  // 原生 Rust 传输接受代理 URL，Node 传输仍接受 Agent；两者复用同一插件解析。
+  resolveUpstreamAgent.resolveProxyUrl = async (context = {}) => {
+    const binding = bindingOf(context.provider);
+    return binding ? resolveProxyUrl(binding) : undefined;
+  };
   return { resolveUpstreamAgent, resolveProxyUrl };
 }
 
