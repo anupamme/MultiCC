@@ -455,8 +455,12 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // CodexLoginFailed、LoginUnavailable）：Codex 账号登录不再委托交互式
     // `codex login` 终端，改为和 Claude 一样的面板 —— 授权链接 + 粘贴回调，
     // 中英各 6 行 = +12 行，重跑生成器实测 9578/613035。
-    maxLines: 9578,
-    maxBytes: 613035,
+    // +1 双语键（airCliUpdateBundledBehind）：内置引擎（Claude Agent SDK）落后上游时
+    // 要如实说「上游已有 vX，需升级 MultiCC 本体」，并把 airCliUpdateBundled 改成明说
+    // 「上面的升级按钮不会改动它」—— 旧文案和可升级的 CLI 行并排，读起来像在催一件
+    // 点下去没反应的事。中英各 1 行 = +2 行，重跑生成器实测 9580/613354。
+    maxLines: 9580,
+    maxBytes: 613354,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

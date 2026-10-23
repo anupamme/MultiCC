@@ -627,6 +627,9 @@ test('cli/versions reports the spawned binary version and parses noisy output', 
   assert.deepEqual(res.body.versions.claude.bundled, [{
     lane: 'claude-exp', engine: 'Claude Agent SDK', kind: 'chat',
     available: true, version: String(sdkDep).replace(/^[~^]/, ''),
+    // 这个用例没有注入上游源: 版本照报, 但「有没有更新」必须是 null/false,
+    // 不能把「查不到」说成「已是最新」。
+    latest: null, updateAvailable: false,
   }]);
   assert.equal(res.body.versions['claude-exp'], undefined);
   assert.equal(res.body.versions.codex.version, '0.20.0');
@@ -634,6 +637,39 @@ test('cli/versions reports the spawned binary version and parses noisy output', 
   // 探测确实用的是 --version, 且解析出的正是注入的那个二进制路径
   assert.deepEqual(exec.calls.find(c => c.cmd === '/bin/qoderclicn').args, ['--version']);
   assert.equal(exec.calls.some(c => c.cmd === process.execPath), false);
+});
+
+test('a bundled engine reports its own upstream version without becoming an upgrade', async () => {
+  const exec = fakeExecFile({ '/bin/claude': '2.0.1' });
+  const published = {
+    '@anthropic-ai/claude-code': '2.0.1',
+    '@anthropic-ai/claude-agent-sdk': '99.0.0',
+  };
+  const harness = createHarness({
+    cliCommands: VERSION_CMDS,
+    execFileVersion: exec,
+    fetchLatestVersion: async pkg => published[pkg] || null,
+    availability: { claude: { available: true }, 'claude-exp': { available: true } },
+  });
+  const res = await harness.invokeVersions();
+  const engine = res.body.versions.claude.bundled[0];
+  // 落后上游要说出来 —— 否则「随 MultiCC 一起升级」只是一句无处可查的空话。
+  assert.equal(engine.latest, '99.0.0');
+  assert.equal(engine.updateAvailable, true);
+  // 但它是「升级 MultiCC 本体」的事: 面板没有可点的东西, 不计入待更新、不进角标。
+  assert.equal(res.body.versions.claude.updateAvailable, false);
+  assert.equal(res.body.updateCount, 0);
+});
+
+test('an absent bundled engine is not probed upstream', async () => {
+  const asked = [];
+  const harness = createHarness({
+    fetchLatestVersion: async pkg => { asked.push(pkg); return '99.0.0'; },
+    availability: { claude: { available: true }, 'claude-exp': { available: false } },
+  });
+  const res = await harness.invokeVersions();
+  assert.equal(res.body.versions.claude.bundled[0].latest, null);
+  assert.equal(asked.includes('@anthropic-ai/claude-agent-sdk'), false, '没装的内置引擎不该去打网络');
 });
 
 test('cli/versions skips unavailable clis without spawning them', async () => {
