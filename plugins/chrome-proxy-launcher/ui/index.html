@@ -67,7 +67,7 @@
 <body>
 <div id="notice" role="status"></div>
 <h1>🌐 Chrome 隔离出口启动器</h1>
-<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口。出口可以是本机代理端口，也可以是 Clash 订阅里的节点（由插件自带的 meow 内核承接）；家宽/住宅代理常需要先经节点跳板，填在「上游」里就是 本机 → 跳板节点 → 住宅代理 → 目标站。出口不可用时拒绝启动，避免 Chrome 静默直连泄漏真实地址。</p>
+<p class="sub">每个身份 = 一份完全隔离的 Chrome profile + 一个强制出口。出口可以是本机代理端口，也可以是 Clash 订阅里的节点（由插件自带的 meow 内核承接）；家宽/住宅代理常需要先经节点跳板，填在「上游」里就是 本机 → 跳板节点 → 住宅代理 → 目标站。固定代理不配置直连备用；出口不可用时网页请求失败。浏览器参数并非系统级断网保护。</p>
 
 <section class="card">
   <h2>新建 / 编辑身份</h2>
@@ -482,7 +482,8 @@ async function refresh() {
     const actions = document.createElement('div');
     actions.className = 'p-actions';
     actions.append(
-      makeButton(profile.running ? '再开一个窗口' : '启动浏览器', 'primary', async event => {
+      makeButton(profile.running ? '运行中（新窗口请在浏览器内打开）' : '启动浏览器', 'primary', async event => {
+        if (profile.running) return;
         event.target.disabled = true;
         try {
           const url = $('f-url').value.trim();
@@ -511,6 +512,7 @@ async function refresh() {
         }
       }),
     );
+    if (profile.running) actions.firstElementChild.disabled = true;
     if (profile.running) {
       actions.append(makeButton('停止', 'danger', async event => {
         event.target.disabled = true;

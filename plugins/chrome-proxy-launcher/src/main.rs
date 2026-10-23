@@ -243,6 +243,9 @@ fn command_save(input: &Value) -> Result<Value, String> {
         existing.chrome_path = chrome_path;
         existing.updated_at = now;
         let egress_changed = egress_signature(&existing.proxy, &existing.subscription) != before;
+        if egress_changed {
+            chrome::ensure_not_running(&id)?;
+        }
         let snapshot = existing.clone();
         store::save_profiles(&profiles)?;
         if egress_changed {
@@ -632,6 +635,11 @@ fn command_subscription_refresh(input: &Value) -> Result<Value, String> {
         .find(|item| item.id == id)
         .map(|item| item.url.clone())
         .ok_or_else(|| format!("订阅 {id} 不存在"))?;
+    for profile in store::load_profiles()? {
+        if profile.subscription.as_ref().is_some_and(|item| item.id == id) {
+            chrome::ensure_not_running(&profile.id)?;
+        }
+    }
     let fetched = subs::fetch(&url, Duration::from_secs(20))?;
     let now = store::now_secs();
     let bytes = fetched.raw.len() as u64;
