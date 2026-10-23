@@ -111,7 +111,7 @@ pub fn quit_gracefully(pid: i32) -> Result<(), String> {
     }
 }
 
-fn wait_exit(pid: i32, limit: Duration) -> bool {
+pub fn wait_exit(pid: i32, limit: Duration) -> bool {
     let step = Duration::from_millis(250);
     let mut waited = Duration::ZERO;
     while waited < limit {
@@ -236,9 +236,13 @@ pub fn ensure_not_running(id: &str) -> Result<(), String> {
 /// 一次认证探测（凭据错就拒绝启动，不让 Chrome 挂在中继上白等）；订阅出口
 /// 则经刚起的本地内核取一次出口 IP。
 /// 带凭据的直连代理会先拉起本地中继；订阅出口会先拉起身份专属 meow 内核。
-pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result<serde_json::Value, String> {
+pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool, automatic_fingerprint: bool) -> Result<serde_json::Value, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(18);
+    let _lock = crate::browser_session::launch_lock(&profile.id)?;
     ensure_not_running(&profile.id)?;
+    if url.is_some_and(|u| u.trim_start().starts_with('-')) { return Err("网页地址不能是启动参数".into()); }
     let browser = find_browser(profile.chrome_path.as_deref())?;
+    let extension = if automatic_fingerprint { Some(crate::fingerprint::prepare(profile)?) } else { None };
     let data_dir = store::user_data_dir(&profile.id);
     std::fs::create_dir_all(&data_dir).map_err(|err| format!("创建隔离 profile 目录失败：{err}"))?;
 
@@ -323,33 +327,35 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
     };
 
     let args = build_args(profile, url, &proxy_arg);
-    let child = Command::new(&browser)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| {
-            // 浏览器没起来就别留下空转的中继/内核。
-            stop_relay_if_any(&profile.id);
-            crate::core::stop_if_any(&profile.id);
-            format!("启动浏览器失败：{err}")
-        })?;
-    let pid = child.id() as i32;
-    // 这个身份的 Chrome 已经在跑时，新进程只是把参数转交给它（开个新窗口/标签）
-    // 然后立刻退出。保留原来那个主进程的 pid，否则「停止」会找不到它。
-    let pid = match store::read_pid(&profile.id) {
-        Some(existing) if existing != pid && pid_alive(existing) => existing,
-        _ => {
-            store::write_pid(&profile.id, pid)?;
-            pid
+    let session = (if let Some(extension) = extension {
+        match deadline.checked_duration_since(std::time::Instant::now()) {
+            Some(budget) => crate::browser_session::launch(&profile.id, &browser, &args, &extension, budget),
+            None => Err("出口准备耗时过长，请重新启动浏览器".into()),
         }
-    };
+    } else {
+        Command::new(&browser).args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().map(|child| json!({"pid":child.id(),"fingerprint":{"status":"notRequested","installationVerified":false}}))
+            .map_err(|e| format!("启动浏览器失败：{e}"))
+    }).map_err(|err| {
+        stop_relay_if_any(&profile.id);
+        crate::core::stop_if_any(&profile.id);
+        err
+    })?;
+    let pid = session["pid"].as_i64().ok_or("浏览器未返回进程号")? as i32;
+    if let Err(error) = store::write_pid(&profile.id, pid) {
+        let _ = crate::browser_session::request_stop(&profile.id, pid);
+        let _ = quit_gracefully(pid);
+        stop_relay_if_any(&profile.id);
+        crate::core::stop_if_any(&profile.id);
+        return Err(error);
+    }
     let mut result = json!({
         "pid": pid,
         "browser": browser.display().to_string(),
         "userDataDir": data_dir.display().to_string(),
         "args": args,
+        "fingerprint": session["fingerprint"],
+        "supervisorPid": session["supervisorPid"],
     });
     if let Some(map) = result.as_object_mut() {
         for (key, value) in extras {

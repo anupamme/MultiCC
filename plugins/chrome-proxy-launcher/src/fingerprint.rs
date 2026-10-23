@@ -99,7 +99,7 @@ fn prepare_at(profile: &Profile, base: &Path) -> Result<Value, String> {
     Ok(json!({
         "extensionPath": extension_dir.display().to_string(),
         "status": "prepared", "installationVerified": false,
-        "message": "扩展已生成，尚未验证加载状态。请在对应身份的 Chrome 扩展页面手动加载；已加载过则点重新加载并刷新网页。"
+        "message": "扩展文件已准备；启用自动指纹启动后会自动加载并验证，无需手动安装。"
     }))
 }
 

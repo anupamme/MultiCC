@@ -167,6 +167,8 @@
     <div>
       <label>启动时打开的网址（可选）</label>
       <input id="f-url" placeholder="https://example.com">
+      <label class="inline"><input id="f-fingerprint" type="checkbox" checked> 启动时自动加载轻量指纹扩展</label>
+      <p class="hint">无需手动安装。每身份固定配置，登录态保留；指纹模式先加载扩展再打开指定网址，不自动恢复上次全部标签。取消勾选则使用普通启动和 Chrome 原生标签恢复。</p>
     </div>
   </div>
   <div class="row" style="margin-top:10px">
@@ -233,7 +235,6 @@ async function run(command, input) {
 
 let subscriptions = [];   // 最近一次 list 的结果
 let editingSubId = '';    // 正在编辑的订阅 id（空 = 新增）
-const fingerprintPackages = new Map(); // 只记录生成结果，不代表浏览器已安装
 const probeResults = new Map(); // id -> {exitIp, via, latencyMs}
 const editingId = () => $('btn-save').dataset.editing || '';
 
@@ -488,10 +489,10 @@ async function refresh() {
         event.target.disabled = true;
         try {
           const url = $('f-url').value.trim();
-          const result = await run('launch', { id: profile.id, url });
+          const result = await run('launch', { id: profile.id, url, automaticFingerprint: $('f-fingerprint').checked });
           let detail = result.node ? `节点 ${result.node}` : (profile.egressText || '');
           if (result.upstream) detail += ` → 上游 ${result.upstream}`;
-          notice(`已启动「${profile.name}」（pid ${result.pid}），出口：${detail}`);
+          notice(`已启动「${profile.name}」，${result.fingerprint?.installationVerified ? '指纹扩展已自动加载，' : ''}出口：${detail}`);
         } catch (error) {
           notice(error.message, 'bad');
         } finally {
@@ -529,19 +530,6 @@ async function refresh() {
       }));
     }
     actions.append(
-      makeButton('准备指纹扩展', '', async event => {
-        event.target.disabled = true;
-        try {
-          const result = await run('fingerprint-prepare', { id: profile.id });
-          fingerprintPackages.set(profile.id, result);
-          notice('扩展文件已准备，请按身份卡片下方的步骤加载；生成不代表已启用。');
-        } catch (error) {
-          notice(error.message, 'bad');
-        } finally {
-          event.target.disabled = false;
-          await refresh();
-        }
-      }),
       makeButton('编辑', '', () => fillForm(profile)),
       makeButton('删除', 'danger', async event => {
         if (!confirm(`删除身份「${profile.name}」？运行中的浏览器会被关闭。磁盘上的隔离 profile 目录会保留，可手动清理。`)) return;
@@ -560,30 +548,10 @@ async function refresh() {
     );
 
     item.append(head, actions);
-    const fingerprint = fingerprintPackages.get(profile.id);
-    if (fingerprint) {
-      const instructions = document.createElement('div');
-      instructions.className = 'hint';
-      const intro = document.createElement('p');
-      intro.textContent = '已生成，加载状态未检测。请在这个身份的 Chrome 中打开 chrome://extensions，开启「开发者模式」→「加载已解压的扩展程序」，选择下面的文件夹（macOS 可按 ⌘⇧G 粘贴目录）。已加载过则点扩展的重新加载，再刷新网页。';
-      const folder = document.createElement('input');
-      folder.readOnly = true;
-      folder.value = fingerprint.extensionPath;
-      folder.setAttribute('aria-label', '该身份的指纹扩展目录');
-      const copy = makeButton('复制扩展目录', '', async () => {
-        try {
-          await navigator.clipboard.writeText(folder.value);
-          notice('已复制；请在对应身份的 Chrome 中加载这个目录。');
-        } catch (_) {
-          folder.focus(); folder.select();
-          notice('请复制已选中的目录。');
-        }
-      });
-      const scope = document.createElement('p');
-      scope.textContent = '每个身份一份固定配置，仅轻微调整 Canvas / WebGL 像素读取；同身份同网站重开后复用。不修改字体、显卡型号、音频或系统，也不保证无法关联。关闭扩展并刷新网页即可恢复。不要将同一目录加载到多个身份。';
-      instructions.append(intro, folder, copy, scope);
-      item.append(instructions);
-    }
+    const scope = document.createElement('p');
+    scope.className = 'hint';
+    scope.textContent = '轻量指纹：仅微调 Canvas / WebGL 像素读出，同身份同网站复用固定配置；不修改字体、显卡型号、音频或系统，不保证无法关联。';
+    item.append(scope);
     list.append(item);
   }
 }
