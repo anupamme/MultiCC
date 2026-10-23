@@ -286,6 +286,7 @@ function createProviderRoutes(rawDeps) {
 
   function mountManagementRoutes(app) {
     for (const method of ['get', 'post', 'patch', 'delete', 'put']) assertAppMethod(app, method);
+    require('./cpr-backend-settings').mountCprBackendSettingsRoutes(app, { runtime: deps.providerRouterRuntime });
 
     app.post('/api/providers/import', (req, res) => {
       try {

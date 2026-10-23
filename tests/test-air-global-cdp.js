@@ -115,6 +115,16 @@ test('the Air global panel is native: install hint and the macOS lid-sleep switc
   let unlockSaveError = '', unlockDeleteError = '', unlockSaveDelay = 0;
   const unlockPosts = []; // { method, body }：POST 存、DELETE 删、POST authorize 重问一次
   routes['GET /api/settings/power'] = () => json(powerReply());
+  let cpr = { currentBackend: 'node', configuredBackend: 'node', restartRequired: false, rustAvailable: true };
+  let cprSaveError = '';
+  const cprPosts = [];
+  routes['GET /api/settings/cpr-backend'] = () => json({ ok: true, ...cpr });
+  routes['POST /api/settings/cpr-backend'] = req => {
+    const body = JSON.parse(req.body); cprPosts.push(body);
+    if (cprSaveError) return { status: 503, ...json({ error: cprSaveError }) };
+    cpr = { ...cpr, configuredBackend: body.backend, restartRequired: body.backend !== cpr.currentBackend };
+    return json({ ok: true, ...cpr });
+  };
   routes['POST /api/settings/power'] = async req => {
     const body = JSON.parse(req.body);
     powerPosts.push(body);
@@ -225,6 +235,29 @@ test('the Air global panel is native: install hint and the macOS lid-sleep switc
     assert.equal(await page.evaluate(`document.querySelectorAll('#admin-content a[href*="multicc.apk"], #admin-content a[href*="ios-ota"]').length`), 0,
       '这页不许再画一张下载卡 —— 同一件事两个入口正是这次迁移要消掉的');
     await page.screenshot('01-global-native-desktop');
+
+    // CPR 只保存下一次启动的选择，按钮与状态以回包为准，不自动重启服务。
+    assert.ok(await page.waitFor(`document.getElementById('air-global-cpr-toggle')?.disabled === false`));
+    assert.equal(await text('#air-global-cpr-status'), await tParams('airGlobalCprCurrent', { current: 'Node' }));
+    const restartCalls = () => page.requests.filter(r => r.path === '/api/restart').length;
+    const restartBase = restartCalls();
+    await page.evaluate(`document.getElementById('air-global-cpr-toggle').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('air-global-cpr-status').textContent.includes('Rust') && !document.getElementById('air-global-cpr-toggle').disabled`));
+    assert.equal(await text('#air-global-cpr-status'), await tParams('airGlobalCprPending', { current: 'Node', next: 'Rust' }));
+    assert.equal(await text('#air-global-cpr-toggle'), await t('airGlobalCprUseNode'));
+    assert.deepEqual(cprPosts, [{ backend: 'rust' }]);
+    await page.evaluate(`document.getElementById('air-global-cpr-card').scrollIntoView({ block: 'center' })`);
+    await page.screenshot('02-cpr-rust-saved');
+    await page.evaluate(`document.getElementById('air-global-cpr-toggle').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('air-global-cpr-status').textContent === t('airGlobalCprCurrent', { current: 'Node' })`));
+    assert.deepEqual(cprPosts[1], { backend: 'node' });
+    cprSaveError = 'fixture: save failed';
+    await page.evaluate(`document.getElementById('air-global-cpr-toggle').click()`);
+    assert.ok(await page.waitFor(`document.getElementById('air-global-cpr-status').textContent.includes('fixture: save failed') && !document.getElementById('air-global-cpr-toggle').disabled`));
+    assert.equal(await text('#air-global-cpr-toggle'), await t('airGlobalCprTryRust'));
+    assert.equal(cpr.configuredBackend, 'node');
+    assert.equal(restartCalls(), restartBase, '保存、回退和失败均不自动重启');
+    cprSaveError = '';
 
     // ── ③ 关盖运行：可见性、错误、以及勾选态到底谁说了算 ───────────────────
     assert.equal(await page.evaluate(`document.getElementById('air-global-power-card').checkVisibility()`), true, 'available:true 时整卡可见');

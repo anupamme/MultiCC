@@ -461,8 +461,10 @@ const REVIEWED_EXEMPTIONS = Object.freeze({
     // 点下去没反应的事。中英各 1 行 = +2 行，重跑生成器实测 9580/613354。
     // +6 双语键（airProviderPresetRefresh*/Source*）：Provider 模板可从 GitHub
     // 更新，中英各 6 行 = +12 行；与上一批合并后重跑生成器实测 9592/614156。
-    maxLines: 9592,
-    maxBytes: 614156,
+    // +10 双语键（airGlobalCpr*）：全局配置中的 CPR 版本选择与待重启状态。
+    // 与主线词典合并后重新生成，实测 9612 行、615236 字节。
+    maxLines: 9612,
+    maxBytes: 615236,
     reason: 'generated bilingual dictionary (scripts/generate-i18n.js) — data, not hand-written source',
   }),
 });

@@ -12,6 +12,12 @@ pub fn cpr_protocol_version() -> u32 {
     1
 }
 
+#[napi]
+pub fn cpr_backend_settings(input: String) -> Result<String> {
+    let input = serde_json::from_str(&input).map_err(|_| error("CPR 设置输入无效".into()))?;
+    Ok(multicc_cpr::settings::plan(&input).to_string())
+}
+
 // 大请求的解析和序列化也离开 Node 主线程。
 #[napi]
 pub async fn cpr_route(input: String) -> Result<String> {

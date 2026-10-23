@@ -4792,7 +4792,17 @@ window.MULTICC_I18N_CATALOG = {
     "airPluginsFrameHint": "插件面板由插件自带，经插件通道运行",
     "airPluginsLoadFail": "插件清单加载失败",
     "airPluginsLoading": "正在读取插件清单…",
-    "airPluginsOpen": "打开"
+    "airPluginsOpen": "打开",
+    "airGlobalCprExperiment": "实验功能",
+    "airGlobalCprTitle": "CPR 代理",
+    "airGlobalCprTryRust": "试用 Rust",
+    "airGlobalCprUseNode": "使用 Node",
+    "airGlobalCprLoading": "读取中…",
+    "airGlobalCprDesc": "默认使用 Node。更改后需手动重启服务。",
+    "airGlobalCprCurrent": "当前：{current}",
+    "airGlobalCprPending": "当前：{current} · 重启后：{next}",
+    "airGlobalCprUnavailable": "Rust 模块未就绪",
+    "airGlobalCprFailed": "设置失败：{message}"
   },
   "en": {
     "newDirectory": "New Workspace",
@@ -9586,6 +9596,16 @@ window.MULTICC_I18N_CATALOG = {
     "airPluginsFrameHint": "Panel provided by the plugin; runs through the plugin channel",
     "airPluginsLoadFail": "Failed to load plugin list",
     "airPluginsLoading": "Loading plugins…",
-    "airPluginsOpen": "Open"
+    "airPluginsOpen": "Open",
+    "airGlobalCprExperiment": "Experimental",
+    "airGlobalCprTitle": "CPR proxy",
+    "airGlobalCprTryRust": "Try Rust",
+    "airGlobalCprUseNode": "Use Node",
+    "airGlobalCprLoading": "Loading…",
+    "airGlobalCprDesc": "Node is the default. Restart the service manually after changing this setting.",
+    "airGlobalCprCurrent": "Current: {current}",
+    "airGlobalCprPending": "Current: {current} · After restart: {next}",
+    "airGlobalCprUnavailable": "Rust module is unavailable",
+    "airGlobalCprFailed": "Could not update setting: {message}"
   }
 };

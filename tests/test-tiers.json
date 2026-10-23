@@ -2622,6 +2622,12 @@
       "lane": "deterministic"
     },
     {
+      "path": "tests/test-codex-account-model-catalog.js",
+      "tier": "core",
+      "lane": "deterministic",
+      "owner": "npm:test:provider-router"
+    },
+    {
       "path": "tests/test-codex-app-bridge-resident.js",
       "tier": "core",
       "lane": "deterministic",
@@ -2693,6 +2699,12 @@
       "path": "tests/test-codex-image-bridge.js",
       "tier": "core",
       "lane": "deterministic"
+    },
+    {
+      "path": "tests/test-codex-model-catalog-native.js",
+      "tier": "core",
+      "lane": "isolated",
+      "owner": "npm:test:rust"
     },
     {
       "path": "tests/test-codex-models-route.js",
@@ -4467,6 +4479,12 @@
       "entrypoints": [
         "npm:test:cdp"
       ]
+    },
+    {
+      "path": "tests/test-run-config-codex-models-cdp.js",
+      "tier": "flow",
+      "lane": "cdp",
+      "owner": "npm:test:cdp"
     },
     {
       "path": "tests/test-run-config-model-search-cdp.js",

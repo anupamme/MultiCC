@@ -54,7 +54,7 @@ function verifyDesktopResources({ resourcesDir, execute = true, timeoutMs = 60_0
       if (!/^1\\./.test(r('cli-provider-router').API_VERSION || '')) throw new Error('CPR API major 1 required');
       let cpr;
       try { cpr = r('./src/native/runtime').getNative('cpr', 'rust'); } catch (_) { throw new Error('Rust SQLite / CPR module unavailable'); }
-      if (cpr.cprProtocolVersion?.() !== 1 || typeof cpr.cprCreateExchange !== 'function') throw new Error('Rust CPR module required');
+      if (cpr.cprProtocolVersion?.() !== 1 || typeof cpr.cprCreateExchange !== 'function' || typeof cpr.cprBackendSettings !== 'function') throw new Error('Rust CPR module required');
       const db = new (r('./src/sqlite/driver').databaseConstructor())(':memory:');
       if (db.backend !== 'rust') throw new Error('Rust SQLite required');
       db.exec('create table smoke(x); create virtual table f using fts5(x)');
