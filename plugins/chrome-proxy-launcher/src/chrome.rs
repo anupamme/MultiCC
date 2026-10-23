@@ -1,10 +1,8 @@
 //! Chrome 定位与启动：每个身份一个独立 user-data-dir + 强制 --proxy-server。
 //!
-//! 「强制」的关键：Chrome 的代理是启动参数级（--proxy-server），整个实例的
-//! 所有请求都走它；socks5 再配 --host-resolver-rules 把 DNS 解析也压进代理
-//! （Chrome 对 socks5 默认本地解析 DNS，不压会漏）。launch 前先做一次 TCP
-//! 可达检查 —— 代理挂了就拒绝启动，因为 Chrome 代理失效时会静默直连，
-//! 那正是这个插件要杜绝的泄漏。
+//! 固定单代理没有 DIRECT 备用：代理不可达时，受代理控制的网页请求失败。
+//! 禁止非代理 WebRTC UDP / QUIC，压掉目标域名本地解析；这些参数不是系统防火墙。
+//! 启动探测只用于提前报错，不能作为运行期间的断网保护。
 
 use crate::store::{self, Profile};
 use serde_json::json;
@@ -141,11 +139,14 @@ pub fn terminate_pid(pid: i32) -> Result<(), String> {
     }
 }
 
-pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str, pin_dns: bool) -> Vec<String> {
+pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str) -> Vec<String> {
     let data_dir = store::user_data_dir(&profile.id);
     let mut args = vec![
         format!("--user-data-dir={}", data_dir.display()),
         proxy_arg.to_string(),
+        "--proxy-bypass-list=<-loopback>".to_string(),
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp".to_string(),
+        "--disable-quic".to_string(),
         "--no-first-run".to_string(),
         "--no-default-browser-check".to_string(),
         "--disable-features=ChromeWhatsNewUI".to_string(),
@@ -155,12 +156,13 @@ pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str, pin_dns
         // Preferences 校验，外部改写会被 Chrome 当作篡改重置。
         "--restore-last-session".to_string(),
     ];
-    // socks5 直连时 Chrome 默认在本地解析 DNS（socks5 而非 socks5h），等于
-    // 把访问了哪些域名漏给本地网络栈。压掉本地解析，解析失败宁可不连。
-    // 走中继/内核时不需要：域名由代理侧解析。
-    if pin_dns {
-        args.push("--host-resolver-rules=MAP * ~NOTFOUND , DIRECT".to_string());
-    }
+    // HTTP / SOCKS5 的目标域名由代理解析。限制 Chrome 的其他本地解析，
+    // 仅为代理服务器自身保留 DNS（若代理地址使用域名，仍需先找到代理）。
+    let proxy_host = proxy_arg.split_once("://")
+        .and_then(|(_, authority)| authority.rsplit_once(':'))
+        .map(|(host, _)| host.trim_matches(['[', ']']))
+        .unwrap_or("127.0.0.1");
+    args.push(format!("--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE {proxy_host}"));
     if let Some(target) = url {
         if !target.trim().is_empty() {
             args.push(target.trim().to_string());
@@ -170,7 +172,7 @@ pub fn build_args(profile: &Profile, url: Option<&str>, proxy_arg: &str, pin_dns
 }
 
 /// 拉起带凭据代理的本地中继并等它就绪，返回本地端口。
-/// 中继进程与 launcher（本进程）脱钩：父进程退出后由 launchd 收养常驻。
+/// 中继使用独立子进程；不是系统托管服务，进程组或服务整体停止仍可能终止它。
 pub fn spawn_relay(
     id: &str,
     upstream: &crate::store::ProxyConfig,
@@ -220,18 +222,28 @@ pub fn stop_relay_if_any(id: &str) {
     store::clear_relay(id);
 }
 
+/// Chrome 不会把新启动参数应用到已经运行的同 profile 实例。
+/// 必须在触碰中继/内核之前拒绝，避免旧浏览器仍指向刚被收掉的端口。
+pub fn ensure_not_running(id: &str) -> Result<(), String> {
+    if store::read_pid(id).is_some_and(pid_alive) {
+        return Err("该身份浏览器仍在运行，请先点击「停止」再启动或修改出口；浏览器内可直接新建窗口".into());
+    }
+    Ok(())
+}
+
 /// 启动一个身份对应的隔离浏览器实例。
 /// check_proxy=true（默认）先验证出口可用：无凭据查 TCP 可达；带凭据直接做
 /// 一次认证探测（凭据错就拒绝启动，不让 Chrome 挂在中继上白等）；订阅出口
 /// 则经刚起的本地内核取一次出口 IP。
 /// 带凭据的直连代理会先拉起本地中继；订阅出口会先拉起身份专属 meow 内核。
 pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result<serde_json::Value, String> {
+    ensure_not_running(&profile.id)?;
     let browser = find_browser(profile.chrome_path.as_deref())?;
     let data_dir = store::user_data_dir(&profile.id);
     std::fs::create_dir_all(&data_dir).map_err(|err| format!("创建隔离 profile 目录失败：{err}"))?;
 
     let mut extras = serde_json::Map::new();
-    let (proxy_arg, pin_dns) = if let Some(egress) = &profile.subscription {
+    let proxy_arg = if let Some(egress) = &profile.subscription {
         let subscriptions = store::load_subscriptions()?;
         let subscription = subscriptions
             .iter()
@@ -267,7 +279,7 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
                 stop_relay_if_any(&profile.id);
                 crate::core::stop_if_any(&profile.id);
                 return Err(format!(
-                    "订阅出口不可用，已拒绝启动（Chrome 代理失效会直连泄漏真实出口）：{err}"
+                    "订阅出口不可用，已拒绝启动（未改用直连）：{err}"
                 ));
             }
         }
@@ -283,14 +295,14 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
                 json!(format!("{}://{}:{}", via.scheme, via.host, via.port)),
             );
         }
-        (proxy_arg, false)
+        proxy_arg
     } else if let Some(proxy) = &profile.proxy {
         if check_proxy {
             if proxy.has_credentials() {
                 crate::proxy::exit_ip(proxy, Duration::from_secs(6))?;
             } else if !crate::proxy::tcp_reachable(&proxy.host, proxy.port, Duration::from_millis(1500)) {
                 return Err(format!(
-                    "代理 {}://{}:{} 不可达，已拒绝启动（Chrome 代理失效会直连泄漏真实出口）",
+                    "代理 {}://{}:{} 不可达，已拒绝启动（未改用直连）",
                     proxy.scheme, proxy.host, proxy.port
                 ));
             }
@@ -302,18 +314,15 @@ pub fn launch(profile: &Profile, url: Option<&str>, check_proxy: bool) -> Result
         };
         extras.insert("relayPort".into(), json!(relay_port));
         match relay_port {
-            // 中继是 http 代理，域名交中继解析，不必压本地 DNS。
-            Some(port) => (format!("--proxy-server=http://127.0.0.1:{port}"), false),
-            None => (
-                format!("--proxy-server={}://{}:{}", proxy.scheme, proxy.host, proxy.port),
-                proxy.scheme == "socks5",
-            ),
+            // 中继是 http 代理，目标域名交中继/上游解析。
+            Some(port) => format!("--proxy-server=http://127.0.0.1:{port}"),
+            None => format!("--proxy-server={}://{}:{}", proxy.scheme, proxy.host, proxy.port),
         }
     } else {
         return Err("这个身份还没有配置出口".into());
     };
 
-    let args = build_args(profile, url, &proxy_arg, pin_dns);
+    let args = build_args(profile, url, &proxy_arg);
     let child = Command::new(&browser)
         .args(&args)
         .stdin(Stdio::null())
@@ -374,18 +383,34 @@ mod tests {
             &profile("http"),
             Some("https://example.com"),
             "--proxy-server=http://127.0.0.1:7897",
-            false,
         );
         assert!(args.iter().any(|a| a == "--proxy-server=http://127.0.0.1:7897"));
         assert!(args.iter().any(|a| a.starts_with("--user-data-dir=")));
         assert!(args.iter().any(|a| a == "--restore-last-session"));
         assert!(args.iter().any(|a| a == "https://example.com"));
-        assert!(!args.iter().any(|a| a.starts_with("--host-resolver-rules")));
+        assert!(args.iter().any(|a| a == "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"));
+    }
+
+    #[test]
+    fn all_proxy_types_disable_bypasses_without_blocking_proxy_dns() {
+        for scheme in ["http", "https", "socks5"] {
+            let proxy = format!("--proxy-server={scheme}://proxy.example:8080");
+            let args = build_args(&profile(scheme), None, &proxy);
+            for flag in [
+                "--proxy-bypass-list=<-loopback>",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+                "--disable-quic",
+                "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE proxy.example",
+            ] {
+                assert!(args.iter().any(|a| a == flag), "{scheme}: {flag}");
+            }
+            assert!(!args.iter().any(|a| a.contains("direct://")));
+        }
     }
 
     #[test]
     fn socks5_pins_dns_too() {
-        let args = build_args(&profile("socks5"), None, "--proxy-server=socks5://127.0.0.1:7897", true);
+        let args = build_args(&profile("socks5"), None, "--proxy-server=socks5://127.0.0.1:7897");
         assert!(args.iter().any(|a| a.starts_with("--host-resolver-rules")));
     }
 
@@ -396,9 +421,9 @@ mod tests {
             proxy.username = Some("u".into());
             proxy.password = Some("p".into());
         }
-        let args = build_args(&with_creds, None, "--proxy-server=http://127.0.0.1:41000", false);
+        let args = build_args(&with_creds, None, "--proxy-server=http://127.0.0.1:41000");
         assert!(args.iter().any(|a| a == "--proxy-server=http://127.0.0.1:41000"));
-        // DNS 交给中继/上游解析，不再压本地解析。
-        assert!(!args.iter().any(|a| a.starts_with("--host-resolver-rules")));
+        // 目标 DNS 交给中继/上游，Chrome 本地只允许解析代理地址。
+        assert!(args.iter().any(|a| a == "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"));
     }
 }

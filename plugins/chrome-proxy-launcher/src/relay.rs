@@ -7,9 +7,9 @@
 //! RFC 1929 用户名密码认证 —— 凭据永远不经过 Chrome，出口仍然强制。
 //!
 //! 生命周期：launch 用 `chrome-proxy-launcher relay` 拉起本进程后父进程随即
-//! 退出，本进程被 launchd 收养常驻；就绪后把 {pid, port} 写进
+//! 退出，中继可独立存活，但不是系统托管服务；就绪后把 {pid, port} 写进
 //! run/<id>.relay.json 供 launch 对账、stop 收割。兜底：连续 30 分钟没有
-//! 任何流量就自杀，防止 stop 被跳过后中继泄漏。
+//! 任何流量且对应浏览器不在运行才退出，避免浏览器空闲后失去出口。
 
 use crate::proxy::{basic_authorization, connect_tcp};
 use crate::store::{self, ProxyConfig};
@@ -289,6 +289,10 @@ fn handle_client(mut client: TcpStream, route: &Route, last_active: &Arc<AtomicU
     }
 }
 
+fn should_exit_idle(now: u64, last_active: u64, browser_alive: bool) -> bool {
+    !browser_alive && now.saturating_sub(last_active) >= IDLE_EXIT_SECS
+}
+
 /// relay 子命令入口：常驻直到空闲自杀，正常情况下不会返回。
 pub fn run(id: &str, route: &Route) -> Result<(), String> {
     if route.upstream.scheme == "https" {
@@ -314,11 +318,13 @@ pub fn run(id: &str, route: &Route) -> Result<(), String> {
         hop: route.hop.clone(),
     });
     let last_active = Arc::new(AtomicU64::new(now_secs()));
+    let profile_id = id.to_string();
     {
         let last_active = Arc::clone(&last_active);
         thread::spawn(move || loop {
             thread::sleep(Duration::from_secs(60));
-            if now_secs().saturating_sub(last_active.load(Ordering::Relaxed)) >= IDLE_EXIT_SECS {
+            let browser_alive = store::read_pid(&profile_id).is_some_and(crate::chrome::pid_alive);
+            if should_exit_idle(now_secs(), last_active.load(Ordering::Relaxed), browser_alive) {
                 std::process::exit(0);
             }
         });
@@ -336,6 +342,48 @@ pub fn run(id: &str, route: &Route) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_browser_keeps_its_proxy_until_browser_exits() {
+        assert!(!should_exit_idle(5000, 0, true));
+        assert!(!should_exit_idle(100, 0, false));
+        assert!(should_exit_idle(5000, 0, false));
+        assert!(!should_exit_idle(0, 5000, false));
+    }
+
+    #[test]
+    fn dead_upstream_or_hop_never_connects_directly_to_target() {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let destination = target.local_addr().unwrap();
+        // 每轮申请并关闭一个临时端口，模拟不可达的上游或跳板。
+        for scheme in ["http", "socks5"] {
+            for with_hop in [false, true] {
+                let dead = TcpListener::bind("127.0.0.1:0").unwrap();
+                let dead_port = dead.local_addr().unwrap().port();
+                drop(dead);
+                let route = Route {
+                    upstream: ProxyConfig::new(scheme, "127.0.0.1", dead_port),
+                    hop: with_hop.then(|| ProxyConfig::new("socks5", "127.0.0.1", dead_port)),
+                };
+                for request in [
+                    format!("CONNECT {destination} HTTP/1.1\r\n\r\n"),
+                    format!("GET http://{destination}/ HTTP/1.1\r\nHost: {destination}\r\n\r\n"),
+                ] {
+                    let relay = TcpListener::bind("127.0.0.1:0").unwrap();
+                    let mut client = TcpStream::connect(relay.local_addr().unwrap()).unwrap();
+                    client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                    client.write_all(request.as_bytes()).unwrap();
+                    let (server, _) = relay.accept().unwrap();
+                    handle_client(server, &route, &Arc::new(AtomicU64::new(now_secs())));
+                    let mut response = String::new();
+                    client.read_to_string(&mut response).unwrap();
+                    assert!(response.starts_with("HTTP/1.1 502"), "{response}");
+                    assert_eq!(target.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+                }
+            }
+        }
+    }
 
     #[test]
     fn authority_and_url_split() {

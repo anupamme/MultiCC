@@ -4,20 +4,40 @@ MultiCC 第一个插件。给每个「身份」绑定：
 
 - **一份完全隔离的 Chrome profile** —— 独立 `--user-data-dir`，cookie、登录态、
   扩展、缓存互不串号；
-- **一个强制出口** —— `--proxy-server` 指到本地 VPN 客户端的不同端口（Clash /
-  sing-box / v2ray 的多端口分流）或任意 http/socks5 代理；socks5 还会配
-  `--host-resolver-rules` 把 DNS 解析一并压进代理，防止本地 DNS 泄漏访问了
-  哪些域名。也可以直接绑**订阅里的某个节点**（vmess / trojan / ss / vless 等，
-  由身份专属 meow 内核承接）。
+- **一个固定代理出口** —— `--proxy-server` 指到指定 http/https/socks5 代理，
+  或身份专属 meow 内核承接的订阅节点。未配置 `DIRECT` 备用。
 
-一键启动，一键停止；「测出口」直接显示这个身份当前的外网 IP，肉眼验证分流。
+一键启动，一键停止；「测出口」显示该身份当前的外网 IP。
+不同 profile 只隔离登录数据；若绑定同一节点，仍可能共用公网 IP。
 
-## 为什么 launch 前要检查代理
+## 代理故障与保护边界
 
-Chrome 在代理失效时会**静默直连**——这正是多出口场景里最危险的失败方式
-（以为走美区 IP，实际裸奔）。所以插件在启动前先做一次 TCP 可达检查
-（150ms 级），代理不通就拒绝启动并说明原因。想强制启动可在 `run` 的
-input 里传 `"checkProxy": false`（UI 不提供这个开关，属于明知故犯位）。
+固定单代理不可达时，受代理控制的网页请求失败，并不会自动改用直连。
+启动探测用于提前报告不可达或认证错误，不是持续断网保护；`checkProxy: false`
+只跳过探测，不移除固定代理。Chromium 行为说明：
+https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md
+
+新启动的浏览器附加以下约束：
+
+- 禁止非代理 WebRTC UDP、关闭 QUIC。
+- 移除 localhost / link-local 的隐式代理绕过。
+- 限制 Chrome 本地域名解析，仅放行代理服务器自身的域名；HTTP / SOCKS5
+  目标域名交给代理解析。代理服务器域名以及代理内核自己的 DNS 不在此限制内。
+
+**这不是系统级防火墙保证**：不能约束上游代理自己的 DIRECT 分流、其他进程、
+浏览器未受这些参数控制的流量或系统 DNS。严格隔离应在独立 VM / 网络命名空间
+中默认拒绝出站，仅允许连接指定代理，并同时覆盖 IPv6、DNS、UDP。
+
+移除本地绕过后，浏览器不能直接访问本机管理页和 OAuth localhost 回调；
+需要本机回调的登录应使用粘贴回调地址的入口。参数对已运行实例不生效，升级后
+请自行停止该身份再启动；插件不会强行关闭浏览器。
+
+运行中的身份不能重复启动或修改出口，引用它的订阅也不能刷新：Chrome 会复用
+旧实例而忽略新代理参数，重建随机端口将导致旧窗口断网。新窗口请在浏览器内打开。
+
+中继和内核是独立子进程，**尚未注册系统托管服务**。关闭 MultiCC 页面不会停止
+它们；关闭主进程后是否存活取决于服务管理器是否清理整个进程组。即使代理进程
+退出，也不会移除 Chrome 的固定代理设置。独立守护只能提高可用性，不等于断网保护。
 
 ## 使用
 
@@ -86,6 +106,18 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 `bin/darwin-arm64/chrome-proxy-launcher` 已随仓库提交（约 2.4MB，外加 5MB 的
 `meow.gz`），开箱即用；其他平台需要本机构建。
 
+测试（在仓库根目录执行）：
+
+```sh
+cargo test --manifest-path plugins/chrome-proxy-launcher/Cargo.toml
+node --test plugins/chrome-proxy-launcher/tests/isolation.cjs
+```
+
+集成测试默认使用上面构建的 release 二进制（可用 `PLUGIN_TEST_BIN` 指定）。
+提供 `CHROME_TEST_BIN` 浏览器路径后，额外在临时 profile 中进行无头断代理测试：
+代理开启时页面必须成功，关闭代理后必须记录代理连接错误且目标没有新增直连。
+测试不使用用户登录数据，也不关闭现有浏览器。
+
 ## 命令参考（stdin JSON → stdout JSON）
 
 | 命令 | input | 说明 |
@@ -121,7 +153,8 @@ Chrome --proxy-server=http://127.0.0.1:<随机端口>  →  中继  →  真实�
 ```
 
 凭据只存在于插件进程中，从不进入 Chrome 的命令行。中继端口随机、只听
-127.0.0.1，stop / remove 时一并收割；兜底是连续 30 分钟无流量自杀。中继状态
+127.0.0.1，stop / remove 时一并收割；连续 30 分钟无流量且对应浏览器已退出时
+才自动退出。中继状态
 写在 `~/.multicc/plugins-data/chrome-proxy-launcher/run/<id>.relay.json`。
 上面「订阅节点 + 上游住宅代理」的跳板链复用的也是这个中继，只是多传一个
 `hop`（跳板内核的 socks5 端口）。
@@ -152,3 +185,6 @@ Chrome --proxy-server=http://127.0.0.1:<随机端口>  →  中继  →  真实�
 空闲退出，不收割的话下一个请求会继续走旧出口 —— 改了却换不了 IP 是最坏的结果。
 订阅「刷新」同样会收割引用它的身份的内核。
 
+
+专用出口当前覆盖模型转发；不能据此宣称令牌续期、额度查询、资料查询等账号
+网络活动均已隔离。严格账号隔离需要将这些调用统一接入同一出口策略并逐项验证。
