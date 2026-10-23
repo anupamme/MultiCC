@@ -483,3 +483,68 @@ test('official advanced settings (egress binding and IP allowlist) survive norma
   assert.equal(unbound.egressBinding, null, 'a half binding is not a binding');
   assert.deepEqual(unbound.egressIpAllowlist, []);
 });
+
+test('the published provider-template catalog is valid and DeepSeek is current', () => {
+  const file = path.join(ROOT, 'public', 'provider-presets.json');
+  const bundled = catalog.normalizePresetCatalog(JSON.parse(fs.readFileSync(file, 'utf8')));
+  assert.ok(bundled, 'the catalog must normalize to at least one template');
+  assert.ok(bundled.presets.length >= 6);
+
+  const deepseek = bundled.presets.find(preset => preset.id === 'claude-deepseek');
+  assert.ok(deepseek, 'claude-deepseek must stay in the catalog');
+  assert.equal(deepseek.baseUrl, 'https://api.deepseek.com/anthropic');
+  assert.equal(deepseek.model, 'deepseek-v4-pro');
+  assert.deepEqual(deepseek.models, ['deepseek-v4-pro', 'deepseek-v4-flash']);
+  assert.equal(JSON.stringify(bundled).includes('deepseek-chat'), false,
+    'deepseek-chat is the retired id; templates must not fill it any more');
+
+  const codexDeepseek = bundled.presets.find(preset => preset.id === 'codex-deepseek');
+  assert.ok(codexDeepseek, 'DeepSeek is also reachable through the Codex template');
+  assert.equal(codexDeepseek.apiFormat, 'openai_responses');
+
+  // The page keeps a synchronous copy so the picker is never empty; it must not
+  // drift back to the retired model while the JSON moves on.
+  const page = fs.readFileSync(path.join(ROOT, 'public', 'air-provider.js'), 'utf8');
+  assert.match(page, /id: 'claude-deepseek'[\s\S]{0,220}deepseek-v4-pro/);
+  assert.equal(/deepseek-chat|deepseek-reasoner/.test(page), false);
+});
+
+test('provider-template entries are whitelisted; one bad field drops that template only', () => {
+  const remote = catalog.normalizePresetCatalog({
+    presets: [
+      { id: 'ok', appType: 'claude', baseUrl: 'https://relay.test/anthropic', apiFormat: 'anthropic', model: 'm', models: ['m', 'n'] },
+      { id: 'bad id!', appType: 'claude', baseUrl: 'https://relay.test', model: 'm' },
+      { id: 'wrong-protocol', appType: 'claude', apiFormat: 'openai_responses', baseUrl: 'https://relay.test', model: 'm' },
+      { id: 'javascript-url', appType: 'claude', baseUrl: 'javascript:alert(1)', model: 'm' },
+      { id: 'not-a-url', appType: 'claude', baseUrl: 'not a url', model: 'm' },
+      { id: 'codex-ok', appType: 'codex', baseUrl: 'https://relay.test/v1', model: 'c' },
+    ],
+  });
+  assert.ok(remote);
+  assert.deepEqual(remote.presets.map(preset => preset.id), ['ok', 'codex-ok']);
+  assert.equal(remote.presets[1].apiFormat, 'openai_responses', 'codex defaults to /responses');
+  assert.deepEqual(remote.presets[0].models, ['m', 'n']);
+
+  assert.equal(catalog.normalizePresetCatalog({ presets: [] }), null);
+  assert.equal(catalog.normalizePresetCatalog({ presets: [{ id: 'x', appType: 'claude', baseUrl: 'nope' }] }), null);
+});
+
+test('a GitHub catalog overrides by id, appends new templates and keeps local-only ones', () => {
+  const local = catalog.normalizePresetCatalog({
+    presets: [
+      { id: 'a', appType: 'claude', baseUrl: 'https://local.test', model: 'old' },
+      { id: 'b', appType: 'claude', baseUrl: 'https://local.test', model: 'keep' },
+    ],
+  });
+  const remote = catalog.normalizePresetCatalog({
+    presets: [
+      { id: 'a', appType: 'claude', baseUrl: 'https://remote.test', model: 'new' },
+      { id: 'c', appType: 'codex', baseUrl: 'https://remote.test/v1', model: 'new' },
+    ],
+  });
+  const merged = catalog.mergePresetCatalogs(local, remote);
+  assert.deepEqual(merged.presets.map(preset => preset.id), ['a', 'b', 'c']);
+  assert.equal(merged.presets[0].baseUrl, 'https://remote.test', 'the remote copy wins on the same id');
+  assert.equal(merged.presets[1].model, 'keep', 'a local-only template survives the merge');
+  assert.equal(catalog.mergePresetCatalogs(null, null), null);
+});

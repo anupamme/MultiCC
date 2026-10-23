@@ -13,15 +13,36 @@
     ['anthropic', 'Anthropic Messages'],
     ['openai_responses', 'OpenAI Responses'],
   ];
-  const presets = {
-    'claude-api': { appType: 'claude', name: t('airProviderPresetClaudeApi'), baseUrl: 'https://api.anthropic.com', model: '', apiFormat: 'anthropic' },
-    'claude-glm': { appType: 'claude', name: t('airProviderPresetGlm'), baseUrl: 'https://open.bigmodel.cn/api/anthropic', model: 'glm-5.2', apiFormat: 'anthropic', aliasMap: { fable: { model: 'glm-5.3', name: 'GLM5.3' } } },
-    'claude-deepseek': { appType: 'claude', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic', model: 'deepseek-chat', apiFormat: 'anthropic' },
-    'claude-minimax': { appType: 'claude', name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/anthropic', model: 'MiniMax-M2', apiFormat: 'anthropic' },
-    'claude-qwen': { appType: 'claude', name: t('airProviderPresetQwen'), baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic', model: 'qwen3-coder-plus', apiFormat: 'anthropic' },
-    'claude-openrouter': { appType: 'claude', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api', model: 'anthropic/claude-sonnet-4.5', apiFormat: 'anthropic' },
-    'codex-xf-maas': { appType: 'codex', name: t('airProviderPresetXfMaas'), baseUrl: 'https://maas-coding-api.cn-huabei-1.xf-yun.com/v1', model: 'xopglm52', apiFormat: 'openai_responses' },
-  };
+  // ── 模板（provider templates）────────────────────────────────────────────
+  // 模板只预填表单（CLI / 协议 / Base URL / 模型 / 档位别名），永远不含 key。
+  // 本地内置一份保证第一次打开就有内容；GitHub 上的
+  // public/provider-presets.json 是同一份目录的独立可更新版本，拉下来按 id
+  // 覆盖同名模板、追加新模板，本地独有的保留。远端目录是不可信输入，字段
+  // 白名单化在 provider-catalog.js 的 normalizePresetCatalog 里做。
+  const PRESET_CACHE_KEY = 'multicc.providerPresets.v1';
+  const PRESET_REMOTE_URLS = Object.freeze([
+    'https://raw.githubusercontent.com/lsjwzh/MultiCC/main/public/provider-presets.json',
+    'https://cdn.jsdelivr.net/gh/lsjwzh/MultiCC@main/public/provider-presets.json',
+  ]);
+  const PRESET_REFRESH_MS = 24 * 60 * 60 * 1000;
+  const PRESET_FETCH_TIMEOUT_MS = 6000;
+  const LOCAL_PRESETS = [
+    { id: 'claude-api', appType: 'claude', name: t('airProviderPresetClaudeApi'), nameKey: 'airProviderPresetClaudeApi', baseUrl: 'https://api.anthropic.com', model: '', apiFormat: 'anthropic' },
+    { id: 'claude-glm', appType: 'claude', name: t('airProviderPresetGlm'), nameKey: 'airProviderPresetGlm', baseUrl: 'https://open.bigmodel.cn/api/anthropic', model: 'glm-5.2', apiFormat: 'anthropic', aliasMap: { fable: { model: 'glm-5.3', name: 'GLM5.3' } } },
+    { id: 'claude-deepseek', appType: 'claude', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/anthropic', model: 'deepseek-v4-pro', models: ['deepseek-v4-pro', 'deepseek-v4-flash'], apiFormat: 'anthropic' },
+    { id: 'claude-minimax', appType: 'claude', name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/anthropic', model: 'MiniMax-M2', apiFormat: 'anthropic' },
+    { id: 'claude-qwen', appType: 'claude', name: t('airProviderPresetQwen'), nameKey: 'airProviderPresetQwen', baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic', model: 'qwen3-coder-plus', apiFormat: 'anthropic' },
+    { id: 'claude-openrouter', appType: 'claude', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api', model: 'anthropic/claude-sonnet-4.5', apiFormat: 'anthropic' },
+    { id: 'codex-xf-maas', appType: 'codex', name: t('airProviderPresetXfMaas'), nameKey: 'airProviderPresetXfMaas', baseUrl: 'https://maas-coding-api.cn-huabei-1.xf-yun.com/v1', model: 'xopglm52', apiFormat: 'openai_responses' },
+    { id: 'codex-deepseek', appType: 'codex', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro', models: ['deepseek-v4-pro', 'deepseek-v4-flash'], apiFormat: 'openai_responses' },
+  ];
+  const localPresetCatalog = presetCatalogOf({ version: 'bundled', presets: LOCAL_PRESETS });
+  let presetCatalog = localPresetCatalog;
+  let presetSource = 'local';
+  let presetSyncedAt = 0;
+  let presetStatusNote = '';
+  let presetRefreshInFlight = null;
+  let presetLastAttemptAt = 0;
   let context = null;
   let data = null;
   let activeProtocol = 'all';
@@ -57,6 +78,161 @@
   // 只能显示内部 id。
   const cliName = value => (catalogApi && catalogApi.cliDisplayName ? catalogApi.cliDisplayName(value) : value);
 
+  function presetCatalogOf(value) {
+    if (catalogApi && typeof catalogApi.normalizePresetCatalog === 'function') {
+      return catalogApi.normalizePresetCatalog(value);
+    }
+    return value && Array.isArray(value.presets) ? value : null;
+  }
+
+  function presetList() {
+    return presetCatalog && Array.isArray(presetCatalog.presets) ? presetCatalog.presets : [];
+  }
+
+  function presetById(id) {
+    return presetList().find(preset => preset.id === id) || null;
+  }
+
+  function presetLabel(preset) {
+    if (!preset) return '';
+    if (preset.nameKey && typeof root.t === 'function') {
+      const localized = root.t(preset.nameKey);
+      if (localized && localized !== preset.nameKey) return localized;
+    }
+    return preset.name || preset.id;
+  }
+
+  // 下拉每次从目录重建：远端模板可能新增/改写了条目，硬编码的 option 列表
+  // 只会在下一次发版前一直显示旧名字。当前选中项如果还在就保留。
+  function renderPresetOptions() {
+    const form = el('air-provider-form');
+    const select = form && form.elements.preset;
+    if (!select) return;
+    const current = select.value;
+    const custom = make('option', t('airProviderPresetCustom'));
+    custom.value = '';
+    const groups = new Map();
+    for (const preset of presetList()) {
+      if (!groups.has(preset.appType)) groups.set(preset.appType, []);
+      groups.get(preset.appType).push(preset);
+    }
+    const options = [custom];
+    for (const appType of ['claude', 'codex']) {
+      const list = groups.get(appType) || [];
+      if (!list.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = appType === 'claude' ? 'Claude' : 'Codex';
+      for (const preset of list) {
+        const option = make('option', presetLabel(preset));
+        option.value = preset.id;
+        group.append(option);
+      }
+      options.push(group);
+    }
+    select.replaceChildren(...options);
+    select.value = presetById(current) ? current : '';
+  }
+
+  function renderPresetStatus() {
+    const node = el('air-provider-preset-status');
+    if (!node) return;
+    const base = presetSource === 'github'
+      ? t('airProviderPresetSourceGithub', { time: new Date(presetSyncedAt).toLocaleString() })
+      : t('airProviderPresetSourceLocal', { count: presetList().length });
+    node.textContent = presetStatusNote ? `${base} · ${presetStatusNote}` : base;
+  }
+
+  function readPresetCache() {
+    try {
+      const raw = root.localStorage ? root.localStorage.getItem(PRESET_CACHE_KEY) : null;
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const catalog = presetCatalogOf(parsed && parsed.catalog);
+      if (!catalog) return null;
+      return { catalog, fetchedAt: Number(parsed.fetchedAt) || 0 };
+    } catch (_) { return null; }
+  }
+
+  function writePresetCache(catalog, fetchedAt) {
+    try {
+      if (root.localStorage) {
+        root.localStorage.setItem(PRESET_CACHE_KEY, JSON.stringify({ fetchedAt, catalog }));
+      }
+    } catch (_) { /* the cache is best-effort; the dialog still works without it */ }
+  }
+
+  function applyRemoteCatalog(catalog, fetchedAt) {
+    const merged = catalogApi && typeof catalogApi.mergePresetCatalogs === 'function'
+      ? catalogApi.mergePresetCatalogs(localPresetCatalog, catalog)
+      : catalog;
+    presetCatalog = merged || catalog || localPresetCatalog;
+    presetSource = 'github';
+    presetSyncedAt = fetchedAt;
+    presetStatusNote = '';
+    renderPresetOptions();
+    renderPresetStatus();
+  }
+
+  function refreshPresets(manual) {
+    if (presetRefreshInFlight) return presetRefreshInFlight;
+    const fetchFn = typeof root.fetch === 'function' ? root.fetch.bind(root) : null;
+    if (!fetchFn) return Promise.resolve(false);
+    const button = el('air-provider-preset-refresh');
+    if (button) button.disabled = true;
+    if (manual) {
+      presetStatusNote = '';
+      const node = el('air-provider-preset-status');
+      if (node) node.textContent = t('airProviderPresetRefreshing');
+    }
+    presetRefreshInFlight = (async () => {
+      for (const url of PRESET_REMOTE_URLS) {
+        const controller = typeof root.AbortController === 'function' ? new root.AbortController() : null;
+        const timer = controller ? root.setTimeout(() => controller.abort(), PRESET_FETCH_TIMEOUT_MS) : null;
+        try {
+          const response = await fetchFn(`${url}?ts=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { accept: 'application/json' },
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+          if (!response || !response.ok) continue;
+          const catalog = presetCatalogOf(await response.json());
+          if (!catalog) continue;
+          const fetchedAt = Date.now();
+          writePresetCache(catalog, fetchedAt);
+          applyRemoteCatalog(catalog, fetchedAt);
+          if (manual && context && typeof context.notice === 'function') {
+            context.notice(t('airProviderPresetRefreshDone', { count: presetList().length }));
+          }
+          return true;
+        } catch (_) { /* mirror unreachable: try the next one */ }
+        finally { if (timer) root.clearTimeout(timer); }
+      }
+      presetStatusNote = t('airProviderPresetRefreshFailed');
+      renderPresetStatus();
+      return false;
+    })().finally(() => {
+      presetRefreshInFlight = null;
+      const node = el('air-provider-preset-refresh');
+      if (node) node.disabled = false;
+    });
+    return presetRefreshInFlight;
+  }
+
+  // 「自己连 GitHub 更新」：打开对话框时如果本地缓存已超过一天就静默拉一次。
+  // 失败不影响任何操作 —— 继续用上一次成功拉到的目录，或内置的那份。
+  function maybeRefreshPresets() {
+    const now = Date.now();
+    const cached = readPresetCache();
+    if (cached && now - cached.fetchedAt < PRESET_REFRESH_MS) return;
+    // Offline / blocked mirror: don't retry on every dialog open.
+    if (now - presetLastAttemptAt < 60 * 60 * 1000) return;
+    presetLastAttemptAt = now;
+    void refreshPresets(false);
+  }
+
+  const cachedPresets = readPresetCache();
+  if (cachedPresets) applyRemoteCatalog(cachedPresets.catalog, cachedPresets.fetchedAt);
+
   function ensureDialog() {
     if (el('air-provider-dialog')) return el('air-provider-dialog');
     const dialog = make('dialog', null, 'provider-dialog service-dialog');
@@ -72,7 +248,11 @@
         <div id="air-provider-api-fields">
         <p id="air-provider-official-hint" class="air-migration-note" hidden>${t('airProviderOfficialLockedHint')}</p>
         <input type="hidden" name="providerId">
-        <label>${t('airProviderPresetLabel')}<select name="preset"><option value="">${t('airProviderPresetCustom')}</option><optgroup label="Claude"><option value="claude-api">${t('airProviderPresetClaudeApi')}</option><option value="claude-glm">${t('airProviderPresetGlm')}</option><option value="claude-deepseek">DeepSeek</option><option value="claude-minimax">MiniMax</option><option value="claude-qwen">${t('airProviderPresetQwen')}</option><option value="claude-openrouter">OpenRouter</option></optgroup><optgroup label="Codex"><option value="codex-xf-maas">${t('airProviderPresetXfMaas')}</option></optgroup></select></label>
+        <label>${t('airProviderPresetLabel')}<select name="preset"><option value="">${t('airProviderPresetCustom')}</option></select></label>
+        <div id="air-provider-preset-sync" class="air-provider-preset-sync">
+          <span id="air-provider-preset-status"></span>
+          <button type="button" id="air-provider-preset-refresh">${t('airProviderPresetRefresh')}</button>
+        </div>
         <div class="form-row"><label>CLI<select name="appType"><option value="claude">Claude</option><option value="codex">Codex</option></select></label><label>${t('airProviderUpstreamProtocol')}<select name="apiFormat"><option value="anthropic">Anthropic Messages</option><option value="openai_responses">OpenAI Responses</option></select></label></div>
         <label>${t('airProviderName')}<input name="name" required maxlength="240" placeholder="${t('airProviderNamePlaceholder')}"></label>
         <label>Base URL<input name="baseUrl" maxlength="2048" placeholder="${t('airProviderBaseUrlPlaceholder')}"></label>
@@ -100,6 +280,9 @@
     el('air-provider-cancel').onclick = () => dialog.close();
     form.elements.preset.onchange = () => applyPreset(form.elements.preset.value);
     form.elements.appType.onchange = syncDialogProtocol;
+    renderPresetOptions();
+    renderPresetStatus();
+    el('air-provider-preset-refresh').onclick = () => { void refreshPresets(true); };
     form.onsubmit = saveEditor;
     dialog.querySelectorAll('[data-provider-key]').forEach(control => {
       control.onclick = () => {
@@ -129,11 +312,16 @@
   }
 
   function applyPreset(key) {
-    const preset = presets[key];
+    const preset = presetById(key);
     const form = el('air-provider-form');
     if (!preset || !form) return;
-    for (const name of ['appType', 'name', 'baseUrl', 'model', 'apiFormat']) form.elements[name].value = preset[name];
-    form.elements.models.value = preset.model || '';
+    form.elements.appType.value = preset.appType;
+    form.elements.name.value = presetLabel(preset);
+    form.elements.baseUrl.value = preset.baseUrl || '';
+    form.elements.model.value = preset.model || '';
+    form.elements.apiFormat.value = preset.apiFormat;
+    form.elements.models.value = (preset.models && preset.models.length ? preset.models : [preset.model])
+      .filter(Boolean).join('\n');
     fillAliases(form, preset.aliasMap || null);
     syncDialogProtocol();
     form.elements.authToken.focus();
@@ -275,6 +463,8 @@
     el('air-provider-form-title').textContent = provider ? t('airProviderEditTitle', { name: displayName(provider) }) : t('airProviderFormTitleNew');
     el('air-provider-save').textContent = provider ? t('airProviderSave') : t('airProviderCreate');
     el('air-provider-form-error').textContent = '';
+    // 模板只用于新建线路；编辑已有 Provider 时不打扰远端。
+    if (!provider) maybeRefreshPresets();
     dialog.showModal();
   }
 
