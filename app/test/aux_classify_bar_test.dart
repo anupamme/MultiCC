@@ -179,4 +179,67 @@ void main() {
     await tester.pumpWidget(bar('achieved'));
     expect(find.byKey(const Key('classify-goal-pill')), findsNothing);
   });
+
+  group('实时读数并进状态药丸位', () {
+    // 回合在跑时的 liveness 判定。silentMs 只有 ≥5s 才附时长（见 livenessChip）。
+    Map<String, dynamic> verdict(String state, {int silentMs = 0}) => {
+      'state': state,
+      'stage': 'request',
+      'stagePrecise': false,
+      'silentMs': silentMs,
+    };
+
+    testWidgets('在跑：同一行显示目标 + 实时读数 + 取消，没有第二条横条', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          AuxClassifyBar(
+            goal: '把 Rust CPR 改动合入 main',
+            phase: 'planning',
+            classifyState: 'P',
+            liveness: verdict('working', silentMs: 8000),
+            onCancelTurn: () {},
+          ),
+        ),
+      );
+
+      // 目标与动作都还在这一行里。
+      expect(find.text('把 Rust CPR 改动合入 main'), findsOneWidget);
+      expect(find.byKey(const Key('classify-cancel-turn')), findsOneWidget);
+      // 实时读数占的是状态药丸位：阶段词让位，不并列挤占目标的宽度。
+      expect(find.text('🟢 请求/思考中 · 8s'), findsOneWidget);
+      expect(find.textContaining('规划中'), findsNothing);
+    });
+
+    testWidgets('静息：读数退场，状态药丸位还回阶段词', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const AuxClassifyBar(
+            goal: '把 Rust CPR 改动合入 main',
+            phase: 'planning',
+            classifyState: 'P',
+            onCancelTurn: null,
+          ),
+        ),
+      );
+
+      expect(find.textContaining('规划中'), findsOneWidget);
+      expect(find.textContaining('请求/思考中'), findsNothing);
+    });
+
+    testWidgets('没有分类目标时只画读数本身，不画空的目标位', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          AuxClassifyBar(
+            goal: '',
+            phase: 'idle',
+            classifyState: 'P',
+            liveness: verdict('stalled', silentMs: 65000),
+          ),
+        ),
+      );
+
+      expect(find.text('🔴 疑似卡住 · 1m 5s'), findsOneWidget);
+      expect(find.byIcon(Icons.auto_awesome_outlined), findsNothing);
+    });
+  });
 }

@@ -327,9 +327,13 @@ Widget classifyChip(SessionStatus? live, {bool showLabel = true}) {
 }
 
 /// Chat-page policy for [livenessChip]: only working (a turn is running) and
-/// stalled (stuck) earn the dedicated liveness line under the header. idle and
-/// unknown are the resting states — a permanent「空闲」pill row is noise, so
-/// the chat screen renders no line for them at all.
+/// stalled (stuck) are worth showing. idle and unknown are the resting states,
+/// so the chat screen renders no chip for them at all.
+///
+/// "Line" here means the status strip under the header, not a row of its own:
+/// when the classifier bar is present the chip takes that bar's state slot
+/// (「目标 · 请求/思考中 · 8s · ✕ 取消」), so a running turn costs zero extra
+/// height instead of stacking two strips that both say "it is running".
 bool chatLivenessDeservesLine(String? state) =>
     state == 'working' || state == 'stalled';
 
@@ -348,9 +352,9 @@ bool chatLivenessDeservesLine(String? state) =>
   return (canMarkDone: normalized == 'W', canCancelTask: normalized == 'P');
 }
 
-/// A small liveness pill for the chat header. `verdict` is the parsed liveness
-/// JSON; a null/empty verdict renders nothing. Shows the silent duration on a
-/// working/stalled turn so "stuck for 3m" reads at a glance.
+/// A small liveness pill for the chat status strip. `verdict` is the parsed
+/// liveness JSON; a null/empty verdict renders nothing. Shows the silent
+/// duration on a working/stalled turn so "stuck for 3m" reads at a glance.
 Widget livenessChip(Map<String, dynamic>? verdict) {
   final state = verdict == null ? null : verdict['state'] as String?;
   final base = livenessBadge(state);
