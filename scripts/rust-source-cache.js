@@ -58,7 +58,9 @@ function probeAddon(file, node = process.execPath) {
     if(a.protocolVersion?.()!==1 || a.cprProtocolVersion?.()!==1 || typeof a.cprBackendSettings!=='function' || typeof a.cprCreateExchange!=='function' || typeof a.RustDatabase!=='function'
       || typeof a.buildSearchIndex!=='function' || typeof a.computeUsage!=='function') process.exit(1);
     const db=new a.RustDatabase(':memory:',false,false,5000);
-    db.exec('CREATE TABLE smoke(x); CREATE VIRTUAL TABLE f USING fts5(x)');db.close();`;
+    db.exec('CREATE TABLE smoke(x); CREATE VIRTUAL TABLE f USING fts5(x)');db.close();
+    if(typeof a.validatePublicationText!=='function' || typeof a.quickCommitMessage!=='function'
+      || typeof a.gitCommitEnvironment!=='function' || typeof a.validatePublicationRecords!=='function') process.exit(1);`;
   const result = spawnSync(node, ['-e', script, path.resolve(file)], { stdio: 'ignore', timeout: 15_000 });
   return result.status === 0;
 }

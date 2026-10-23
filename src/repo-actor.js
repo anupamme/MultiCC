@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
+const { gitCommitEnvironment } = require('./git/publication-policy');
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -136,13 +137,14 @@ class RepoActor {
       const execGit = async (cwd, args, execOptions = {}) => {
         progress('git', { cwd, args: [...args] });
         try {
+          const identityEnv = await gitCommitEnvironment(cwd, args);
           const result = await this.execFile('git', args, {
             cwd,
             encoding: 'utf8',
             timeout: execOptions.timeout || DEFAULT_TIMEOUT_MS,
             maxBuffer: execOptions.maxBuffer || DEFAULT_MAX_BUFFER,
             killSignal: 'SIGKILL',
-            env: { ...NONINTERACTIVE_ENV, ...(execOptions.env || {}) },
+            env: { ...NONINTERACTIVE_ENV, ...(execOptions.env || {}), ...identityEnv },
           });
           return execOptions.raw === true ? String(result.stdout || '') : String(result.stdout || '').trim();
         } catch (error) {

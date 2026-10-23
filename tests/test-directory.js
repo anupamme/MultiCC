@@ -50,13 +50,17 @@ fs.mkdirSync(projA, { recursive: true });
       ...process.env,
       PORT: String(port),
       MULTICC_DATA_DIR: dataRoot,
-      // Successful quick-commit must not depend on a developer machine's
-      // global Git identity. CI runners commonly have none configured.
+      // Use an explicit account without relying on the developer machine's
+      // global Git config; the host no longer invents a multicc bot identity.
       GIT_CONFIG_GLOBAL: os.devNull,
       GIT_CONFIG_SYSTEM: os.devNull,
-      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_COUNT: '3',
       GIT_CONFIG_KEY_0: 'user.useConfigOnly',
       GIT_CONFIG_VALUE_0: 'true',
+      GIT_CONFIG_KEY_1: 'user.name',
+      GIT_CONFIG_VALUE_1: 'Fixture Account',
+      GIT_CONFIG_KEY_2: 'user.email',
+      GIT_CONFIG_VALUE_2: 'fixture@example.invalid',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

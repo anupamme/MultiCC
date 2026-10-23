@@ -14,3 +14,10 @@ test('worktree prompt distinguishes same-session busy from real sync conflicts',
   assert.match(prompt, /stop and report when dirty, conflicted or of unclear ownership/);
   assert.match(prompt, /do not mistake the endpoint's `unmerged` wording for a Git index conflict/);
 });
+
+test('English publication language does not change the requested conversation language', () => {
+  assert.match(prompt, /All new Git commit messages \(subject and body/);
+  assert.match(prompt, /release notes \(title, headings and body\) must be written in English/);
+  assert.match(prompt, /Keep user-facing conversation, progress and delivery reports in the language requested by the user/);
+  assert.match(prompt, /use its name and email for both Git Author and Committer on every new commit/);
+});

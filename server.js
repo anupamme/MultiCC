@@ -686,8 +686,7 @@ async function ensureDirGitReady(dir) {
     await gitEnsureExcluded(dir.path);
     if (!await gitHasCommit(dir.path)) {
       try { await gitRun(dir.path, ['add', '-A']); } catch (_) {}
-      await gitRun(dir.path, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc',
-        'commit', '--allow-empty', '-m', 'multicc: initial commit']);
+      await gitRun(dir.path, ['commit', '--allow-empty', '-m', 'chore: initialize repository']);
     }
     dir.baseBranch = await gitBaseBranch(dir.path);
     dir.gitInitialized = true;
@@ -909,11 +908,7 @@ const directoryModule = createDirectoryModule({
     invalidatePushCache: (p, b) => gitPush.invalidate(p, b),
     statusPorcelain: (p) => gitRunQueued(p, ['status', '--porcelain'], { raw: true }),
     stageAll: (p) => gitRunQueued(p, ['add', '-A']),
-    commit: (p, m) => gitRunQueued(p, [
-      '-c', 'user.email=multicc@local',
-      '-c', 'user.name=multicc',
-      'commit', '-m', m,
-    ]),
+    commit: (p, m) => gitRunQueued(p, ['commit', '-m', m]),
     ensureReady: ensureDirGitReady,
     unmarkReady: (id) => { gitReadyDirs.delete(id); },
   },

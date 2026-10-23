@@ -357,3 +357,13 @@ test('desktop Rust paths are initialized after runner allocation', () => {
     assert.match(block.slice(steps), /CARGO_TARGET_DIR=\$RUNNER_TEMP\/multicc-rust-target/);
   }
 });
+
+test('release publishing uses validated English notes from the tagged changelog', () => {
+  const workflow = read('.github/workflows/desktop-release.yml');
+  assert.doesNotMatch(workflow, /--generate-notes/);
+  assert.match(workflow, /publication-policy -- release-notes "\$GITHUB_REF_NAME" CHANGELOG\.md/);
+  assert.match(workflow, /gh release create[^\n]+--notes-file "\$RUNNER_TEMP\/release-notes\.md"/);
+  assert.match(workflow, /gh release edit[^\n]+--notes-file "\$RUNNER_TEMP\/release-notes\.md"/);
+  assert.match(read('.github/workflows/core-tests.yml'), /publication-policy -- release-notes/);
+  assert.match(read('.github/workflows/ci.yml'), /publication-policy -- ci-commits/);
+});
