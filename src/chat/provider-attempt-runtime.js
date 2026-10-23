@@ -1291,16 +1291,24 @@ function createProviderAttemptRuntime(options = {}) {
       record.visibleOutputObserved = true;
       if (record.replayFence === 'none') record.replayFence = 'visible_output';
     }
+    const failureCode = clean(event.errorCode) || 'UPSTREAM_HTTP_ERROR';
+    // 5xx/408/429 是客户端自己会重试的瞬时错误：Claude CLI 收到 502 后会立刻再发
+    // 一次请求。若这类物理请求也计入重试预算，客户端的一次内部重试就会在半秒内耗光
+    // 整轮额度，宿主自己的重试和换线都来不及发生。预算只由真正的挂起（看门狗超时 /
+    // 静默）和绝对截止时间耗尽；瞬时错误交给 api-error-policy 的 maxAttempts 与
+    // auto-provider failover 处理。
+    const stallFailure = isProxyStallCode(failureCode);
     record.proxyFailure = Object.freeze({
       source: 'proxy_response',
       ...(budgeted ? { requestDeadlineAt: record.requestDeadlineAt,
-        retryBudgetExhausted: record.requestFailures > 1 || Number(now()) >= record.requestDeadlineAt } : {}),
+        retryBudgetExhausted: (stallFailure && record.requestFailures > 1)
+          || Number(now()) >= record.requestDeadlineAt } : {}),
       ...(event.modelProgress === true ? { partialOutput: true } : {}),
       provider: record.cli,
       providerId: record.providerId,
       providerName: record.providerName,
       httpStatus,
-      code: clean(event.errorCode) || 'UPSTREAM_HTTP_ERROR',
+      code: failureCode,
       message: httpStatus ? `upstream HTTP ${httpStatus}`
         : proxyOutcome?.termination === 'downstream_disconnect'
           ? 'downstream response connection closed' : 'upstream request failed',

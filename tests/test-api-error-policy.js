@@ -213,6 +213,28 @@ test('SDK startup failure reasons map to adapter configuration with their precis
   }
 });
 
+test('request_budget_exhausted 的提示明确说明不会再重试，不再自相矛盾', () => {
+  const result = decide({
+    source: 'proxy_response', provider: 'claude', code: 'upstream_http_error',
+    httpStatus: 502, retryBudgetExhausted: true,
+  });
+  assert.equal(result.error.category, 'provider_transient');
+  assert.equal(result.action, 'fail_fast');
+  assert.equal(result.reason, 'request_budget_exhausted');
+  const notice = retryNotice(result);
+  assert.match(notice, /已超出本轮的等待预算，未再自动重试/);
+  assert.doesNotMatch(notice, /可等待受控重试/);
+});
+
+test('普通的 5xx 仍然进行受控重试，不会被预算分支提前掐断', () => {
+  const result = decide({
+    source: 'proxy_response', provider: 'claude', code: 'upstream_http_error', httpStatus: 502,
+  });
+  assert.equal(result.error.category, 'provider_transient');
+  assert.equal(result.action, 'retry');
+  assert.match(retryNotice(result), /将在 1 秒后进行受控重试（1\/2）/);
+});
+
 test('vendor CLI login-required text classifies as auth and never auto-retries', () => {
   // WorkBuddy (codebuddy) with no /login session answers every turn with a
   // stream-json result whose only detail lives in errors[] — the message field

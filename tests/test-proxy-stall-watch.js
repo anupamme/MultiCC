@@ -910,21 +910,44 @@ for (const [label, init] of [['POST 带请求体', { method: 'POST', body: '{"mo
   });
 }
 
-test('同一 CLI 内部失败重试也计数，成功后才为下一模型请求恢复预算', () => {
+test('同一 CLI 内部的 5xx 重试不再耗尽宿主预算，成功后才为下一模型请求恢复计数', () => {
   const clock = virtualClock();
   const runtime = createProviderAttemptRuntime({ now: clock.now });
   const attempt = beginAttempt(runtime, { requestTimeoutMs: 900_000 });
   const event = { ...attempt, roleKind: 'main', routeAttribution: 'exact',
-    requestDeadlineAt: 901_000, status: 'error', errorCode: 'fetch_failed',
-    proxyOutcome: { version: 1, requestId: 'request-a', requestKind: 'inference', termination: 'upstream_failure', httpStatus: null } };
+    requestDeadlineAt: 901_000, status: 'error', statusCode: 502, errorCode: 'UPSTREAM_HTTP_ERROR',
+    proxyOutcome: { version: 1, requestId: 'request-a', requestKind: 'inference', termination: 'upstream_failure', httpStatus: 502 } };
   assert.equal(runtime.observeProxyOutcome(event).failure.retryBudgetExhausted, false);
   assert.equal(runtime.snapshot('s1').requestFailures, 1);
+  // Claude CLI 自己收到 502 后会立即重试一次。这次物理请求仍然记录失败次数，
+  // 但不得判定预算用尽，也不得把线路标成 stalled —— 否则宿主自己的重试和换线
+  // 都没机会发生（线上 502 两次即终局的原因）。
+  const clientRetry = runtime.observeProxyOutcome({ ...event,
+    proxyOutcome: { ...event.proxyOutcome, requestId: 'request-b' } }).failure;
+  assert.equal(clientRetry.retryBudgetExhausted, false, '客户端内部重试不能吃光宿主预算');
+  assert.equal(runtime.snapshot('s1').requestFailures, 2);
+  assert.equal(runtime.snapshot('s1').stalled, false, '5xx 不能封死这条线路');
+  const policy = createApiErrorPolicyRuntime({ now: clock.now });
+  const decision = policy.evaluate(clientRetry, { phase: 'before_first_token' });
+  assert.equal(decision.action, 'retry');
+  assert.equal(failoverSafety(decision, runtime.snapshot('s1')).ok, true, '预算不再误伤自动换线');
+  // 成功请求才清空计数与截止时间。
   runtime.observeProxyOutcome({ ...event, status: 'success', errorCode: null,
-    proxyOutcome: { ...event.proxyOutcome, termination: 'completed', requestId: 'request-b' } });
+    proxyOutcome: { ...event.proxyOutcome, termination: 'completed', requestId: 'request-c' } });
   assert.equal(runtime.snapshot('s1').requestFailures, 0);
   assert.equal(runtime.snapshot('s1').requestDeadlineAt, null);
-  assert.equal(runtime.observeProxyOutcome({ ...event, proxyOutcome: { ...event.proxyOutcome, requestId: 'request-c' } }).failure.retryBudgetExhausted, false);
-  assert.equal(runtime.observeProxyOutcome({ ...event, proxyOutcome: { ...event.proxyOutcome, requestId: 'request-d' } }).failure.retryBudgetExhausted, true);
+});
+
+test('绝对截止时间仍然耗尽请求预算：5xx 免疫不等于无限重试', () => {
+  const clock = virtualClock();
+  const runtime = createProviderAttemptRuntime({ now: clock.now });
+  const attempt = beginAttempt(runtime, { requestTimeoutMs: 900_000 });
+  clock.tick(901_000);
+  const event = { ...attempt, roleKind: 'main', routeAttribution: 'exact',
+    requestDeadlineAt: 901_000, status: 'error', errorCode: 'UPSTREAM_HTTP_ERROR',
+    proxyOutcome: { version: 1, requestId: 'request-deadline', requestKind: 'inference', termination: 'upstream_failure', httpStatus: 502 } };
+  const failure = runtime.observeProxyOutcome(event).failure;
+  assert.equal(failure.retryBudgetExhausted, true);
   assert.equal(runtime.snapshot('s1').stalled, true);
 });
 

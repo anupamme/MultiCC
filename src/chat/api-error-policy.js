@@ -486,7 +486,7 @@ function userAction(category, retryAfterMs) {
     case 'cancel_shutdown': return '无需操作；如有需要可重新发起';
     case 'provider_transient':
     case 'network':
-    case 'timeout': return '可等待受控重试，或稍后手动继续';
+    case 'timeout': return '可稍后手动继续，或切换到其他模型线路';
     default: return '检查错误详情后决定是否手动重试';
   }
 }
@@ -914,6 +914,11 @@ function retryNotice(decision) {
       ? '自动重试次数已用尽。'
       : '自动重试预算已用尽。';
     return `上游 API 请求仍然失败，${budget}${causeNotice}${error.userAction}`;
+  }
+  if (decision.reason === 'request_budget_exhausted') {
+    // 这一轮已经用完了请求等待预算（挂起或整体超时），不会再自动重放。文案必须
+    // 明确说“不会再重试”，不能再说“可等待受控重试”——那与本轮的实际结局相反。
+    return `上游请求已超出本轮的等待预算，未再自动重试。${causeNotice}${error.userAction}`;
   }
   return `上游 API 请求失败，未自动重试。${causeNotice}${error.userAction}`;
 }
