@@ -257,6 +257,16 @@ function makeFakes({ dirs = [], sessions = [], fsDirs = new Set(), fsFiles = new
     await fakes.svc.commitAll('d1');
     ok(committed[0] === 'chore: update app.js, b.txt, c.js and 1 more',
       'commitAll: empty message → generated from changed files');
+    phase = 0;
+    const stagedBefore = staged;
+    r = await fakes.svc.commitAll('d1', 'fix(chat): restore delivery\n\n修复正文');
+    ok(!r.ok && /必须使用英文/.test(r.message) && staged === stagedBefore,
+      'commitAll: non-English body is refused before staging');
+    phase = 0;
+    fakes.git.statusPorcelain = async () => '?? 中文文件.md\n';
+    await fakes.svc.commitAll('d1');
+    ok(!/中文/.test(committed.at(-1)) && committed.at(-1).includes('chore: add'),
+      'commitAll: non-English paths do not leak into generated messages');
   }
 
   // ── push ──

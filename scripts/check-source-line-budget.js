@@ -128,9 +128,10 @@ const MIGRATION_DEBT = Object.freeze({
   // resolveUpstreamAgent 钩子（src/claude-auth/egress-agent.js），外加旧 CPR
   // 不认钩子时的失败兜底，实测 3025/159170。
   // 按账号模型目录接线复用同一运行时，字节预算降至 159142。
+  // 统一提交身份后移除内联 Git bot 参数，按实测收紧至 3020/158992。
   'server.js': Object.freeze({
-    ceiling: 3025,
-    byteCeiling: 159142,
+    ceiling: 3020,
+    byteCeiling: 158992,
     target: 3000,
     reason: 'split account/quota and host-power route families out of server.js to return under 3k',
   }),

@@ -422,6 +422,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare canonical English release notes
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/publication-policy-target
+        run: cargo run --locked --quiet --manifest-path native/Cargo.toml -p multicc-core --bin publication-policy -- release-notes "$GITHUB_REF_NAME" CHANGELOG.md "$RUNNER_TEMP/release-notes.md"
+
       - name: 校验发布标签与主分支
         shell: bash
         env:
@@ -464,9 +470,10 @@ jobs:
           done
           sort -u -o desktop-out/SHA256SUMS.txt desktop-out/SHA256SUMS.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
             gh release upload "$TAG" desktop-out/* --clobber
           else
-            gh release create "$TAG" desktop-out/* --verify-tag --title "$TAG" --generate-notes
+            gh release create "$TAG" desktop-out/* --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi
           echo "uploaded assets:"
           gh release view "$TAG" --json assets -q '.assets[].name'

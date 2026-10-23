@@ -7,6 +7,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { defaultRepoActor, DEFAULT_TIMEOUT_MS } = require('../repo-actor');
+const { validateCommitMessage, validateCommitRange, quickCommitMessage } = require('./publication-policy');
 
 const execFileAsync = promisify(execFile);
 const WORKTREE_SUBDIR = '.multicc-worktrees';
@@ -209,6 +210,8 @@ async function gitImportSessionBundle(dir, session, tmpBundle, sourceBranch) {
           note: 'bundle has no commits to import' };
       }
 
+      await validateCommitRange(execGit, worktreePath, `${mergeBase}..${incomingRef}`);
+
       const mergeCommits = lines(await execGit(worktreePath,
         ['rev-list', '--min-parents=2', `${mergeBase}..${incomingRef}`]));
       let strategy = 'cherry-pick';
@@ -219,15 +222,15 @@ async function gitImportSessionBundle(dir, session, tmpBundle, sourceBranch) {
         strategy = 'merge';
         progress('merge', { commits: commits.length, mergeCommits: mergeCommits.length });
         mergeStarted = true;
-        await execGit(worktreePath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc',
-          'merge', '--no-ff', '--no-edit', incomingRef]);
+        await execGit(worktreePath, [
+          'merge', '--no-ff', '-m', 'chore(workspace): restore imported session history', incomingRef]);
         mergeStarted = false;
       } else {
         progress('cherry-pick', { commits: commits.length });
         cherryPickStarted = true;
         // Execute the whole sequence in one command so `cherry-pick --abort`
         // restores the exact pre-import HEAD even when a later commit conflicts.
-        await execGit(worktreePath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc',
+        await execGit(worktreePath, [
           'cherry-pick', ...commits]);
         cherryPickStarted = false;
       }
@@ -290,12 +293,13 @@ async function gitEnsureExcluded(dirPath) {
 }
 
 async function commitAllWith(execGit, worktreePath, message) {
+  await validateCommitMessage(message);
   await execGit(worktreePath, ['add', '-A']);
   try {
     await execGit(worktreePath, ['diff', '--cached', '--quiet']);
     return false;
   } catch (_) {}
-  await execGit(worktreePath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc',
+  await execGit(worktreePath, [
     'commit', '-m', message]);
   return true;
 }
@@ -503,7 +507,7 @@ async function gitWorktreeDetach(dirPath, worktreePath, branch, opts = {}) {
     }
     progress('snapshot');
     const committed = await commitAllWith(execGit, worktreePath,
-      `[multicc] hibernate snapshot ${sessionId}`);
+      'chore(workspace): save changes before hibernation');
     const snapshot = await execGit(worktreePath, ['rev-parse', 'HEAD']);
     for (const relative of ignored) {
       const target = path.resolve(worktreePath, relative);
@@ -1040,9 +1044,14 @@ async function gitMergeBack(dir, session, opts = {}) {
       return { ok: false, blocked: true, reasons: ['base-dirty'], dirtyFiles, error: 'base worktree is dirty' };
     }
 
+    // Agent-authored commits bypass the host's commit-all helper. Validate
+    // every incoming record against the target repository's policy. A changed
+    // policy in the source checkout must not bypass the target's identity guard.
+    await validateCommitRange(execGit, dirPath, `${baseBranch}..${branch}`);
+
     progress('commit-session');
     const committed = await commitAllWith(execGit, worktreePath,
-      `multicc: session ${session.id} @ ${new Date().toISOString()}`);
+      await quickCommitMessage(await execGit(worktreePath, ['status', '--porcelain'], { raw: true })));
     const ahead = parseInt(await execGit(dirPath, ['rev-list', '--count', `${baseBranch}..${branch}`]) || '0', 10);
     const baseHead = await execGit(dirPath, ['rev-parse', baseBranch]);
     const sourceHead = await execGit(worktreePath, ['rev-parse', 'HEAD']);
@@ -1065,8 +1074,10 @@ async function gitMergeBack(dir, session, opts = {}) {
       await execGit(dirPath, ['worktree', 'add', '--detach', integrationPath, tempRef]);
       integrationAdded = true;
       progress('integration-merge');
-      await execGit(integrationPath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc',
-        'merge', '--no-ff', '-m', `multicc: merge ${branch}`, sourceHead]);
+      const subject = await execGit(worktreePath, ['log', '-1', '--format=%s']);
+      const mergeMessage = await validateCommitMessage(`chore(merge): ${subject}`);
+      await execGit(integrationPath, [
+        'merge', '--no-ff', '-m', mergeMessage, sourceHead]);
       const integrationHead = await execGit(integrationPath, ['rev-parse', 'HEAD']);
       progress('validate');
       const syntaxErrors = await checkMergedJsSyntax(integrationPath, baseHead, integrationHead, execGit);
@@ -1137,14 +1148,14 @@ async function gitSyncFromBase(dir, session, opts = {}) {
     if (reasons.length && opts.force) {
       backup = await backupBeforeForce(execGit, dir.path, worktreePath, session.branch, session.id, id);
       if (safety.dirty) {
-        committed = await commitAllWith(execGit, worktreePath, `multicc: forced sync backup @ ${new Date().toISOString()}`);
+        committed = await commitAllWith(execGit, worktreePath, 'chore(workspace): save changes before forced sync');
       }
     }
     const behind = parseInt(await execGit(dir.path, ['rev-list', '--count', `${session.branch}..${baseBranch}`]) || '0', 10);
     if (!behind) return { ok: true, merged: false, committed, backup, message: '已是最新，无需同步' };
     try {
       progress('rebase');
-      await execGit(worktreePath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc', 'rebase', baseBranch]);
+      await execGit(worktreePath, ['rebase', baseBranch]);
       return { ok: true, merged: true, committed, commits: behind, baseBranch, backup };
     } catch (error) {
       const conflicts = lines(await execGit(worktreePath, ['diff', '--name-only', '--diff-filter=U']).catch(() => ''));
@@ -1176,7 +1187,7 @@ async function gitRebaseResolve(dir, session, action, opts = {}) {
     const conflicts = lines(await execGit(worktreePath, ['diff', '--name-only', '--diff-filter=U']).catch(() => ''));
     if (conflicts.length) return { ok: false, conflicts, rebaseInProgress: true, error: '仍有冲突文件' };
     try {
-      await execGit(worktreePath, ['-c', 'user.email=multicc@local', '-c', 'user.name=multicc', 'rebase', '--continue'],
+      await execGit(worktreePath, ['rebase', '--continue'],
         { env: { GIT_EDITOR: 'true' } });
     } catch (error) {
       const next = lines(await execGit(worktreePath, ['diff', '--name-only', '--diff-filter=U']).catch(() => ''));

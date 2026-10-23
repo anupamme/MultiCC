@@ -1,5 +1,7 @@
 pub mod search;
 pub mod sqlite;
 pub mod usage;
+pub mod publication;
+pub mod publication_identity;
 
 pub mod codex_models;
