@@ -313,9 +313,11 @@ pub fn slugify(name: &str) -> String {
 
 /// 在既有清单里为 name 挑一个不冲突的 id；空 slug 落回 profile-N。
 /// 已删除身份的登录目录（chrome-profiles/<id>）会被保留，所以磁盘上已有目录的
-/// id 也算占用 —— 新身份必须从空白登录开始，不能悄悄继承旧身份的 cookie。
+/// id 也算占用；单独生成过指纹扩展的目录同样保留，不能继承旧 cookie 或指纹种子。
 pub fn allocate_id(name: &str, existing: &[Profile]) -> String {
-    allocate_id_with(name, existing, |id| user_data_dir(id).exists())
+    allocate_id_with(name, existing, |id| {
+        user_data_dir(id).exists() || data_dir().join("fingerprints").join(id).exists()
+    })
 }
 
 fn allocate_id_with(name: &str, existing: &[Profile], dir_taken: impl Fn(&str) -> bool) -> String {

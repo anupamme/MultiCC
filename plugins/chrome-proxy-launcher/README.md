@@ -49,6 +49,43 @@ https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md
 3. 「测出口」确认这个身份的外网 IP；「启动浏览器」开一个隔离实例；
    「停止」结束该身份的实例。
 
+## 原版 Chrome 的轻量指纹扩展
+
+身份卡片的「准备指纹扩展」会由 Rust 为这个身份生成一份 Manifest V3 扩展，
+不更换浏览器，不修改 Chrome 的签名、全局配置或代理参数。
+
+1. 在插件里点击对应身份的「准备指纹扩展」，复制显示的目录。
+2. 在**该身份的隔离 Chrome** 中打开 `chrome://extensions`，开启「开发者模式」，
+   点击「加载已解压的扩展程序」，选择这个目录。在 macOS 文件选择框可按
+   `⌘⇧G` 粘贴目录。
+3. 刷新已打开的网页。扩展更新后在扩展管理页点重新加载，再刷新网页。
+   停用或移除扩展并刷新网页即可恢复原始行为。
+
+这是 Chrome 的标准本地扩展安装流程。**生成成功不等于已经启用**；插件不会
+将文件存在误标为已安装，也不使用调试端口或非安全调试参数代替人工安装。
+Chrome 可能对本地开发扩展显示提示，重启后可在扩展页检查其启用状态。
+远程服务器上的插件目录不能直接装到另一台电脑的 Chrome 中。
+
+种子保存在 `fingerprints/<身份 id>/identity.json`，扩展目录在其下的 `extension/`。
+首次生成后固定保存，重复生成、身份改名都不更换；损坏时明确报错，不自动重建。
+不要把同一扩展目录加载到多个身份，也不要复制另一身份的种子。删除身份不会
+删除这些文件（与保留 Chrome 登录目录一致）；新建同名身份也不会复用其种子。
+
+本版范围：
+
+- 在 HTTP/HTTPS 网页的 `document_start`、MAIN world 注入，包含匹配的 iframe。
+- 对常见 Canvas 2D `getImageData`、`toDataURL`、`toBlob` 的像素读出做轻微且稳定的扰动。
+- 对 WebGL / WebGL2 默认帧缓冲的常见 RGBA/UNSIGNED_BYTE `readPixels` 数组读出做同类扰动。
+- 同身份、同网站 origin、同绘制内容复用相同扰动；不同身份采用不同随机种子。
+  底层 Chrome、驱动和绘图内容更新仍可能改变结果。
+- 绘图缓冲区保持原样，但导出图片的部分像素会有微小变化；需要精确原始像素的工作请停用扩展。
+
+**不是完整指纹隔离**：Worker / OffscreenCanvas、GPU 型号、字体、音频、操作系统、
+屏幕信息和网络协议指纹均不改写；特殊 WebGL 布局和不支持的像素类型保持原样。
+网站仍可能检测脚本包装或通过其他特征关联身份。扩展不申请 Cookie、历史记录、
+代理控制或调试权限，不上传数据；由于需要覆盖页面，其匹配范围是 HTTP/HTTPS 网站。
+代理断开后的阻断仍由原来的固定代理机制负责，与扩展是否启用无关。
+
 ## 订阅节点与跳板链
 
 「出口类型」选**订阅节点**后：
@@ -110,13 +147,15 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 
 ```sh
 cargo test --manifest-path plugins/chrome-proxy-launcher/Cargo.toml
-node --test plugins/chrome-proxy-launcher/tests/isolation.cjs
+node --test plugins/chrome-proxy-launcher/tests/isolation.cjs plugins/chrome-proxy-launcher/tests/fingerprint.cjs
 ```
 
 集成测试默认使用上面构建的 release 二进制（可用 `PLUGIN_TEST_BIN` 指定）。
 提供 `CHROME_TEST_BIN` 浏览器路径后，额外在临时 profile 中进行无头断代理测试：
 代理开启时页面必须成功，关闭代理后必须记录代理连接错误且目标没有新增直连。
-测试不使用用户登录数据，也不关闭现有浏览器。
+测试不使用用户登录数据，也不关闭现有浏览器。指纹测试通过临时 Chrome 的调试
+管道加载真实扩展，验证首段页面脚本、iframe、重复读取、跨进程重载和卸载恢复；
+测试接口的临时加载不等于人工安装，不能据此宣称已验证用户身份中的安装状态。
 
 ## 命令参考（stdin JSON → stdout JSON）
 
@@ -126,6 +165,7 @@ node --test plugins/chrome-proxy-launcher/tests/isolation.cjs
 | `list` | – | 身份清单（含 running/pid）+ 订阅清单 |
 | `save` | `{id?, name, egressType:"direct"\|"subscription", proxy:{…}` 或 `subscription:{id,node,via?}, note?, chromePath?}` | 新建 / 更新 |
 | `remove` | `{id}` | 删除（运行中先停；磁盘 profile 保留） |
+| `fingerprint-prepare` | `{id}` | 生成该身份的轻量指纹扩展并返回目录；不表示已安装 |
 | `launch` | `{id, url?, checkProxy?=true}` | 启动隔离实例 |
 | `stop` | `{id}` | 停止实例（连带收割本地中继 / 内核） |
 | `probe` | `{id}` 或 `{proxy:{…}}` 或 `{subscription:{…}}` | 经该出口取外网 IP + 延迟 |

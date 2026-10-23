@@ -12,6 +12,7 @@
 
 mod chrome;
 mod core;
+mod fingerprint;
 mod proxy;
 mod relay;
 mod store;
@@ -694,6 +695,13 @@ fn main() {
         "save" => command_save(&input),
         "remove" => command_remove(&input),
         "launch" => command_launch(&input),
+        "fingerprint-prepare" => {
+            let id = get_str(&input, "id");
+            store::load_profiles().and_then(|profiles| {
+                let profile = profiles.iter().find(|p| p.id == id).ok_or("身份不存在")?;
+                fingerprint::prepare(profile)
+            })
+        },
         "stop" => command_stop(&input),
         "probe" => command_probe(&input),
         "egress" => command_egress(&input),
@@ -718,7 +726,7 @@ fn main() {
                 })
         }
         _ => Err(format!(
-            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / egress / egress-stop / subscription-save / subscription-refresh / subscription-remove / relay）"
+            "未知命令 `{command}`（可用：detect / list / save / remove / launch / stop / probe / fingerprint-prepare / egress / egress-stop / subscription-save / subscription-refresh / subscription-remove / relay）"
         )),
     };
     match result {
