@@ -10,6 +10,7 @@ const nodeRouter = require('cli-provider-router');
 const { createProviderRouterRuntime } = require('../src/providers/router-runtime');
 const { createRustCprRouter, resolveCprBackend } = require('../src/providers/rust-cpr');
 const { createClaudeEgressAgentResolver } = require('../src/claude-auth/egress-agent');
+const { mountCprBackendSettingsRoutes } = require('../src/routes/cpr-backend-settings');
 const native = require('../src/native/runtime').getNative('cpr', process.env.MULTICC_REQUIRE_RUST_TESTS === '1' ? 'rust' : 'auto');
 const available = native?.cprProtocolVersion?.() === 1;
 if (process.env.MULTICC_REQUIRE_RUST_TESTS === '1') assert.equal(available, true, '必须构建包含 CPR 的 Rust 模块');
@@ -67,6 +68,56 @@ test('隐藏开关默认 Node，非法值失败，旧原生模块不能冒充 Ru
   assert.equal(resolveCprBackend({}), 'node'); assert.equal(resolveCprBackend({ MULTICC_CPR_BACKEND: ' Rust ' }), 'rust');
   assert.throws(() => resolveCprBackend({ MULTICC_CPR_BACKEND: 'auto' }), /只支持/);
   assert.throws(() => createRustCprRouter(nodeRouter, { native: {} }), /版本不匹配/);
+});
+
+async function settingsHarness(t, overrides = {}) {
+  let config = {}, writes = [];
+  const runtime = { proxyBackend: 'node' };
+  const app = express(); app.use(express.json());
+  mountCprBackendSettingsRoutes(app, { runtime, getNative: () => native,
+    readEnvFile: () => ({ UNRELATED: 'fixture-other-value', ...config }),
+    writeEnvFile: updates => { writes.push(updates); config = { ...config, ...updates }; }, ...overrides });
+  const server = http.createServer(app), base = await listen(server);
+  t.after(() => close(server));
+  return { runtime, writes, config: () => config,
+    read: () => fetch(base + '/api/settings/cpr-backend'),
+    save: body => fetch(base + '/api/settings/cpr-backend', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) };
+}
+
+rustTest('设置入口保存和撤回待重启选择，当前运行版本保持不变', async t => {
+  const h = await settingsHarness(t);
+  let view = await (await h.read()).json();
+  assert.equal(view.currentBackend, 'node'); assert.equal(view.configuredBackend, 'node');
+  assert.equal(view.restartRequired, false); assert.equal(view.rustAvailable, true);
+  view = await (await h.save({ backend: 'rust', UNRELATED: 'must-not-save' })).json();
+  assert.equal(view.currentBackend, 'node'); assert.equal(view.configuredBackend, 'rust');
+  assert.equal(view.restartRequired, true); assert.equal(h.runtime.proxyBackend, 'node');
+  assert.deepEqual(h.writes, [{ MULTICC_CPR_BACKEND: 'rust' }]);
+  assert.equal((await (await h.read()).json()).configuredBackend, 'rust');
+  view = await (await h.save({ backend: 'node' })).json();
+  assert.equal(view.restartRequired, false); assert.equal(view.currentBackend, 'node');
+  assert.doesNotMatch(JSON.stringify(view), /UNRELATED|fixture-other-value|updates/);
+});
+
+rustTest('设置入口拒绝非法值和不可用 Rust，同时允许回退 Node', async t => {
+  const h = await settingsHarness(t, { getNative: () => ({ cprBackendSettings: native.cprBackendSettings }) });
+  for (const value of [undefined, true, {}, 'auto', 'rust\nOTHER=1']) {
+    const response = await h.save({ backend: value });
+    assert.equal(response.status, 400); await response.text();
+  }
+  let response = await h.save({ backend: 'rust' });
+  assert.equal(response.status, 503); await response.text(); assert.equal(h.writes.length, 0);
+  response = await h.save({ backend: 'node' });
+  assert.equal(response.status, 200); await response.text(); assert.equal(h.writes.length, 1);
+});
+
+rustTest('设置写入失败不会伪报已保存，也不会公开配置路径或敏感正文', async t => {
+  const h = await settingsHarness(t, { writeEnvFile: () => { throw Error('/private/fixture/config fixture-sensitive-text'); } });
+  const response = await h.save({ backend: 'rust' });
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(await response.text(), /private|fixture-sensitive-text/);
+  assert.equal((await (await h.read()).json()).configuredBackend, 'node');
 });
 
 rustTest('Node 与 Rust 差分：Claude 模型改写、请求路径、凭据、SSE 原文和用量一致', async t => {
