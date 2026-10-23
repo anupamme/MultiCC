@@ -53,6 +53,8 @@ test('扩展按身份生成且不包含凭据，重复生成复用配置，损�
 // 在全新临时浏览器中独立验证扩展行为；生产自动加载入口由 automatic.cjs 覆盖。
 async function browser(t, dir) {
   const child = spawn(process.env.CHROME_TEST_BIN, [
+    // 临时 profile 不隔离 macOS 钥匙串；测试必须避免读取用户的 Safe Storage。
+    ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
     '--headless=new', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging',
     '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
     '--proxy-server=http://127.0.0.1:1', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
