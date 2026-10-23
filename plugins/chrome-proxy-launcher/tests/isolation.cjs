@@ -69,7 +69,7 @@ test('真实 Chrome：固定代理可用时访问成功，断代理后目标直�
   f.profile.proxy.port = proxy.address().port;
   fs.writeFileSync(f.profilesFile, JSON.stringify([f.profile]));
   // 用无副作用的占位可执行文件获取 Rust 实际生成的参数，再在临时目录跑无头 Chrome。
-  const launched = f.run('launch', { id: 'fixture', checkProxy: false, url });
+  const launched = f.run('launch', { id: 'fixture', checkProxy: false, url, automaticFingerprint: false });
   assert.equal(launched.ok, true);
   let runNumber = 0;
   const runChrome = () => new Promise((resolve, reject) => {

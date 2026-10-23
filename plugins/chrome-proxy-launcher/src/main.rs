@@ -11,6 +11,7 @@
 //!   成功：{"ok":true,"data":{...}}    失败：{"ok":false,"error":"中文原因"}，退出码 1
 
 mod chrome;
+mod browser_session;
 mod core;
 mod fingerprint;
 mod proxy;
@@ -286,7 +287,9 @@ fn command_remove(input: &Value) -> Result<Value, String> {
     let mut profiles = store::load_profiles()?;
     find_profile(&profiles, &id)?;
     if let Some(pid) = store::read_pid(&id) {
-        let _ = chrome::quit_gracefully(pid);
+        if !(browser_session::request_stop(&id, pid) && chrome::wait_exit(pid, Duration::from_secs(8))) {
+            chrome::quit_gracefully(pid)?;
+        }
     }
     store::clear_pid(&id);
     chrome::stop_relay_if_any(&id);
@@ -307,7 +310,7 @@ fn command_launch(input: &Value) -> Result<Value, String> {
     let profile = find_profile(&profiles, &id)?;
     let url = get_str(input, "url");
     let check = get_bool(input, "checkProxy", true);
-    chrome::launch(&profile, if url.is_empty() { None } else { Some(&url) }, check)
+    chrome::launch(&profile, if url.is_empty() { None } else { Some(&url) }, check, get_bool(input, "automaticFingerprint", true))
 }
 
 fn command_stop(input: &Value) -> Result<Value, String> {
@@ -323,7 +326,9 @@ fn command_stop(input: &Value) -> Result<Value, String> {
         return Ok(json!({ "stopped": false, "reason": "进程已退出" }));
     }
     // 先让 Chrome 正常退出（期间它可能还要经代理收尾），再收中继/内核。
-    let quit = chrome::quit_gracefully(pid);
+    let quit = if browser_session::request_stop(&id, pid) && chrome::wait_exit(pid, Duration::from_secs(8)) {
+        Ok(())
+    } else { chrome::quit_gracefully(pid) };
     store::clear_pid(&id);
     chrome::stop_relay_if_any(&id);
     core::stop_if_any(&id);
@@ -689,6 +694,7 @@ fn main() {
     let command = std::env::args().nth(1).unwrap_or_default();
     store::lock_down();
     let input = read_stdin_json();
+    if command == "browser-supervise" { browser_session::supervise(&input); return; }
     let result = match command.as_str() {
         "detect" => command_detect(&input),
         "list" => command_list(&input),

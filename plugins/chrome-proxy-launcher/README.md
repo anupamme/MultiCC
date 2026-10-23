@@ -51,20 +51,25 @@ https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md
 
 ## 原版 Chrome 的轻量指纹扩展
 
-身份卡片的「准备指纹扩展」会由 Rust 为这个身份生成一份 Manifest V3 扩展，
-不更换浏览器，不修改 Chrome 的签名、全局配置或代理参数。
+默认勾选「启动时自动加载轻量指纹扩展」。点击身份的「启动浏览器」即可：
+Rust 自动准备该身份的扩展，通过私有匿名 CDP 管道等待 Chrome 确认加载，
+然后打开指定网址。首次和重开都是同一流程，不需要进扩展页、选目录或手工更新。
+不支持自动加载接口或被组织策略阻止时，启动明确失败，不静默跳过。
 
-1. 在插件里点击对应身份的「准备指纹扩展」，复制显示的目录。
-2. 在**该身份的隔离 Chrome** 中打开 `chrome://extensions`，开启「开发者模式」，
-   点击「加载已解压的扩展程序」，选择这个目录。在 macOS 文件选择框可按
-   `⌘⇧G` 粘贴目录。
-3. 刷新已打开的网页。扩展更新后在扩展管理页点重新加载，再刷新网页。
-   停用或移除扩展并刷新网页即可恢复原始行为。
+自动模式使用 `--no-startup-window`、`--remote-debugging-pipe` 和
+`--enable-unsafe-extension-debugging`。不监听 TCP 调试端口，不修改系统 Chrome
+签名，不禁用用户的其他扩展。常驻 Rust 监督进程持有管道，与一次性插件请求
+分离；通过插件「停止」时发送 `Browser.close` 正常保存登录信息。
+关闭 MultiCC 页面或发起请求的进程不会主动关闭这个监督进程；服务管理器若
+终止整个进程组、系统退出或浏览器崩溃，仍可能一起退出。
 
-这是 Chrome 的标准本地扩展安装流程。**生成成功不等于已经启用**；插件不会
-将文件存在误标为已安装，也不使用调试端口或非安全调试参数代替人工安装。
-Chrome 可能对本地开发扩展显示提示，重启后可在扩展页检查其启用状态。
-远程服务器上的插件目录不能直接装到另一台电脑的 Chrome 中。
+**会话兼容边界**：保留登录态及会话 Cookie。为了让扩展先于网页运行，自动模式
+打开指定网址（未指定则打开新标签），不会自动恢复上次的全部标签。
+取消勾选自动指纹即可使用原来的普通启动方式（`automaticFingerprint:false`），
+保留 Chrome 原生标签恢复；它不负责停用曾经手动安装的扩展。
+本次打包并实测 macOS arm64 + 原版 Chrome 156；Unix 管道实现可供 Linux 构建，
+但 Linux 尚未实测，Windows 自动模式明确报不支持，不伪报加载成功。
+远程服务器上的插件不能给另一台电脑的 Chrome 自动安装扩展。
 
 种子保存在 `fingerprints/<身份 id>/identity.json`，扩展目录在其下的 `extension/`。
 首次生成后固定保存，重复生成、身份改名都不更换；损坏时明确报错，不自动重建。
@@ -147,7 +152,7 @@ mkdir -p bin/darwin-arm64 && cp target/release/chrome-proxy-launcher bin/darwin-
 
 ```sh
 cargo test --manifest-path plugins/chrome-proxy-launcher/Cargo.toml
-node --test plugins/chrome-proxy-launcher/tests/isolation.cjs plugins/chrome-proxy-launcher/tests/fingerprint.cjs
+node --test --test-concurrency=1 plugins/chrome-proxy-launcher/tests/isolation.cjs plugins/chrome-proxy-launcher/tests/fingerprint.cjs plugins/chrome-proxy-launcher/tests/automatic.cjs
 ```
 
 集成测试默认使用上面构建的 release 二进制（可用 `PLUGIN_TEST_BIN` 指定）。
@@ -165,8 +170,8 @@ node --test plugins/chrome-proxy-launcher/tests/isolation.cjs plugins/chrome-pro
 | `list` | – | 身份清单（含 running/pid）+ 订阅清单 |
 | `save` | `{id?, name, egressType:"direct"\|"subscription", proxy:{…}` 或 `subscription:{id,node,via?}, note?, chromePath?}` | 新建 / 更新 |
 | `remove` | `{id}` | 删除（运行中先停；磁盘 profile 保留） |
-| `fingerprint-prepare` | `{id}` | 生成该身份的轻量指纹扩展并返回目录；不表示已安装 |
-| `launch` | `{id, url?, checkProxy?=true}` | 启动隔离实例 |
+| `fingerprint-prepare` | `{id}` | 仅准备该身份扩展文件；正常启动会自动准备和加载 |
+| `launch` | `{id, url?, checkProxy?=true, automaticFingerprint?=true}` | 自动加载扩展后打开隔离实例；传 false 使用普通启动 |
 | `stop` | `{id}` | 停止实例（连带收割本地中继 / 内核） |
 | `probe` | `{id}` 或 `{proxy:{…}}` 或 `{subscription:{…}}` | 经该出口取外网 IP + 延迟 |
 | `egress` | `{id, check?=false}` | 确保该身份的出口**现在**可用，返回标准代理 URL（`proxyUrl`）。订阅出口会复用/拉起内核，带凭据出口会复用/拉起中继；幂等，可被外部程序按需调用 |

@@ -50,7 +50,7 @@ test('扩展按身份生成且不包含凭据，重复生成复用配置，损�
   assert.notEqual(replacement.id, a.id, '尚未启动过浏览器的身份也不复用旧指纹目录');
 });
 
-// 调试管道仅用于全新临时浏览器的验收。产品既不开调试端口，也不加 unsafe 调试参数。
+// 在全新临时浏览器中独立验证扩展行为；生产自动加载入口由 automatic.cjs 覆盖。
 async function browser(t, dir) {
   const child = spawn(process.env.CHROME_TEST_BIN, [
     '--headless=new', '--remote-debugging-pipe', '--enable-unsafe-extension-debugging',
